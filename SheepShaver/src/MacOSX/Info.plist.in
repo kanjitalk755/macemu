@@ -37,6 +37,10 @@
 			<true/>
 		</dict>
 	</array>
+    <key>CFBundleHelpBookFolder</key>
+	<string>SheepShaver Help</string>
+	<key>CFBundleHelpBookName</key>
+	<string>SheepShaver Help</string>
 	<key>LSArchitecturePriority</key>
 	<array>
 		<string>i386</string>

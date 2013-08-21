@@ -1,0 +1,55 @@
+
+body { 
+	color: black; 
+	font-family: "Lucida Grande", Arial, sans-serif; 
+	background-color: white; 
+	margin: 0 0 0 15px;
+	}
+p { 
+	font-size: 9pt; 
+	line-height: 12pt; 
+	text-decoration: none 
+	}
+a { 
+	color: blue; 
+	font-size: 9pt; 
+	line-height: 12pt; 
+	text-decoration: none 
+	}
+a:hover    { text-decoration: underline }
+h1 { 
+	font-size: 20pt; 
+	text-align: center; 
+	}
+h2  { 
+	font-size: 11pt; margin: 0 
+	}
+h3 { 
+	font-size: 9pt; 
+	font-weight: bold; 
+	margin-top: 18pt;
+	}
+#mainbox {
+	width: 400px;
+	background-color: #fff;
+	margin-right: auto;
+	margin-left: auto;
+	top: 20px;
+	margin-top: 20px;
+	}
+#mainbox-original { 
+	background-color: #fff; 
+	margin-right: 26px; margin-left: 0; 
+	position: absolute; 
+	top: 32px 
+	}
+.indent {
+	margin-left: 20px; 
+	}
+#banner  { background-color: #f2f2f2; background-repeat: no-repeat; padding: -2px 6px 0; position: fixed; z-index: 1; top: 0; left: 0; width: 100%; height: 1.2em; float: left; border-bottom: 1px solid #bfbfbf }
+#bookid { position: absolute; top: 2px; left: 10px }
+#index { background-color: #f2f2f2; padding-top: 2px; padding-right: 25px; top: 2px; right: 12px; width: auto; float: right }
+.bread { color: #00f; font-size: 8pt; margin: -9px 0 -6px }
+ul  { list-style-type: square; list-style-position: outside; margin-top: 12px; margin-bottom: 12px; margin-left: -24px; padding-left: 40px }
+ul li { margin-top: 6px; margin-bottom: 6px }
+ul p { margin-top: 6px; margin-bottom: 6px }

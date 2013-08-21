@@ -76,6 +76,20 @@ static NSString *getApplicationName(void)
     event.type = SDL_QUIT;
     SDL_PushEvent(&event);
 }
+
+// HTML file opens in browser from help menu; sample.html required in English.lproj/SheepShaver Help
+- (void)openInfoPage:(id)sender
+{
+	NSString* helpPath = [[NSBundle mainBundle] pathForResource:@"sample" ofType:@"html" inDirectory:@"SheepShaver Help"]; 
+	[[NSWorkspace sharedWorkspace] openFile:helpPath];
+}
+// link to setup guide at emaculation.com; webloc file with URL required as above
+- (void)openSetupGuide:(id)sender
+{
+	NSString* helpPath = [[NSBundle mainBundle] pathForResource:@"setup" ofType:@"webloc" inDirectory:@"SheepShaver Help"]; 
+	[[NSWorkspace sharedWorkspace] openFile:helpPath];
+}
+
 @end
 
 /* The main class of the application, the application's delegate */
@@ -194,6 +208,44 @@ static void setupWindowMenu(void)
     [windowMenuItem release];
 }
 
+/* Create a help menu - sample entries */
+static void setupHelpMenu(void)
+{
+	NSMenu      *helpMenu;
+	NSString	*title;
+    NSMenuItem  *helpMenuItem;
+    NSMenuItem  *menuItem;
+	
+    helpMenu = [[NSMenu alloc] initWithTitle:@"Help"];
+	
+	/* Standard Apple Help item */
+	NSString *appName = getApplicationName();
+	title = [appName stringByAppendingString:@" Help"];
+    /* next line requires correctly formatted help book in English.lprog/SheepShaver Help */
+    /* for some reason I can't make "?" work correctly here, so used "/" instead, but could be "" */
+	menuItem = [[NSMenuItem alloc] initWithTitle:title action:@selector(showHelp:) keyEquivalent:@"/"];
+	/* [menuItem setKeyEquivalentModifierMask:(NSAlternateKeyMask|NSCommandKeyMask)]; */
+	
+    /* next two lines open local files as described above */
+	[helpMenu addItemWithTitle:@"Setup Guide" action:@selector(openSetupGuide:) keyEquivalent:@"s"];
+	[helpMenu addItemWithTitle:@"Usage Guide" action:@selector(openInfoPage:) keyEquivalent:@"u"];
+	[helpMenu addItem:[NSMenuItem separatorItem]];
+	
+	[helpMenu addItem:menuItem];
+    [menuItem release];
+    
+    /* Put menu into the menubar */
+    helpMenuItem = [[NSMenuItem alloc] initWithTitle:@"Help" action:nil keyEquivalent:@""];
+    [helpMenuItem setSubmenu:helpMenu];
+    [[NSApp mainMenu] addItem:helpMenuItem];
+    
+    /* Finally give up our references to the objects */
+    [helpMenu release];
+    [helpMenuItem release];
+}
+/* end help menu */
+
+
 /* Replacement for NSApplicationMain */
 static void CustomApplicationMain (int argc, char **argv)
 {
@@ -218,6 +270,7 @@ static void CustomApplicationMain (int argc, char **argv)
     [NSApp setMainMenu:[[NSMenu alloc] init]];
     setApplicationMenu();
     setupWindowMenu();
+    setupHelpMenu(); /* needed for help menu */
 
     /* Create SDLMain and make it the app delegate */
     sdlMain = [[SDLMain alloc] init];
