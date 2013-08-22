@@ -104,6 +104,8 @@ static const bool use_vosf = false;			// VOSF not possible
 
 static bool palette_changed = false;		// Flag: Palette changed, redraw thread must update palette
 static bool ctrl_down = false;				// Flag: Ctrl key pressed
+static bool alt_down = false;				// Flag: Alt key pressed
+static bool meta_down = false;				// Flag: Cmd/Win key pressed
 static bool caps_on = false;				// Flag: Caps Lock on
 static bool quit_full_screen = false;		// Flag: DGA close requested from redraw thread
 static volatile bool quit_full_screen_ack = false;	// Acknowledge for quit_full_screen

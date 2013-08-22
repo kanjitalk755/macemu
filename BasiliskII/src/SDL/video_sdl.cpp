@@ -117,6 +117,8 @@ static const bool use_vosf = false;					// VOSF not possible
 #endif
 
 static bool ctrl_down = false;						// Flag: Ctrl key pressed
+static bool alt_down = false;						// Flag: Alt/Option key pressed
+static bool meta_down = false;						// Flag: Win/Cmd key pressed
 static bool caps_on = false;						// Flag: Caps Lock on
 static bool quit_full_screen = false;				// Flag: DGA close requested from redraw thread
 static bool emerg_quit = false;						// Flag: Ctrl-Esc pressed, emergency quit requested from MacOS thread
@@ -1541,6 +1543,16 @@ static bool is_ctrl_down(SDL_keysym const & ks)
 	return ctrl_down || (ks.mod & KMOD_CTRL);
 }
 
+static bool is_alt_down(SDL_keysym const & ks)
+{
+    return alt_down || (ks.mod & KMOD_ALT);
+}
+    
+static bool is_meta_down(SDL_keysym const & ks)
+{
+    return meta_down || (ks.mod & KMOD_META);
+}
+
 
 /*
  *  Translate key event to Mac keycode, returns -1 if no keycode was found
@@ -1601,7 +1613,7 @@ static int kc_decode(SDL_keysym const & ks, bool key_down)
 	case SDLK_SLASH: case SDLK_QUESTION: return 0x2c;
 
 	case SDLK_TAB: if (is_ctrl_down(ks)) {if (!key_down) drv->suspend(); return -2;} else return 0x30;
-	case SDLK_RETURN: if (is_ctrl_down(ks)) {if (!key_down) toggle_fullscreen = true; return -2;} else return 0x24;
+	case SDLK_RETURN: if ((is_alt_down(ks)) & (is_ctrl_down(ks))) {if (!key_down) toggle_fullscreen = true; return -2;} else return 0x24;
 	case SDLK_SPACE: return 0x31;
 	case SDLK_BACKSPACE: return 0x33;
 
@@ -1644,7 +1656,7 @@ static int kc_decode(SDL_keysym const & ks, bool key_down)
 	case SDLK_F2: return 0x78;
 	case SDLK_F3: return 0x63;
 	case SDLK_F4: return 0x76;
-	case SDLK_F5: if (is_ctrl_down(ks)) {if (!key_down) drv->toggle_mouse_grab(); return -2;} else return 0x60;
+	case SDLK_F5: if ((is_alt_down(ks)) & (is_ctrl_down(ks))) {if (!key_down) drv->toggle_mouse_grab(); return -2;} else return 0x60;
 	case SDLK_F6: return 0x61;
 	case SDLK_F7: return 0x62;
 	case SDLK_F8: return 0x64;

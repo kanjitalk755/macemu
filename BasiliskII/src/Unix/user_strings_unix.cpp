@@ -84,7 +84,7 @@ user_string_def platform_strings[] = {
 
 	{STR_IGNORESEGV_CTRL, "Ignore Illegal Memory Accesses"},
 
-	{STR_WINDOW_TITLE_GRABBED, "Basilisk II (mouse grabbed, press Ctrl-F5 to release)"},
+	{STR_WINDOW_TITLE_GRABBED, "Basilisk II (mouse grabbed, press Ctrl-Option-F5 to release)"},
 
 	{STR_NO_B2_EXE_FOUND, "Could not start %s (%s)."},
 
