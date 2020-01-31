@@ -517,6 +517,14 @@ int main(int argc, char **argv)
 #endif
 #endif
 
+	// Init system routines
+	SysInit();
+
+	// Show preferences editor
+	if (!gui_connection && !PrefsFindBool("nogui"))
+		if (!PrefsEditor())
+			QuitEmulator();
+
 #ifdef USE_SDL
 	// Initialize SDL system
 	int sdl_flags = 0;
@@ -547,15 +555,6 @@ int main(int argc, char **argv)
 #endif
 	
 #endif
-
-	// Init system routines
-	SysInit();
-
-	// Show preferences editor
-	if (!gui_connection && !PrefsFindBool("nogui"))
-		if (!PrefsEditor())
-			QuitEmulator();
-
 	// Install the handler for SIGSEGV
 	if (!sigsegv_install_handler(sigsegv_handler)) {
 		sprintf(str, GetString(STR_SIG_INSTALL_ERR), "SIGSEGV", strerror(errno));
