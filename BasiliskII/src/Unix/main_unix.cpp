@@ -63,7 +63,9 @@ struct sigstate {
 # ifdef HAVE_GNOMEUI
 #  include <gnome.h>
 # endif
+#ifdef GDK_WINDOWING_X11
 # include <X11/Xlib.h>
+#endif
 #endif
 
 #ifdef ENABLE_XF86_DGA
@@ -386,7 +388,9 @@ static void usage(const char *prg_name)
 int main(int argc, char **argv)
 {
 #ifdef ENABLE_GTK
+#ifdef GDK_WINDOWING_X11
 	XInitThreads();
+#endif
 #endif
 	const char *vmdir = NULL;
 	char str[256];
