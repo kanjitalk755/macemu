@@ -134,7 +134,7 @@
 #ifdef ENABLE_GTK
 #include <gtk/gtk.h>
 #ifdef GDK_WINDOWING_X11
-#include <X11/Xlib.h>
+# include <X11/Xlib.h>
 #endif
 #endif
 
@@ -732,9 +732,9 @@ static bool init_sdl()
 int main(int argc, char **argv)
 {
 #ifdef ENABLE_GTK
-#ifdef GDK_WINDOWING_X11
+# ifdef GDK_WINDOWING_X11
 	XInitThreads();
-#endif
+# endif
 #endif
 	char str[256];
 	bool memory_mapped_from_zero, ram_rom_areas_contiguous;
