@@ -130,7 +130,7 @@ VPATH :=
 VPATH += $(addprefix :, $(subst  ,:, $(filter-out $($(subst, :, ,$(VPATH))), $(SRC_PATHS))))
 
 $(APP): $(XPLATSRCS) $(OBJ_DIR) $(OBJS)
-	$(CXX) -o $(APP) $(LDFLAGS) $(OBJS) $(LIBS) $(SDL_LIBS)
+	$(CXX) -o $(APP) $(LDFLAGS) $(OBJS) $(LIBS) -Wl,-Bdynamic $(SDL_LIBS) -Wl,-Bstatic
 
 $(UI_APP): $(XPLATSRCS) $(OBJ_DIR) $(UI_OBJS)
 	$(CXX) -o $@ $(LDFLAGS) $(UI_OBJS) $(LIBS) -Wl,-Bdynamic $(GTK_LIBS) -Wl,-Bstatic -mwindows -static-libgcc
