@@ -2353,7 +2353,10 @@ static void handle_events(void)
 						else
 							ADBKeyDown(code);
 #else
-						ADBKeyDown(code);
+						if (code == 0x39)
+							(SDL_GetModState() & KMOD_CAPS ? ADBKeyDown : ADBKeyUp)(code);
+						else
+							ADBKeyDown(code);
 #endif
 						if (code == 0x36)
 							ctrl_down = true;
@@ -2380,7 +2383,8 @@ static void handle_events(void)
 					if (code != 0x39)
 						ADBKeyUp(code);
 #else
-					ADBKeyUp(code);
+					if (code != 0x39)
+						ADBKeyUp(code);
 #endif
 					if (code == 0x36)
 						ctrl_down = false;
