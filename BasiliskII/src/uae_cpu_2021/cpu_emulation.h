@@ -51,6 +51,7 @@ extern uint32 ROMBaseMac;		// ROM base (Mac address space)
 #endif
 extern uint8 *ROMBaseHost;	// ROM base (host address space)
 extern uint32 ROMSize;		// Size of ROM
+extern uint32 VRAMSize;		// Size of VRAM
 #if 0
 extern uint32 RealROMSize;	// Real size of ROM
 extern memptr HWBase;		// HW base (Atari address space)
@@ -203,6 +204,8 @@ extern int exit_val;
 #if 0
 extern bool InitMEM();
 #endif
+extern bool InitMacMem(void);
+extern void MacMemExit(void);
 extern bool Init680x0(void);
 #if 0
 extern void Reset680x0(void);
