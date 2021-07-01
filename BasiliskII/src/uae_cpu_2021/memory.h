@@ -24,7 +24,7 @@
 #define UAE_MEMORY_H
 
 #if DIRECT_ADDRESSING
-extern uintptr MEMBaseDiff;
+extern size_t MEMBaseDiff;
 #endif
 
 extern void Exception (int, uaecptr);
@@ -62,7 +62,7 @@ static __inline__ uae_u8 *do_get_real_address(uaecptr addr)
 }
 static __inline__ uae_u32 do_get_virtual_address(uae_u8 *addr)
 {
-	return (uintptr)addr - MEMBaseDiff;
+	return (size_t)addr - MEMBaseDiff;
 }
 static __inline__ uae_u32 get_long(uaecptr addr)
 {

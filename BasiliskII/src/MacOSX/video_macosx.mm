@@ -2,7 +2,7 @@
  *  $Id$
  *
  *  video_macosx.mm - Interface between Basilisk II and Cocoa windowing.
- *                    Based on video_amiga.cpp and video_x.cpp
+ *                    Based on video_x.cpp
  *
  *  Basilisk II (C) 1997-2008 Christian Bauer
  *
@@ -51,7 +51,7 @@
 
 // Global variables
 uint8		display_type = DISPLAY_WINDOW,	// These are used by PrefsEditor
-			frame_skip;	
+			frame_skip;
 uint16		init_width  = MIN_WIDTH,		// as well as this code
 			init_height = MIN_HEIGHT,
 			init_depth  = 32;
@@ -409,7 +409,7 @@ OSX_monitor :: OSX_monitor (const	vector<video_mode>	&available_modes,
 void
 OSX_monitor::set_mac_frame_buffer(const video_mode mode)
 {
-#if !REAL_ADDRESSING && !DIRECT_ADDRESSING
+#if !DIRECT_ADDRESSING
 	set_mac_frame_base(MacFrameBaseMac);
 
 	// Set variables used by UAE memory banking
@@ -919,7 +919,7 @@ OSX_monitor::switch_to_current_mode(void)
 	const char *failure = NULL;
 
 	D(bug("switch_to_current_mode(): width=%d  height=%d  depth=%d  bytes_per_row=%d\n", mode.x, mode.y, bits_from_depth(mode.depth), mode.bytes_per_row));
-	
+
 	if ( display_type == DISPLAY_SCREEN && originalMode )
 	{
 		D(NSLog(@"About to call CGDisplayBestModeForParameters()"));
@@ -958,7 +958,7 @@ OSX_monitor::switch_to_current_mode(void)
 		CGColorSpaceRef		oldColourSpace	= colourSpace;
 		CGDataProviderRef	oldProvider		= provider;
 		void				*oldBuffer		= the_buffer;
- 
+
 		if ( video_open(mode) )
 		{
 			CGImageRelease(oldImageRef);
@@ -979,7 +979,7 @@ OSX_monitor::switch_to_current_mode(void)
 //		if ( CGDisplayMoveCursorToPoint(theDisplay, CGPointMake(15,15))
 //														== CGDisplayNoErr )
 //		{
-			// 
+			//
 			[output fullscreenMouseMove];
 //		}
 //		else

@@ -1,16 +1,9 @@
-dnl Process this file with autoconf to produce a configure script.
-dnl Written in 2002 by Christian Bauer et al.
-
-AC_INIT([Basilisk II], 1.0, [Christian.Bauer@uni-mainz.de], BasiliskII)
+AC_INIT([Basilisk II], [m4_esyscmd_s([git describe --always --tags --dirty])])
 AC_CONFIG_SRCDIR(main_unix.cpp)
 AC_PREREQ(2.52)
 AC_CONFIG_HEADER(config.h)
 
 AC_USE_SYSTEM_EXTENSIONS
-
-dnl Aliases for PACKAGE and VERSION macros.
-AC_DEFINE_UNQUOTED(PACKAGE, "$PACKAGE_NAME", [Define this program name.])
-AC_DEFINE_UNQUOTED(VERSION, "$PACKAGE_VERSION", [Define this program version.])
 
 dnl Some systems do not put corefiles in the currect directory, avoid saving
 dnl cores for the configure tests since some are intended to dump core.
@@ -25,9 +18,6 @@ dnl Mac OS X Sound
 AC_ARG_ENABLE(macosx-sound,  [  --enable-macosx-sound   enable Mac OS X Sound [default=no]], [WANT_MACOSX_SOUND=$enableval], [WANT_MACOSX_SOUND=no])
 
 dnl Video options.
-AC_ARG_ENABLE(xf86-dga,      [  --enable-xf86-dga       use the XFree86 DGA extension [default=yes]], [WANT_XF86_DGA=$enableval], [WANT_XF86_DGA=yes])
-AC_ARG_ENABLE(xf86-vidmode,  [  --enable-xf86-vidmode   use the XFree86 VidMode extension [default=yes]], [WANT_XF86_VIDMODE=$enableval], [WANT_XF86_VIDMODE=yes])
-AC_ARG_ENABLE(fbdev-dga,     [  --enable-fbdev-dga      use direct frame buffer access via /dev/fb [default=yes]], [WANT_FBDEV_DGA=$enableval], [WANT_FBDEV_DGA=yes])
 AC_ARG_ENABLE(vosf,          [  --enable-vosf           enable video on SEGV signals [default=yes]], [WANT_VOSF=$enableval], [WANT_VOSF=yes])
 
 dnl SDL options.
@@ -36,7 +26,6 @@ AC_ARG_ENABLE(sdl-video,     [  --enable-sdl-video      use SDL for video graphi
 AC_ARG_ENABLE(sdl-audio,     [  --enable-sdl-audio      use SDL for audio [default=no]], [WANT_SDL_AUDIO=$enableval], [WANT_SDL_AUDIO=yes])
 AC_ARG_ENABLE(sdl-framework,    [  --enable-sdl-framework  use SDL framework [default=no]], [WANT_SDL_FRAMEWORK=$enableval], [WANT_SDL_FRAMEWORK=no])
 AC_ARG_ENABLE(sdl-framework-prefix,    [  --enable-sdl-framework-prefix=PFX    default=/Library/Frameworks], [SDL_FRAMEWORK="$enableval"], [SDL_FRAMEWORK=/Library/Frameworks])
-AC_ARG_WITH(sdl1,            [  --with-sdl1             use SDL 1.x, rather than SDL 2.x [default=no]], [WANT_SDL_VERSION_MAJOR=1], [])
 
 dnl JIT compiler options.
 AC_ARG_ENABLE(jit-compiler,  [  --enable-jit-compiler   enable JIT compiler [default=yes]], [WANT_JIT=$enableval], [WANT_JIT=yes])
@@ -61,26 +50,17 @@ dnl Addressing modes.
 AC_ARG_ENABLE(addressing,
 [  --enable-addressing=AM  specify the addressing mode to use [default=fastest]],
 [ case "$enableval" in
-    real) 	ADDRESSING_TEST_ORDER="real";;
     direct)	ADDRESSING_TEST_ORDER="direct";;
     banks)	ADDRESSING_TEST_ORDER="banks";;
     fastest)ADDRESSING_TEST_ORDER="direct banks";;
-    *)		AC_MSG_ERROR([--enable-addressing takes only one of the following values: fastest, real, direct, banks]);;
+    *)		AC_MSG_ERROR([--enable-addressing takes only one of the following values: fastest, direct, banks]);;
   esac
 ],
 [ ADDRESSING_TEST_ORDER="direct banks"
 ])
 
 dnl External packages.
-AC_ARG_WITH(esd,             [  --with-esd              support ESD for sound under Linux/FreeBSD [default=yes]], [WANT_ESD=$withval], [WANT_ESD=yes])
-AC_ARG_WITH(gtk,             [  --with-gtk              use GTK user interface [default=yes]],
-  [case "$withval" in
-   gtk1)      WANT_GTK="gtk";;
-   gtk|gtk2)  WANT_GTK="$withval";;
-   yes)       WANT_GTK="gtk2 gtk";;
-   *)         WANT_GTK="no";;
-   esac],
-  [WANT_GTK="gtk2 gtk"])
+AC_ARG_WITH(gtk,             [  --with-gtk              use GTK user interface [default=yes]], [WANT_GTK=$withval], [WANT_GTK=yes])
 AC_ARG_WITH(mon,             [  --with-mon              use mon as debugger [default=no]], [WANT_MON=$withval], [WANT_MON=no])
 
 AC_ARG_WITH(bincue,   
@@ -125,11 +105,6 @@ fi
 AC_ARG_VAR(BII_CROSS_MPROTECT_WORKS, [  Whether mprotect works on the target system [default=guessing no]])
 if [[ "x$BII_CROSS_MPROTECT_WORKS" = "x" ]]; then
 	BII_CROSS_MPROTECT_WORKS="guessing no"
-fi
-
-AC_ARG_VAR(BII_CROSS_MAP_LOW_AREA, [  Whether the target system can map 0x2000 bytes from 0x0000 [default=guessing no]])
-if [[ "x$BII_CROSS_MAP_LOW_AREA" = "x" ]]; then
-	BII_CROSS_MAP_LOW_AREA="guessing no"
 fi
 
 AC_ARG_VAR(BII_CROSS_SIGNAL_NEED_REINSTALL, [  Whether the target system needs signal handlers to be reinstalled [default=guessing yes]])
@@ -189,13 +164,11 @@ DEFINES="$DEFINES -DOS_$OS_TYPE"
 
 dnl Target CPU type.
 HAVE_I386=no
-HAVE_M68K=no
 HAVE_SPARC=no
 HAVE_POWERPC=no
 HAVE_X86_64=no
 case "$target_cpu" in
   i386* | i486* | i586* | i686* | i786* ) HAVE_I386=yes;;
-  m68k* ) HAVE_M68K=yes;;
   sparc* ) HAVE_SPARC=yes;;
   powerpc* ) HAVE_POWERPC=yes;;
   x86_64* | amd64* ) HAVE_X86_64=yes;;
@@ -288,9 +261,6 @@ dnl Do we need SDL?
 WANT_SDL=no
 if [[ "x$WANT_SDL_VIDEO" = "xyes" ]]; then
   WANT_SDL=yes
-  WANT_XF86_DGA=no
-  WANT_XF86_VIDMODE=no
-  WANT_FBDEV_DGA=no
   SDL_SUPPORT="$SDL_SUPPORT video"
 fi
 if [[ "x$WANT_SDL_AUDIO" = "xyes" ]]; then
@@ -299,74 +269,28 @@ if [[ "x$WANT_SDL_AUDIO" = "xyes" ]]; then
 fi
 if [[ "x$WANT_SDL" = "xyes" ]]; then
   if [[ "x$WANT_SDL_FRAMEWORK" = "xyes" ]]; then
-    TEMP_WANT_SDL_VERSION_MAJOR=$WANT_SDL_VERSION_MAJOR
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x" ]]; then
-      TEMP_WANT_SDL_VERSION_MAJOR=2
-    fi
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x2" ]]; then
-      AC_CHECK_SDLFRAMEWORK(SDL2, [#include <SDL.h>], [
-        WANT_SDL_VERSION_MAJOR=2
-      ], [
-        TEMP_WANT_SDL_VERSION_MAJOR=1
-      ])
-    fi
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x1" ]]; then
-      AC_CHECK_SDLFRAMEWORK(SDL, [#include <SDL.h>], [
-        WANT_SDL_VERSION_MAJOR=1
-      ])
-    fi
+    AC_CHECK_SDLFRAMEWORK(SDL2, [#include <SDL.h>])
   else
     ac_cv_framework_SDL=no
   fi
   if [[ "x$ac_cv_framework_SDL" = "xno" ]]; then
-    TEMP_WANT_SDL_VERSION_MAJOR=$WANT_SDL_VERSION_MAJOR
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x" ]]; then
-      TEMP_WANT_SDL_VERSION_MAJOR=2
-    fi
-
-    dnl use PKG_PROG_PKG_CONFIG to declare PKG_CONFIG variables.  Otherwise,
-    dnl PKG_* macros may fail, without much explanation.  The lack of this
-    dnl was causing --with-sdl1 to fail, as SDL 1.x could not be detected,
-    dnl as the 2nd call to PKG_CHECK_MODULES would fail, as $PKG_CONFIG
-    dnl never got defined (bizarrely-enough).  -- dludwig@pobox.com
-    PKG_PROG_PKG_CONFIG
-
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x2" ]]; then
-      PKG_CHECK_MODULES([sdl2], [sdl2 >= 2.0], [
-        CFLAGS="$CFLAGS $sdl2_CFLAGS"
-        CXXFLAGS="$CXXFLAGS $sdl2_CFLAGS"
-        LIBS="$LIBS $sdl2_LIBS"
-        WANT_SDL_VERSION_MAJOR=2
-      ], [
-        TEMP_WANT_SDL_VERSION_MAJOR=1
-      ])
-    fi
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x1" ]]; then
-      PKG_CHECK_MODULES([sdl], [sdl >= 1.2], [
-        CFLAGS="$CFLAGS $sdl_CFLAGS"
-        CXXFLAGS="$CXXFLAGS $sdl_CFLAGS"
-        LIBS="$LIBS $sdl_LIBS"
-        WANT_SDL_VERSION_MAJOR=1
-      ], [
-        WANT_SDL=no
-        WANT_SDL_VERSION_MAJOR=
-      ])
-    fi
+    PKG_CHECK_MODULES([sdl2], [sdl2 >= 2.0], [
+      CFLAGS="$CFLAGS $sdl2_CFLAGS"
+      CXXFLAGS="$CXXFLAGS $sdl2_CFLAGS"
+      LIBS="$LIBS $sdl2_LIBS"
+    ], [
+      WANT_SDL=no
+    ])
   fi
   SDL_SUPPORT=`echo "$SDL_SUPPORT" | sed -e "s/^ //"`
 else
   SDL_SUPPORT="none"
 fi
 
-dnl We need X11, if not using SDL or Mac GUI.
+dnl We need SDL or Mac GUI.
 if [[ "x$WANT_SDL_VIDEO" = "xno" -a "x$WANT_MACOSX_GUI" = "xno" ]]; then
   AC_PATH_XTRA
-  if [[ "x$no_x" = "xyes" ]]; then
-    AC_MSG_ERROR([You need X11 to run Basilisk II.])
-  fi
-  CFLAGS="$CFLAGS $X_CFLAGS"
-  CXXFLAGS="$CXXFLAGS $X_CFLAGS"
-  LIBS="$LIBS $X_PRE_LIBS $X_LIBS -lX11 -lXext $X_EXTRA_LIBS"
+  AC_MSG_ERROR([You need SDL or macOS to run Basilisk II.])
 fi
 
 dnl BINCUE
@@ -421,68 +345,16 @@ AC_CHECK_FUNCS(sem_init, , [
   fi
 ])
 
-dnl We use DGA (XFree86 or fbdev) if possible.
-if [[ "x$WANT_XF86_DGA" = "xyes" ]]; then
-  AC_CHECK_LIB(Xxf86dga, XF86DGAQueryExtension, [
-    AC_DEFINE(ENABLE_XF86_DGA, 1, [Define if using XFree86 DGA extension.])
-    LIBS="$LIBS -lXxf86dga"
-    if [[ "x$WANT_FBDEV_DGA" = "xyes" ]]; then
-      AC_MSG_WARN([Cannot have both --enable-xf86-dga and --enable-fbdev-dga, ignoring --enable-fbdev-dga.])
-      WANT_FBDEV_DGA=no
-    fi
-  ], [
-    AC_MSG_WARN([Could not find XFree86 DGA extension, ignoring --enable-xf86-dga.])
-    WANT_XF86_DGA=no
-  ])
-fi
-if [[ "x$WANT_FBDEV_DGA" = "xyes" ]]; then
-  AC_DEFINE(ENABLE_FBDEV_DGA, 1, [Define if using DGA with framebuffer device.])
-fi
-
-dnl We use XFree86 VidMode if possible.
-if [[ "x$WANT_XF86_VIDMODE" = "xyes" ]]; then
-  AC_CHECK_LIB(Xxf86vm, XF86VidModeQueryExtension, [
-    AC_DEFINE(ENABLE_XF86_VIDMODE, 1, [Define if using XFree86 DGA extension.])
-    LIBS="$LIBS -lXxf86vm"
-  ], [
-    AC_MSG_WARN([Could not find XFree86 VidMode extension, ignoring --enable-xf86-vidmode.])
-    WANT_XF86_VIDMODE=no
-  ])
-fi
-
 dnl We use GTK+ if possible.
 UISRCS=../dummy/prefs_editor_dummy.cpp
-case "x$WANT_GTK" in
-xgtk2*)
-  AM_PATH_GTK_2_0(1.3.15, [
-    GUI_CFLAGS="$GTK_CFLAGS"
+if [[ "x$WANT_GTK" = "xyes" ]]; then
+  AM_PATH_GTK_2_0(2.6.0, [
+    GUI_CFLAGS="$GTK_CFLAGS -DGTK_DISABLE_SINGLE_INCLUDES"
+    GUI_CFLAGS="$GUI_CFLAGS -DGDK_DISABLE_DEPRECATED"
+    #GUI_CFLAGS="$GUI_CFLAGS -DGTK_DISABLE_DEPRECATED"
     GUI_LIBS="$GTK_LIBS"
-    WANT_GTK=gtk2
   ], [
-    case "x${WANT_GTK}x" in
-    *gtkx)
-      AC_MSG_WARN([Could not find GTK+ 2.0, trying with GTK+ 1.2.])
-      WANT_GTK=gtk
-      ;;
-    *)
-      AC_MSG_WARN([Could not find GTK+, disabling user interface.])
-      WANT_GTK=no
-      ;;
-    esac
-  ])
-  ;;
-esac
-if [[ "x$WANT_GTK" = "xgtk" ]]; then
-  AM_PATH_GTK(1.2.0, [
-    GUI_CFLAGS="$GTK_CFLAGS"
-    GUI_LIBS="$GTK_LIBS"
-    B2_PATH_GNOMEUI([
-      AC_DEFINE(HAVE_GNOMEUI, 1, [Define if libgnomeui is available.])
-      GUI_CFLAGS="$GUI_CFLAGS $GNOMEUI_CFLAGS"
-      GUI_LIBS="$GUI_LIBS $GNOMEUI_LIBS"
-    ], [])
-  ], [
-    AC_MSG_WARN([Could not find GTK+, disabling user interface.])
+    AC_MSG_WARN([Could not find GTK+ 2.x, disabling user interface.])
     WANT_GTK=no
   ])
 fi
@@ -502,24 +374,10 @@ if [[ "$WANT_GTK" = "no" ]]; then
 fi
 AC_SUBST(STANDALONE_GUI, [$WANT_STANDALONE_GUI])
 
-dnl We use ESD if possible.
-if [[ "x$WANT_ESD" = "xyes" ]]; then
-  AM_PATH_ESD(0.2.8, [
-    AC_DEFINE(ENABLE_ESD, 1, [Define is using ESD.])
-    CFLAGS="$CFLAGS $ESD_CFLAGS"
-    CXXFLAGS="$CXXFLAGS $ESD_CFLAGS"
-    LIBS="$LIBS $ESD_LIBS"
-  ], [
-    AC_MSG_WARN([Could not find ESD, disabling ESD support.])
-    WANT_ESD=no
-  ])
-fi
-
 dnl We use 64-bit file size support if possible.
 AC_SYS_LARGEFILE
 
 dnl Checks for header files.
-AC_HEADER_STDC
 AC_CHECK_HEADERS(stdlib.h stdint.h)
 AC_CHECK_HEADERS(unistd.h fcntl.h sys/types.h sys/time.h sys/mman.h mach/mach.h)
 AC_CHECK_HEADERS(readline.h history.h readline/readline.h readline/history.h)
@@ -736,16 +594,13 @@ SCSISRC=../dummy/scsi_dummy.cpp
 AUDIOSRC=../dummy/audio_dummy.cpp
 EXTFSSRC=extfs_unix.cpp
 EXTRASYSSRCS=
-CAN_NATIVE_M68K=no
 case "$target_os" in
 linux*)
   ETHERSRC=ether_unix.cpp
-  AUDIOSRC=audio_oss_esd.cpp
   SCSISRC=Linux/scsi_linux.cpp
   ;;
 freebsd*)
   ETHERSRC=ether_unix.cpp
-  AUDIOSRC=audio_oss_esd.cpp
   DEFINES="$DEFINES -DBSD_COMP"
   CXXFLAGS="$CXXFLAGS -fpermissive"
   dnl Check for the CAM library
@@ -767,19 +622,12 @@ freebsd*)
   fi
   ;;
 netbsd*)
-  CAN_NATIVE_M68K=yes
   ETHERSRC=ether_unix.cpp
   ;;
 solaris*)
-  AUDIOSRC=Solaris/audio_solaris.cpp
   DEFINES="$DEFINES -DBSD_COMP -D_POSIX_PTHREAD_SEMANTICS"
   ;;
 irix*)
-  AUDIOSRC=Irix/audio_irix.cpp
-  EXTRASYSSRCS=Irix/unaligned.c
-  LIBS="$LIBS -laudio"
-  WANT_ESD=no
-
   dnl Check if our compiler supports -IPA (MIPSPro)
   HAVE_IPA=no
   ocflags="$CFLAGS"
@@ -865,7 +713,7 @@ if [[ "x$WANT_SDL" = "xyes" ]]; then
 fi
 if [[ "x$WANT_SDL_VIDEO" = "xyes" ]]; then
   AC_DEFINE(USE_SDL_VIDEO, 1, [Define to enable SDL video graphics support])
-  VIDEOSRCS="../SDL/video_sdl.cpp ../SDL/video_sdl2.cpp"
+  VIDEOSRCS="../SDL/video_sdl2.cpp"
   KEYCODES="../SDL/keycodes"
   if [[ "x$ac_cv_framework_Carbon" = "xyes" ]]; then
     AC_MSG_CHECKING([whether __LP64__ is defined])
@@ -896,7 +744,6 @@ if [[ "x$WANT_SDL_VIDEO" = "xyes" ]]; then
     fi
   fi
 elif [[ "x$WANT_MACOSX_GUI" != "xyes" ]]; then
-  VIDEOSRCS="video_x.cpp"
   KEYCODES="keycodes"
   EXTRASYSSRCS="$EXTRASYSSRCS clip_unix.cpp"
 fi
@@ -915,14 +762,6 @@ dnl libvhd overrides
 
 if [[ "x$have_libvhd" = "xyes" ]]; then
   EXTRASYSSRCS="$EXTRASYSSRCS vhd_unix.cpp"
-fi
-
-
-dnl Use 68k CPU natively?
-WANT_NATIVE_M68K=no
-if [[ "x$HAVE_M68K" = "xyes" -a "x$CAN_NATIVE_M68K" = "xyes" ]]; then
-  AC_DEFINE(ENABLE_NATIVE_M68K, 1, [Define if using native 68k mode.])
-  WANT_NATIVE_M68K=yes
 fi
 
 if [[ "x$HAVE_PTHREADS" = "xno" ]]; then
@@ -1116,42 +955,6 @@ AC_TRANSLATE_DEFINE(HAVE_MMAP_VM, "$have_mmap_vm",
   [Define if your system has a working mmap()-based memory allocator.])
 
 fi dnl HAVE_MMAP_VM
-
-dnl Check if we can modify the __PAGEZERO segment for use as Low Memory
-AC_CACHE_CHECK([whether __PAGEZERO can be Low Memory area 0x0000-0x2000],
-  ac_cv_pagezero_hack, [
-  ac_cv_pagezero_hack=no 
-  if AC_TRY_COMMAND([Darwin/testlmem.sh 0x2000]); then
-    ac_cv_pagezero_hack=yes
-    dnl might as well skip the test for mmap-able low memory
-    ac_cv_can_map_lm=no
-  fi
-])
-AC_TRANSLATE_DEFINE(PAGEZERO_HACK, "$ac_cv_pagezero_hack",
-  [Define if the __PAGEZERO Mach-O Low Memory Globals hack works on this system.])
-
-dnl Check if we can mmap 0x2000 bytes from 0x0000
-AC_CACHE_CHECK([whether we can map Low Memory area 0x0000-0x2000],
-  ac_cv_can_map_lm, [
-  AC_LANG_SAVE
-  AC_LANG_CPLUSPLUS
-  AC_TRY_RUN([
-    #include "../CrossPlatform/vm_alloc.cpp"
-    int main(void) { /* returns 0 if we could map the lowmem globals */
-      volatile char * lm = 0;
-      if (vm_init() < 0) exit(1);
-      if (vm_acquire_fixed(0, 0x2000) < 0) exit(1);
-      lm[0] = 'z';
-      if (vm_release((char *)lm, 0x2000) < 0) exit(1);
-      vm_exit(); exit(0);
-    }
-  ], ac_cv_can_map_lm=yes, ac_cv_can_map_lm=no,
-  dnl When cross-compiling, do not assume anything.
-  ac_cv_can_map_lm="$BII_CROSS_MAP_LOW_AREA"
-  )
-  AC_LANG_RESTORE
-  ]
-)
 
 dnl Check signal handlers need to be reinstalled
 AC_CACHE_CHECK([whether signal handlers need to be reinstalled],
@@ -1418,32 +1221,10 @@ AC_TRANSLATE_DEFINE(HAVE_LINKER_SCRIPT, "$ac_cv_linker_script_works",
   [Define if there is a linker script to relocate the executable above 0x70000000.])
 
 dnl Determine the addressing mode to use
-if [[ "x$WANT_NATIVE_M68K" = "xyes" ]]; then
-  ADDRESSING_MODE="real"
-else
   ADDRESSING_MODE=""
   AC_MSG_CHECKING([for the addressing mode to use])
   for am in $ADDRESSING_TEST_ORDER; do
     case $am in
-    real)
-      dnl Requires ability to mmap() Low Memory globals
-      if [[ "x$ac_cv_can_map_lm$ac_cv_pagezero_hack" = "xnono" ]]; then
-        continue
-      fi
-      dnl Requires VOSF screen updates
-      if [[ "x$CAN_VOSF" = "xno" ]]; then
-        continue
-      fi
-      dnl Real addressing will probably work.
-      ADDRESSING_MODE="real"
-      WANT_VOSF=yes dnl we can use VOSF and we need it actually
-      DEFINES="$DEFINES -DREAL_ADDRESSING"
-      if [[ "x$ac_cv_pagezero_hack" = "xyes" ]]; then
-        BLESS=Darwin/lowmem
-        LDFLAGS="$LDFLAGS -pagezero_size 0x2000"
-      fi
-      break
-      ;;
     direct)
       dnl Requires VOSF screen updates
       if [[ "x$CAN_VOSF" = "xyes" ]]; then
@@ -1467,7 +1248,6 @@ else
     AC_MSG_WARN([Sorry, no suitable addressing mode in $ADDRESSING_TEST_ORDER])
     ADDRESSING_MODE="memory banks"
   fi
-fi
 
 dnl Banked Memory Addressing mode is not supported by the JIT compiler
 if [[ "x$WANT_JIT" = "xyes" -a "x$ADDRESSING_MODE" = "xmemory banks" ]]; then
@@ -1650,10 +1430,6 @@ elif [[ "x$HAVE_GCC27" = "xyes" -a "x$HAVE_SPARC" = "xyes" -a "x$HAVE_GAS" = "xy
     esac
     ;;
   esac
-elif [[ "x$WANT_NATIVE_M68K" = "xyes" ]]; then
-  dnl Native m68k, no emulation
-  CPUINCLUDES="-I../native_cpu"
-  CPUSRCS="asm_support.s"
 fi
 
 dnl Enable JIT compiler, if possible.
@@ -1871,11 +1647,9 @@ dnl Check for certain math functions
 AC_CHECK_FUNCS(atanh)
 AC_CHECK_FUNCS(isnan isinf finite isnormal signbit)
 
-dnl UAE CPU sources for all non-m68k-native architectures.
-if [[ "x$WANT_NATIVE_M68K" = "xno" ]]; then
-  CPUINCLUDES="-I../uae_cpu"
-  CPUSRCS="../uae_cpu/basilisk_glue.cpp ../uae_cpu/memory.cpp ../uae_cpu/newcpu.cpp ../uae_cpu/readcpu.cpp $FPUSRCS cpustbl.cpp cpudefs.cpp $CPUSRCS $JITSRCS"
-fi
+dnl UAE CPU sources for all architectures.
+CPUINCLUDES="-I../uae_cpu"
+CPUSRCS="../uae_cpu/basilisk_glue.cpp ../uae_cpu/memory.cpp ../uae_cpu/newcpu.cpp ../uae_cpu/readcpu.cpp $FPUSRCS cpustbl.cpp cpudefs.cpp $CPUSRCS $JITSRCS"
 
 dnl Or if we have -IPA (MIPSPro compilers)
 if [[ "x$HAVE_IPA" = "xyes" ]]; then
@@ -1902,18 +1676,12 @@ echo
 echo Mac OS X GUI ........................... : $WANT_MACOSX_GUI
 echo Mac OS X Sound ......................... : $WANT_MACOSX_SOUND
 echo SDL support ............................ : $SDL_SUPPORT
-echo SDL major-version ...................... : $WANT_SDL_VERSION_MAJOR
 echo BINCUE support ......................... : $have_bincue
 echo LIBVHD support ......................... : $have_libvhd
 echo VDE support ............................ : $have_vdeplug
-echo XFree86 DGA support .................... : $WANT_XF86_DGA
-echo XFree86 VidMode support ................ : $WANT_XF86_VIDMODE
-echo fbdev DGA support ...................... : $WANT_FBDEV_DGA
 echo Enable video on SEGV signals ........... : $WANT_VOSF
-echo ESD sound support ...................... : $WANT_ESD
 echo GTK user interface ..................... : $WANT_GTK
 echo mon debugger support ................... : $WANT_MON
-echo Running m68k code natively ............. : $WANT_NATIVE_M68K
 echo Use JIT compiler ....................... : $WANT_JIT
 echo JIT debug mode ......................... : $WANT_JIT_DEBUG
 echo Floating-Point emulation core .......... : $FPE_CORE

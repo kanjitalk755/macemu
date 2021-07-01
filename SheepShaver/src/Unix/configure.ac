@@ -1,7 +1,7 @@
 dnl Process this file with autoconf to produce a configure script.
 dnl Written in 2002 by Christian Bauer
 
-AC_INIT([SheepShaver], 2.4, [Christian.Bauer@uni-mainz.de], SheepShaver)
+AC_INIT([SheepShaver], [m4_esyscmd_s([git describe --always --tags --dirty])])
 AC_CONFIG_SRCDIR(main_unix.cpp)
 AC_PREREQ(2.52)
 AC_CONFIG_HEADER(config.h)
@@ -31,12 +31,8 @@ esac
 dnl Options.
 AC_ARG_ENABLE(jit,          [  --enable-jit            enable JIT compiler [default=yes]], [WANT_JIT=$enableval], [WANT_JIT=yes])
 AC_ARG_ENABLE(ppc-emulator, [  --enable-ppc-emulator   use the selected PowerPC emulator [default=auto]], [WANT_EMULATED_PPC=$enableval], [WANT_EMULATED_PPC=auto])
-AC_ARG_ENABLE(fbdev-dga,    [  --enable-fbdev-dga      use direct frame buffer access via /dev/fb0 [default=yes]], [WANT_FBDEV_DGA=$enableval], [WANT_FBDEV_DGA=yes])
-AC_ARG_ENABLE(xf86-dga,     [  --enable-xf86-dga       use the XFree86 DGA extension [default=yes]], [WANT_XF86_DGA=$enableval], [WANT_XF86_DGA=yes])
-AC_ARG_ENABLE(xf86-vidmode, [  --enable-xf86-vidmode   use the XFree86 VidMode extension [default=yes]], [WANT_XF86_VIDMODE=$enableval], [WANT_XF86_VIDMODE=yes])
 AC_ARG_ENABLE(vosf,         [  --enable-vosf           enable video on SEGV signals [default=no]], [WANT_VOSF=$enableval], [WANT_VOSF=no])
 AC_ARG_ENABLE(standalone-gui,[  --enable-standalone-gui enable a standalone GUI prefs editor [default=no]], [WANT_STANDALONE_GUI=$enableval], [WANT_STANDALONE_GUI=no])
-AC_ARG_WITH(esd,            [  --with-esd              support ESD for sound under Linux/FreeBSD [default=yes]], [WANT_ESD=$withval], [WANT_ESD=yes])
 AC_ARG_WITH(gtk,            [  --with-gtk              use GTK user interface [default=yes]],
   [case "$withval" in
    gtk1)      WANT_GTK="gtk";;
@@ -72,7 +68,6 @@ AC_ARG_ENABLE(sdl-video,    [  --enable-sdl-video      use SDL for video graphic
 AC_ARG_ENABLE(sdl-audio,    [  --enable-sdl-audio      use SDL for audio [default=no]], [WANT_SDL_AUDIO=$enableval], [WANT_SDL_AUDIO=yes])
 AC_ARG_ENABLE(sdl-framework,    [  --enable-sdl-framework  use SDL framework [default=no]], [WANT_SDL_FRAMEWORK=$enableval], [WANT_SDL_FRAMEWORK=no])
 AC_ARG_ENABLE(sdl-framework-prefix,    [  --enable-sdl-framework-prefix=PFX    default=/Library/Frameworks], [SDL_FRAMEWORK="$enableval"], [SDL_FRAMEWORK=/Library/Frameworks])
-AC_ARG_WITH(sdl1,            [  --with-sdl1             use SDL 1.x, rather than SDL 2.x [default=no]], [WANT_SDL_VERSION_MAJOR=1], [])
 
 dnl Checks for programs.
 AC_PROG_CC
@@ -177,9 +172,6 @@ dnl Do we need SDL?
 WANT_SDL=no
 if [[ "x$WANT_SDL_VIDEO" = "xyes" ]]; then
   WANT_SDL=yes
-  WANT_XF86_DGA=no
-  WANT_XF86_VIDMODE=no
-  WANT_FBDEV_DGA=no
   SDL_SUPPORT="$SDL_SUPPORT video"
 fi
 if [[ "x$WANT_SDL_AUDIO" = "xyes" ]]; then
@@ -188,84 +180,32 @@ if [[ "x$WANT_SDL_AUDIO" = "xyes" ]]; then
 fi
 if [[ "x$WANT_SDL" = "xyes" ]]; then
   if [[ "x$WANT_SDL_FRAMEWORK" = "xyes" ]]; then
-    TEMP_WANT_SDL_VERSION_MAJOR=$WANT_SDL_VERSION_MAJOR
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x" ]]; then
-      TEMP_WANT_SDL_VERSION_MAJOR=2
-    fi
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x2" ]]; then
-      AC_CHECK_SDLFRAMEWORK(SDL2, [#include <SDL.h>], [
-        WANT_SDL_VERSION_MAJOR=2
-      ], [
-        TEMP_WANT_SDL_VERSION_MAJOR=1
-      ])
-    fi
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x1" ]]; then
-      AC_CHECK_SDLFRAMEWORK(SDL, [#include <SDL.h>], [
-        WANT_SDL_VERSION_MAJOR=1
-      ])
-    fi
+    AC_CHECK_SDLFRAMEWORK(SDL2, [#include <SDL.h>])
   else
     ac_cv_framework_SDL=no
   fi
   if [[ "x$ac_cv_framework_SDL" = "xno" ]]; then
-    TEMP_WANT_SDL_VERSION_MAJOR=$WANT_SDL_VERSION_MAJOR
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x" ]]; then
-      TEMP_WANT_SDL_VERSION_MAJOR=2
-    fi
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x2" ]]; then
-      AC_PATH_PROG(sdl2_config, "sdl2-config")
-      if [[ -n "$sdl2_config" ]]; then
-        sdl2_cflags=`$sdl2_config --cflags`
-        if [[ "x$WANT_SDL_STATIC" = "xyes" ]]; then
-          sdl2_libs=`$sdl2_config --static-libs`
-        else
-          sdl2_libs=`$sdl2_config --libs`
-        fi
-        CFLAGS="$CFLAGS $sdl2_cflags"
-        CXXFLAGS="$CXXFLAGS $sdl2_cflags"
-        LIBS="$LIBS $sdl2_libs"
-        WANT_SDL_VERSION_MAJOR=2
+    AC_PATH_PROG(sdl2_config, "sdl2-config")
+    if [[ -n "$sdl2_config" ]]; then
+      sdl2_cflags=`$sdl2_config --cflags`
+      if [[ "x$WANT_SDL_STATIC" = "xyes" ]]; then
+        sdl2_libs=`$sdl2_config --static-libs`
       else
-        TEMP_WANT_SDL_VERSION_MAJOR=1
+        sdl2_libs=`$sdl2_config --libs`
       fi
-    fi
-    if [[ "x$TEMP_WANT_SDL_VERSION_MAJOR" = "x1" ]]; then
-      AC_PATH_PROG(sdl_config, "sdl-config")
-      if [[ -n "$sdl_config" ]]; then
-        sdl_cflags=`$sdl_config --cflags`
-        if [[ "x$WANT_SDL_STATIC" = "xyes" ]]; then
-          sdl_libs=`$sdl_config --static-libs`
-        else
-          sdl_libs=`$sdl_config --libs`
-        fi
-        CFLAGS="$CFLAGS $sdl_cflags"
-        CXXFLAGS="$CXXFLAGS $sdl_cflags"
-        LIBS="$LIBS $sdl_libs"
-        WANT_SDL_VERSION_MAJOR=1
-      else
-        WANT_SDL=no
-        WANT_SDL_VIDEO=no
-        WANT_SDL_AUDIO=no
-      fi
+      CFLAGS="$CFLAGS $sdl2_cflags"
+      CXXFLAGS="$CXXFLAGS $sdl2_cflags"
+      LIBS="$LIBS $sdl2_libs"
+    else
+      WANT_SDL=no
+      WANT_SDL_VIDEO=no
+      WANT_SDL_AUDIO=no
     fi
   fi
   SDL_SUPPORT=`echo "$SDL_SUPPORT" | sed -e "s/^ //"`
 else
   SDL_SUPPORT="none"
 fi
-
-dnl We need X11, if not using SDL.
-if [[ "x$WANT_SDL_VIDEO" != "xyes" ]]; then
-  AC_PATH_XTRA
-  if [[ "x$no_x" = "xyes" ]]; then
-    AC_MSG_ERROR([You need X11 to run SheepShaver.])
-  fi
-  CFLAGS="$CFLAGS $X_CFLAGS"
-  CXXFLAGS="$CXXFLAGS $X_CFLAGS"
-  LIBS="$LIBS $X_PRE_LIBS $X_LIBS -lX11 -lXext $X_EXTRA_LIBS"
-fi
-
-
 
 dnl We need pthreads on non-PowerPC systems. Try libpthread first, then libc_r (FreeBSD), then PTL.
 HAVE_PTHREADS=yes
@@ -300,38 +240,6 @@ no:linux*|no:netbsd*)
 esac
 if [[ "x$HAVE_PTHREADS" = "xyes" ]]; then
   AC_DEFINE(HAVE_PTHREADS, 1, [Define if pthreads are available.])
-fi
-
-dnl We use FBDev DGA if possible.
-if [[ "x$WANT_FBDEV_DGA" = "xyes" ]]; then
-  AC_CHECK_HEADER(linux/fb.h, [
-    AC_DEFINE(ENABLE_FBDEV_DGA, 1, [Define if using Linux fbdev extension.])
-  ], [
-    AC_MSG_WARN([Could not find Linux FBDev extension, ignoring --enable-fbdev-dga.])
-    WANT_FBDEV_DGA=no
-  ])
-fi
-
-dnl We use XFree86 DGA if possible.
-if [[ "x$WANT_XF86_DGA" = "xyes" ]]; then
-  AC_CHECK_LIB(Xxf86dga, XF86DGAQueryExtension, [
-    AC_DEFINE(ENABLE_XF86_DGA, 1, [Define if using XFree86 DGA extension.])
-    LIBS="$LIBS -lXxf86dga"
-  ], [
-    AC_MSG_WARN([Could not find XFree86 DGA extension, ignoring --enable-xf86-dga.])
-    WANT_XF86_DGA=no
-  ])
-fi
-
-dnl We use XFree86 VidMode if possible.
-if [[ "x$WANT_XF86_VIDMODE" = "xyes" ]]; then
-  AC_CHECK_LIB(Xxf86vm, XF86VidModeQueryExtension, [
-    AC_DEFINE(ENABLE_XF86_VIDMODE, 1, [Define if using XFree86 DGA extension.])
-    LIBS="$LIBS -lXxf86vm"
-  ], [
-    AC_MSG_WARN([Could not find XFree86 VidMode extension, ignoring --enable-xf86-vidmode.])
-    WANT_XF86_VIDMODE=no
-  ])
 fi
 
 dnl We use GTK+ if possible.
@@ -383,25 +291,10 @@ if [[ "$WANT_GTK" = "no" ]]; then
 fi
 AC_SUBST(STANDALONE_GUI, [$WANT_STANDALONE_GUI])
 
-dnl We use ESD if possible.
-if [[ "x$WANT_ESD" = "xyes" ]]; then
-  WANT_ESD=no
-  AM_PATH_ESD(0.2.8, [
-    AC_DEFINE(ENABLE_ESD, 1, [Define is using ESD.])
-    CFLAGS="$CFLAGS $ESD_CFLAGS"
-    CXXFLAGS="$CXXFLAGS $ESD_CFLAGS"
-    LIBS="$LIBS $ESD_LIBS"
-    WANT_ESD=yes
-  ], [
-    AC_MSG_WARN([Could not find ESD, disabling ESD support.])
-  ])
-fi
-
 dnl We use 64-bit file size support if possible.
 AC_SYS_LARGEFILE
 
 dnl Checks for header files.
-AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
 AC_CHECK_HEADERS(malloc.h stdint.h)
 AC_CHECK_HEADERS(mach/vm_map.h mach/mach_init.h sys/mman.h)
@@ -638,7 +531,6 @@ EXTRASYSSRCS=
 case "$target_os" in
 linux*)
   ETHERSRC=ether_unix.cpp
-  AUDIOSRC=audio_oss_esd.cpp
   SCSISRC=Linux/scsi_linux.cpp
   if [[ "x$EMULATED_PPC" = "xno" ]]; then
     EXTRASYSSRCS="paranoia.cpp Linux/sheepthreads.c ppc_asm.S"
@@ -668,26 +560,10 @@ darwin*)
       CPPFLAGS="$CPPFLAGS -I../MacOSX/Launcher"
     fi
   fi
-  if [[ "x$WANT_ESD" = "xno" -a "x$ac_cv_framework_CoreAudio" = "xyes" -a "x$WANT_SDL_AUDIO" = "xno" ]]; then
+  if [[ "x$ac_cv_framework_CoreAudio" = "xyes" -a "x$WANT_SDL_AUDIO" = "xno" ]]; then
     AUDIOSRC="../MacOSX/audio_macosx.cpp ../MacOSX/AudioBackEnd.cpp ../MacOSX/AudioDevice.cpp ../MacOSX/MacOSX_sound_if.cpp"
     OSX_CORE_AUDIO="-DOSX_CORE_AUDIO"
   fi
-  ;;
-irix*)
-  AUDIOSRC=Irix/audio_irix.cpp
-  LIBS="$LIBS -laudio"
-  WANT_ESD=no
-
-  dnl Check if our compiler supports -IPA (MIPSPro)
-  HAVE_IPA=no
-  ocflags="$CFLAGS"
-  CFLAGS=`echo " $CFLAGS -IPA" | sed -e "s/ -g //g"`
-  AC_MSG_CHECKING(if "-IPA" works)
-  dnl Do a test compile of an empty function
-  AC_TRY_COMPILE([#if defined __GNUC__
-                  # error GCC does not support IPA yet
-                  #endif],, [AC_MSG_RESULT(yes); HAVE_IPA=yes], AC_MSG_RESULT(no))
-  CFLAGS="$ocflags"
   ;;
 esac
 
@@ -747,7 +623,7 @@ if [[ "x$WANT_SDL" = "xyes" ]]; then
 fi
 if [[ "x$WANT_SDL_VIDEO" = "xyes" ]]; then
   AC_DEFINE(USE_SDL_VIDEO, 1, [Define to enable SDL video graphics support.])
-  VIDEOSRCS="../SDL/video_sdl.cpp ../SDL/video_sdl2.cpp"
+  VIDEOSRCS="../SDL/video_sdl2.cpp"
   KEYCODES="../SDL/keycodes"
   if [[ "x$ac_cv_framework_Carbon" = "xyes" ]]; then
     AC_MSG_CHECKING([whether __LP64__ is defined])
@@ -1742,16 +1618,11 @@ echo
 echo SheepShaver configuration summary:
 echo
 echo SDL support ...................... : $SDL_SUPPORT
-echo SDL major-version ................ : $WANT_SDL_VERSION_MAJOR
 echo BINCUE support ................... : $have_bincue
 echo LIBVHD support ................... : $have_libvhd
-echo FBDev DGA support ................ : $WANT_FBDEV_DGA
-echo XFree86 DGA support .............. : $WANT_XF86_DGA
-echo XFree86 VidMode support .......... : $WANT_XF86_VIDMODE
 echo Using PowerPC emulator ........... : $EMULATED_PPC
 echo Enable JIT compiler .............. : $WANT_JIT
 echo Enable video on SEGV signals ..... : $WANT_VOSF
-echo ESD sound support ................ : $WANT_ESD
 echo GTK user interface ............... : $WANT_GTK
 echo mon debugger support ............. : $WANT_MON
 echo Addressing mode .................. : $WANT_ADDRESSING_MODE

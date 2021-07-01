@@ -28,10 +28,6 @@
 #include "config.h"
 #include "user_strings_windows.h"
 
-#ifndef STDC_HEADERS
-#error "You don't have ANSI C header files."
-#endif
-
 #ifndef WIN32
 #define WIN32
 #endif
@@ -47,23 +43,11 @@
 #include <WinSock2.h>
 #include <sys/types.h>
 
-
-/* Mac and host address space are distinct */
-#ifndef REAL_ADDRESSING
-#define REAL_ADDRESSING 0
-#endif
-#if REAL_ADDRESSING
-#error "Real Addressing mode can't work without proper kernel support"
-#endif
-
-/* Using 68k emulator */
-#define EMULATED_68K 1
-
 /* The m68k emulator uses a prefetch buffer ? */
 #define USE_PREFETCH_BUFFER 0
 
 /* Mac ROM is write protected when banked memory is used */
-#if REAL_ADDRESSING || DIRECT_ADDRESSING
+#if DIRECT_ADDRESSING
 # define ROM_IS_WRITE_PROTECTED 0
 # define USE_SCRATCHMEM_SUBTERFUGE 1
 #else

@@ -21,9 +21,7 @@
 /*
  *  NOTES:
  *
- *  See main_beos.cpp for a description of the three operating modes.
- *
- *  In addition to that, we have to handle the fact that the MacOS ABI
+ *  We have to handle the fact that the MacOS ABI
  *  is slightly different from the SysV ABI used by Linux:
  *    - Stack frames are different (e.g. LR is stored in 8(r1) under
  *      MacOS, but in 4(r1) under Linux)
@@ -41,7 +39,7 @@
  *  asm_linux.S that create a MacOS stack frame, load the TOC pointer
  *  and put the arguments into the right registers.
  *
- *  As on the BeOS, we have to specify an alternate signal stack because
+ *  We have to specify an alternate signal stack because
  *  interrupts (and, under Linux, Low Memory accesses) may occur when r1
  *  is pointing to the Kernel Data or to Low Memory. There is one
  *  problem, however, due to the alternate signal stack being global to
@@ -127,21 +125,8 @@
 #include <string>
 #endif
 
-#ifndef USE_SDL_VIDEO
-#include <X11/Xlib.h>
-#endif
-
 #ifdef ENABLE_GTK
 #include <gtk/gtk.h>
-#if !defined(GDK_WINDOWING_QUARTZ) && !defined(GDK_WINDOWING_WAYLAND)
-#include <X11/Xlib.h>
-#endif
-#endif
-
-#ifdef ENABLE_XF86_DGA
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/extensions/Xxf86dga.h>
 #endif
 
 #ifdef ENABLE_MON
@@ -178,37 +163,34 @@ const uint32 SIG_STACK_SIZE = 0x10000;		// Size of signal stack
 
 
 // Global variables (exported)
+int64 CPUClockSpeed;	// Processor clock speed (Hz)
+int64 BusClockSpeed;	// Bus clock speed (Hz)
+int64 TimebaseSpeed;	// Timebase clock speed (Hz)
 #if !EMULATED_PPC
 void *TOC = NULL;		// Pointer to Thread Local Storage (r2)
 void *R13 = NULL;		// Pointer to .sdata section (r13 under Linux)
 #endif
+
+// RAM and ROM
+uint8 *RAMBaseHost;		// Base address of Mac RAM (host address space)
+uint8 *ROMBaseHost;		// Base address of Mac ROM (host address space)
+uint8 *MacFrameBaseHost=NULL;	// Mac VRAM
 uint32 RAMBase;			// Base address of Mac RAM
 uint32 RAMSize;			// Size of Mac RAM
 uint32 ROMBase;			// Base address of Mac ROM
+uint32 ROMEnd;
+uint32 VRAMSize;
+
 uint32 KernelDataAddr;	// Address of Kernel Data
 uint32 BootGlobsAddr;	// Address of BootGlobs structure at top of Mac RAM
 uint32 DRCacheAddr;		// Address of DR Cache
 uint32 PVR;				// Theoretical PVR
-int64 CPUClockSpeed;	// Processor clock speed (Hz)
-int64 BusClockSpeed;	// Bus clock speed (Hz)
-int64 TimebaseSpeed;	// Timebase clock speed (Hz)
-uint8 *RAMBaseHost;		// Base address of Mac RAM (host address space)
-uint8 *ROMBaseHost;		// Base address of Mac ROM (host address space)
-uint32 ROMEnd;
 
 #if defined(__APPLE__) && defined(__x86_64__)
 uint8 gZeroPage[0x3000], gKernelData[0x2000];
 #endif
 
 // Global variables
-#ifndef USE_SDL_VIDEO
-char *x_display_name = NULL;				// X11 display name
-Display *x_display = NULL;					// X11 display handle
-#ifdef X11_LOCK_TYPE
-X11_LOCK_TYPE x_display_lock = X11_LOCK_INIT; // X11 display lock
-#endif
-#endif
-
 static int zero_fd = 0;						// FD of /dev/zero
 static bool lm_area_mapped = false;			// Flag: Low Memory area mmap()ped
 static bool rom_area_mapped = false;		// Flag: Mac ROM mmap()ped
@@ -342,26 +324,21 @@ int atomic_or(int *var, int v)
 }
 #endif
 
-
 /*
  *  Memory management helpers
  */
 
-static inline uint8 *vm_mac_acquire(uint32 size)
-{
-	return (uint8 *)vm_acquire(size);
+static inline uint8 *vm_mac_acquire(uint32 size){
+	return (uint8 *)vm_acquire(size, VM_MAP_DEFAULT | VM_MAP_32BIT);
 }
 
-static inline int vm_mac_acquire_fixed(uint32 addr, uint32 size)
-{
+static inline int vm_mac_acquire_fixed(uint32 addr, uint32 size){
 	return vm_acquire_fixed(Mac2HostAddr(addr), size);
 }
 
-static inline int vm_mac_release(uint32 addr, uint32 size)
-{
+static inline int vm_mac_release(uint32 addr, uint32 size){
 	return vm_release(Mac2HostAddr(addr), size);
 }
-
 
 /*
  *  Main program
@@ -607,7 +584,7 @@ static bool load_mac_rom(void)
 	rom_tmp = new uint8[ROM_SIZE];
 	actual = read(rom_fd, (void *)rom_tmp, ROM_SIZE);
 	close(rom_fd);
-	
+
 	// Decode Mac ROM
 	if (!DecodeROM(rom_tmp, actual)) {
 		if (rom_size != 4*1024*1024) {
@@ -682,8 +659,7 @@ static bool install_signal_handlers(void)
 
 static std::string sdl_vmdir;
 
-static bool init_sdl()
-{
+static bool init_sdl(){
 	int sdl_flags = 0;
 #ifdef USE_SDL_VIDEO
 	sdl_flags |= SDL_INIT_VIDEO;
@@ -729,11 +705,7 @@ static bool init_sdl()
 }
 #endif
 
-int main(int argc, char **argv)
-{
-#if defined(ENABLE_GTK) && !defined(GDK_WINDOWING_QUARTZ) && !defined(GDK_WINDOWING_WAYLAND)
-	XInitThreads();
-#endif
+int main(int argc, char **argv){
 	char str[256];
 	bool memory_mapped_from_zero, ram_rom_areas_contiguous;
 	const char *vmdir = NULL;
@@ -743,8 +715,7 @@ int main(int argc, char **argv)
 	tzset();
 
 	// Print some info
-	printf(GetString(STR_ABOUT_TEXT1), VERSION_MAJOR, VERSION_MINOR);
-	printf(" %s\n", GetString(STR_ABOUT_TEXT2));
+	printf(GetString(STR_ABOUT_TEXT));
 
 #if !EMULATED_PPC
 #ifdef SYSTEM_CLOBBERS_R2
@@ -784,12 +755,6 @@ int main(int argc, char **argv)
 			argv[i] = NULL;
 		} else if (strcmp(argv[i], "--help") == 0) {
 			usage(argv[0]);
-#ifndef USE_SDL_VIDEO
-		} else if (strcmp(argv[i], "--display") == 0) {
-			i++;
-			if (i < argc)
-				x_display_name = strdup(argv[i]);
-#endif
 		} else if (strcmp(argv[i], "--gui-connection") == 0) {
 			argv[i++] = NULL;
 			if (i < argc) {
@@ -859,22 +824,6 @@ int main(int argc, char **argv)
 			usage(argv[0]);
 		}
 	}
-
-#ifndef USE_SDL_VIDEO
-	// Open display
-	x_display = XOpenDisplay(x_display_name);
-	if (x_display == NULL) {
-		char str[256];
-		sprintf(str, GetString(STR_NO_XSERVER_ERR), XDisplayName(x_display_name));
-		ErrorAlert(str);
-		goto quit;
-	}
-
-#if defined(ENABLE_XF86_DGA) && !defined(ENABLE_MON)
-	// Fork out, so we can return from fullscreen mode when things get ugly
-	XF86DGAForkApp(DefaultScreen(x_display));
-#endif
-#endif
 
 #ifdef ENABLE_MON
 	// Initialize mon
@@ -1015,7 +964,7 @@ int main(int argc, char **argv)
 		ErrorAlert(GetString(STR_RAM_AREA_TOO_HIGH_ERR));
 		goto quit;
 	}
-	
+
 	// Create area for Mac ROM
 	if (!ram_rom_areas_contiguous) {
 		if (vm_mac_acquire_fixed(ROM_BASE, ROM_AREA_SIZE + SIG_STACK_SIZE) < 0) {
@@ -1039,6 +988,16 @@ int main(int argc, char **argv)
 
 	if (RAMBase > ROMBase) {
 		ErrorAlert(GetString(STR_RAM_HIGHER_THAN_ROM_ERR));
+		goto quit;
+	}
+
+	// allocate Mac framebuffer
+	VRAMSize = 16*1024*1024; // 16mb, more than enough for 1920x1440x32
+	MacFrameBaseHost = vm_mac_acquire(VRAMSize);
+	if (MacFrameBaseHost == VM_MAP_FAILED) {
+		MacFrameBaseHost = NULL;
+		sprintf(str, GetString(STR_RAM_MMAP_ERR), strerror(errno));
+		ErrorAlert(str);
 		goto quit;
 	}
 
@@ -1187,6 +1146,10 @@ static void Quit(void)
 	if (lm_area_mapped)
 		vm_mac_release(0, 0x3000);
 
+	if(MacFrameBaseHost){
+		vm_mac_release(Host2MacAddr(MacFrameBaseHost),VRAMSize);
+	}
+
 	// Close /dev/zero
 	if (zero_fd > 0)
 		close(zero_fd);
@@ -1200,12 +1163,6 @@ static void Quit(void)
 #ifdef ENABLE_MON
 	// Exit mon
 	mon_exit();
-#endif
-
-	// Close X11 server connection
-#ifndef USE_SDL_VIDEO
-	if (x_display)
-		XCloseDisplay(x_display);
 #endif
 
 	// Notify GUI we are about to leave
@@ -1508,7 +1465,7 @@ void Set_pthread_attr(pthread_attr_t *attr, int priority)
 		pthread_attr_setinheritsched(attr, PTHREAD_EXPLICIT_SCHED);
 		pthread_attr_setschedpolicy(attr, SCHED_FIFO);
 		struct sched_param fifo_param;
-		fifo_param.sched_priority = ((sched_get_priority_min(SCHED_FIFO) + 
+		fifo_param.sched_priority = ((sched_get_priority_min(SCHED_FIFO) +
 					      sched_get_priority_max(SCHED_FIFO)) / 2 +
 					     priority);
 		pthread_attr_setschedparam(attr, &fifo_param);
@@ -1534,7 +1491,7 @@ void Set_pthread_attr(pthread_attr_t *attr, int priority)
 #ifdef HAVE_PTHREADS
 
 struct B2_mutex {
-	B2_mutex() { 
+	B2_mutex() {
 	    pthread_mutexattr_t attr;
 	    pthread_mutexattr_init(&attr);
 	    // Initialize the mutex for priority inheritance --
@@ -1551,7 +1508,7 @@ struct B2_mutex {
 	    pthread_mutex_init(&m, &attr);
 	    pthread_mutexattr_destroy(&attr);
 	}
-	~B2_mutex() { 
+	~B2_mutex() {
 	    pthread_mutex_trylock(&m); // Make sure it's locked before
 	    pthread_mutex_unlock(&m);  // unlocking it.
 	    pthread_mutex_destroy(&m);
@@ -1711,7 +1668,7 @@ void sigusr2_handler(int sig, siginfo_t *sip, void *scp)
 
 				// Set extra stack for SIGSEGV handler
 				sigaltstack(&extra_stack, NULL);
-				
+
 				// Prepare for 68k interrupt level 1
 				WriteMacInt16(ReadMacInt32(0x67c), 1);
 				WriteMacInt32(ReadMacInt32(0x658) + 0xdc, ReadMacInt32(ReadMacInt32(0x658) + 0xdc) | ReadMacInt32(0x674));
@@ -1782,7 +1739,7 @@ static void sigsegv_handler(int sig, siginfo_t *sip, void *scp)
 
 	// Get effective address
 	uint32 addr = r->dar();
-	
+
 #ifdef SYSTEM_CLOBBERS_R2
 	// Restore pointer to Thread Local Storage
 	set_r2(TOC);
@@ -1813,19 +1770,19 @@ static void sigsegv_handler(int sig, siginfo_t *sip, void *scp)
 			r->pc() += 4;
 			r->gpr(8) = 0;
 			return;
-	
+
 		// MacOS 8.5 installation
 		} else if (r->pc() == ROMBase + 0x488140 && r->gpr(16) == 0xf8000000) {
 			r->pc() += 4;
 			r->gpr(8) = 0;
 			return;
-	
+
 		// MacOS 8 serial drivers on startup
 		} else if (r->pc() == ROMBase + 0x48e080 && (r->gpr(8) == 0xf3012002 || r->gpr(8) == 0xf3012000)) {
 			r->pc() += 4;
 			r->gpr(8) = 0;
 			return;
-	
+
 		// MacOS 8.1 serial drivers on startup
 		} else if (r->pc() == ROMBase + 0x48c5e0 && (r->gpr(20) == 0xf3012002 || r->gpr(20) == 0xf3012000)) {
 			r->pc() += 4;
@@ -1833,7 +1790,7 @@ static void sigsegv_handler(int sig, siginfo_t *sip, void *scp)
 		} else if (r->pc() == ROMBase + 0x4a10a0 && (r->gpr(20) == 0xf3012002 || r->gpr(20) == 0xf3012000)) {
 			r->pc() += 4;
 			return;
-	
+
 		// MacOS 8.6 serial drivers on startup (with DR Cache and OldWorld ROM)
 		} else if ((r->pc() - DR_CACHE_BASE) < DR_CACHE_SIZE && (r->gpr(16) == 0xf3012002 || r->gpr(16) == 0xf3012000)) {
 			r->pc() += 4;
@@ -1904,7 +1861,7 @@ static void sigsegv_handler(int sig, siginfo_t *sip, void *scp)
 						transfer_type = TYPE_STORE; transfer_size = SIZE_HALFWORD; addr_mode = MODE_UX; break;
 				}
 				break;
-	
+
 			case 32:	// lwz
 				transfer_type = TYPE_LOAD; transfer_size = SIZE_WORD; addr_mode = MODE_NORM; break;
 			case 33:	// lwzu
@@ -1960,7 +1917,7 @@ static void sigsegv_handler(int sig, siginfo_t *sip, void *scp)
 				break;
 #endif
 		}
-	
+
 		// Ignore ROM writes (including to the zero page, which is read-only)
 		if (transfer_type == TYPE_STORE &&
 			((addr >= ROMBase && addr < ROMBase + ROM_SIZE) ||
@@ -2305,20 +2262,18 @@ void display_alert(int title_id, int prefix_id, int button_id, const char *text)
 }
 #endif
 
-
 /*
  *  Display error alert
  */
 
-void ErrorAlert(const char *text)
-{
+void ErrorAlert(const char *text){
 	if (gui_connection) {
 		if (rpc_method_invoke(gui_connection, RPC_METHOD_ERROR_ALERT, RPC_TYPE_STRING, text, RPC_TYPE_INVALID) == RPC_ERROR_NO_ERROR &&
 			rpc_method_wait_for_reply(gui_connection, RPC_TYPE_INVALID) == RPC_ERROR_NO_ERROR)
 			return;
 	}
 #if defined(ENABLE_GTK) && !defined(USE_SDL_VIDEO)
-	if (PrefsFindBool("nogui") || x_display == NULL) {
+	if (PrefsFindBool("nogui")) {
 		printf(GetString(STR_SHELL_ERROR_PREFIX), text);
 		return;
 	}
@@ -2329,20 +2284,18 @@ void ErrorAlert(const char *text)
 #endif
 }
 
-
 /*
  *  Display warning alert
  */
 
-void WarningAlert(const char *text)
-{
+void WarningAlert(const char *text){
 	if (gui_connection) {
 		if (rpc_method_invoke(gui_connection, RPC_METHOD_WARNING_ALERT, RPC_TYPE_STRING, text, RPC_TYPE_INVALID) == RPC_ERROR_NO_ERROR &&
 			rpc_method_wait_for_reply(gui_connection, RPC_TYPE_INVALID) == RPC_ERROR_NO_ERROR)
 			return;
 	}
 #if defined(ENABLE_GTK) && !defined(USE_SDL_VIDEO)
-	if (PrefsFindBool("nogui") || x_display == NULL) {
+	if (PrefsFindBool("nogui")) {
 		printf(GetString(STR_SHELL_WARNING_PREFIX), text);
 		return;
 	}
@@ -2351,7 +2304,6 @@ void WarningAlert(const char *text)
 	printf(GetString(STR_SHELL_WARNING_PREFIX), text);
 #endif
 }
-
 
 /*
  *  Display choice alert

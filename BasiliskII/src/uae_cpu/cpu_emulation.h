@@ -23,26 +23,26 @@
 
 #include <string.h>
 
-
 /*
  *  Memory system
  */
 
 // RAM and ROM pointers (allocated and set by main_*.cpp)
-extern uint32 RAMBaseMac;		// RAM base (Mac address space), does not include Low Mem when != 0
-extern uint8 *RAMBaseHost;		// RAM base (host address space)
+extern const  uint32 RAMBaseMac;	// RAM base (Mac address space)
+extern uint8* RAMBaseHost;		// RAM base (host address space)
 extern uint32 RAMSize;			// Size of RAM
 
 extern uint32 ROMBaseMac;		// ROM base (Mac address space)
-extern uint8 *ROMBaseHost;		// ROM base (host address space)
+extern uint8* ROMBaseHost;		// ROM base (host address space)
 extern uint32 ROMSize;			// Size of ROM
+extern uint32 VRAMSize;			// Size of VRAM
 
-#if !REAL_ADDRESSING && !DIRECT_ADDRESSING
-// If we are not using real or direct addressing, the Mac frame buffer gets
+#if !DIRECT_ADDRESSING
+// If we are not using direct addressing, the Mac frame buffer gets
 // mapped to this location. The memory must be allocated by VideoInit().
 // If multiple monitors are used, they must share the frame buffer
-const uint32 MacFrameBaseMac = 0xa0000000;
-extern uint8 *MacFrameBaseHost;	// Frame buffer base (host address space)
+const  uint32 MacFrameBaseMac = 0xa0000000;
+extern uint8* MacFrameBaseHost;	// Frame buffer base (host address space)
 extern uint32 MacFrameSize;		// Size of frame buffer
 #endif
 extern int MacFrameLayout;		// Frame buffer layout (see defines below)
@@ -78,6 +78,8 @@ static inline void *Mac2Mac_memcpy(uint32 dest, uint32 src, size_t n) {return me
  */
 
 // Initialization
+extern bool InitMacMem(void);
+extern void MacMemExit(void);
 extern bool Init680x0(void);	// This routine may want to look at CPUType/FPUType to set up the apropriate emulation
 extern void Exit680x0(void);
 extern void InitFrameBufferMapping(void);

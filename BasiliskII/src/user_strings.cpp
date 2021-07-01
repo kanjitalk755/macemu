@@ -33,17 +33,13 @@
 #include "sysdeps.h"
 #include "user_strings.h"
 
-#ifdef __BEOS__
-#define ELLIPSIS "\xE2\x80\xA6"
-#else
 #define ELLIPSIS "..."
-#endif
 
+#include "version.h"
 
 // Common string definitions
 user_string_def common_strings[] = {
-	{STR_ABOUT_TEXT1, "Basilisk II V%d.%d"},
-	{STR_ABOUT_TEXT2, "by Christian Bauer et al."},
+	{STR_ABOUT_TEXT, "Basilisk II V" VERSION_STRING " by Christian Bauer et al.\n"},
 	{STR_READING_ROM_FILE, "Reading ROM file...\n"},
 	{STR_SHELL_ERROR_PREFIX, "ERROR: %s\n"},
 	{STR_GUI_ERROR_PREFIX, "Basilisk II error:\n%s"},

@@ -27,8 +27,8 @@
 
 #if USE_JIT
 
-#if !REAL_ADDRESSING && !DIRECT_ADDRESSING
-#error "Only Real or Direct Addressing is supported with the JIT Compiler"
+#if !DIRECT_ADDRESSING
+#error "Only Direct Addressing is supported with the JIT Compiler"
 #endif
 
 #if X86_ASSEMBLY && !SAHF_SETO_PROFITABLE
@@ -5003,11 +5003,13 @@ static inline const char *str_on_off(bool b)
 	return b ? "on" : "off";
 }
 
-void compiler_init(void)
-{
+void compiler_init(void* buf, int JITCacheSize){
 	static bool initialized = false;
 	if (initialized)
 		return;
+
+	compiled_code=(uint8*)buf;
+	cache_size=JITCacheSize;
 
 #if JIT_DEBUG
 	// JIT debug mode ?
@@ -5023,10 +5025,6 @@ void compiler_init(void)
 	avoid_fpu = true;
 #endif
 	write_log("<JIT compiler> : compile FPU instructions : %s\n", !avoid_fpu ? "yes" : "no");
-	
-	// Get size of the translation cache (in KB)
-	cache_size = PrefsFindInt32("jitcachesize");
-	write_log("<JIT compiler> : requested translation cache size : %d KB\n", cache_size);
 	
 	// Initialize target CPU (check for features, e.g. CMOV, rat stalls)
 	raw_init_cpu();
@@ -5065,23 +5063,10 @@ void compiler_init(void)
 #endif
 }
 
-void compiler_exit(void)
-{
+void compiler_exit(void){
 #if PROFILE_COMPILE_TIME
 	emul_end_time = clock();
 #endif
-	
-	// Deallocate translation cache
-	if (compiled_code) {
-		vm_release(compiled_code, cache_size * 1024);
-		compiled_code = 0;
-	}
-
-	// Deallocate popallspace
-	if (popallspace) {
-		vm_release(popallspace, POPALLSPACE_SIZE);
-		popallspace = 0;
-	}
 	
 #if PROFILE_COMPILE_TIME
 	write_log("### Compile Block statistics\n");
@@ -5135,25 +5120,29 @@ void compiler_exit(void)
 #endif
 }
 
-bool compiler_use_jit(void)
-{
+// Return bytes needed for JIT cache
+uint32 compiler_get_jit_cache_size(void){
 	// Check for the "jit" prefs item
 	if (!PrefsFindBool("jit"))
-		return false;
+		return 0;
 	
 	// Don't use JIT if translation cache size is less then MIN_CACHE_SIZE KB
-	if (PrefsFindInt32("jitcachesize") < MIN_CACHE_SIZE) {
+	uint32 JITCacheSize=PrefsFindInt32("jitcachesize");
+	if (JITCacheSize < MIN_CACHE_SIZE) {
 		write_log("<JIT compiler> : translation cache size is less than %d KB. Disabling JIT.\n", MIN_CACHE_SIZE);
-		return false;
+		return 0;
 	}
-	
+
+#if 0
 	// Enable JIT for 68020+ emulation only
 	if (CPUType < 2) {
 		write_log("<JIT compiler> : JIT is not supported in 680%d0 emulation mode, disabling.\n", CPUType);
-		return false;
+		return 0;
 	}
+#endif
 
-	return true;
+	write_log("<JIT compiler> : translation cache size : %d KB\n", JITCacheSize);
+	return (1024*JITCacheSize) + POPALLSPACE_SIZE;
 }
 
 void init_comp(void)
@@ -5565,9 +5554,7 @@ void get_n_addr(int address, int dest, int tmp)
 	f=dest;
 	}
 
-#if REAL_ADDRESSING
-	mov_l_rr(dest, address);
-#elif DIRECT_ADDRESSING
+#if DIRECT_ADDRESSING
 	lea_l_brr(dest,address,MEMBaseDiff);
 #endif
 	forget_about(tmp);
@@ -5649,10 +5636,6 @@ void calc_disp_ea_020(int base, uae_u32 dp, int target, int tmp)
     forget_about(tmp);
 }
 
-
-
-
-
 void set_cache_state(int enabled)
 {
     if (enabled!=letit)
@@ -5672,93 +5655,18 @@ uae_u32 get_jitted_size(void)
     return 0;
 }
 
-const int CODE_ALLOC_MAX_ATTEMPTS = 10;
-const int CODE_ALLOC_BOUNDARIES   = 128 * 1024; // 128 KB
-
-static uint8 *do_alloc_code(uint32 size, int depth)
-{
-#if defined(__linux__) && 0
-	/*
-	  This is a really awful hack that is known to work on Linux at
-	  least.
-	  
-	  The trick here is to make sure the allocated cache is nearby
-	  code segment, and more precisely in the positive half of a
-	  32-bit address space. i.e. addr < 0x80000000. Actually, it
-	  turned out that a 32-bit binary run on AMD64 yields a cache
-	  allocated around 0xa0000000, thus causing some troubles when
-	  translating addresses from m68k to x86.
-	*/
-	static uint8 * code_base = NULL;
-	if (code_base == NULL) {
-		uintptr page_size = getpagesize();
-		uintptr boundaries = CODE_ALLOC_BOUNDARIES;
-		if (boundaries < page_size)
-			boundaries = page_size;
-		code_base = (uint8 *)sbrk(0);
-		for (int attempts = 0; attempts < CODE_ALLOC_MAX_ATTEMPTS; attempts++) {
-			if (vm_acquire_fixed(code_base, size) == 0) {
-				uint8 *code = code_base;
-				code_base += size;
-				return code;
-			}
-			code_base += boundaries;
-		}
-		return NULL;
-	}
-
-	if (vm_acquire_fixed(code_base, size) == 0) {
-		uint8 *code = code_base;
-		code_base += size;
-		return code;
-	}
-
-	if (depth >= CODE_ALLOC_MAX_ATTEMPTS)
-		return NULL;
-
-	return do_alloc_code(size, depth + 1);
-#else
-	uint8 *code = (uint8 *)vm_acquire(size);
-	return code == VM_MAP_FAILED ? NULL : code;
-#endif
-}
-
-static inline uint8 *alloc_code(uint32 size)
-{
-	uint8 *ptr = do_alloc_code(size, 0);
-	/* allocated code must fit in 32-bit boundaries */
-	assert((uintptr)ptr <= 0xffffffff);
-	return ptr;
-}
-
-void alloc_cache(void)
-{
-	if (compiled_code) {
-		flush_icache_hard(6);
-		vm_release(compiled_code, cache_size * 1024);
-		compiled_code = 0;
-	}
+void alloc_cache(void){
+	assert(compiled_code);
+	assert(cache_size);
 	
-	if (cache_size == 0)
-		return;
-	
-	while (!compiled_code && cache_size) {
-		if ((compiled_code = alloc_code(cache_size * 1024)) == NULL) {
-			compiled_code = 0;
-			cache_size /= 2;
-		}
-	}
 	vm_protect(compiled_code, cache_size * 1024, VM_PAGE_READ | VM_PAGE_WRITE | VM_PAGE_EXECUTE);
 	
 	if (compiled_code) {
-		write_log("<JIT compiler> : actual translation cache size : %d KB at 0x%08X\n", cache_size, compiled_code);
 		max_compile_start = compiled_code + cache_size*1024 - BYTES_PER_INST;
 		current_compile_p = compiled_code;
 		current_cache_size = 0;
 	}
 }
-
-
 
 extern void op_illg_1 (uae_u32 opcode) REGPARAM;
 
@@ -5999,14 +5907,10 @@ static __inline__ void match_states(blockinfo* bi)
     }
 }
 
-static __inline__ void create_popalls(void)
-{
+static void create_popalls(void){
   int i,r;
 
-  if ((popallspace = alloc_code(POPALLSPACE_SIZE)) == NULL) {
-	  write_log("FATAL: Could not allocate popallspace!\n");
-	  abort();
-  }
+  popallspace = compiled_code + cache_size*1024;
   vm_protect(popallspace, POPALLSPACE_SIZE, VM_PAGE_READ | VM_PAGE_WRITE);
 
   int stack_space = STACK_OFFSET;
@@ -6322,8 +6226,8 @@ void build_comp(void)
 	write_log("<JIT compiler> : supposedly %d compileable opcodes!\n",count);
 
     /* Initialise state */
-    create_popalls();
     alloc_cache();
+    create_popalls();
     reset_lists();
 
     for (i=0;i<TAGSIZE;i+=2) {
@@ -7080,7 +6984,7 @@ void execute_normal(void)
 	if (!check_for_cache_miss()) {
 		cpu_history pc_hist[MAXRUN];
 		int blocklen = 0;
-#if REAL_ADDRESSING || DIRECT_ADDRESSING
+#if DIRECT_ADDRESSING
 		start_pc_p = regs.pc_p;
 		start_pc = get_virtual_address(regs.pc_p);
 #else
