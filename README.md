@@ -11,7 +11,11 @@ Linux x86 x86_64 JIT
 MinGW x86        JIT
 ```
 ### How To Build
-These builds need to be installed SDL2.0.14+ framework/library.
+
+These builds require the SDL2 framework, version 2.0.14, or higher. This can be donwnloaded from https://www.libsdl.org/release/SDL2-2.0.16.dmg
+
+You must then copy the framework to either /Library/Frameworks (global), or ~/Library/Frameworks (local user)
+
 #### BasiliskII
 ##### macOS
 preparation:
