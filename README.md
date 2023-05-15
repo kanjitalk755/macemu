@@ -38,7 +38,7 @@ $ make
 $ make check
 $ sudo make install
 ```
-On an Intel Mac, change the `configure` command for both GMP and MPFR as follows, and ignore the `make check` command:
+On an Apple Silicon (ARM) Mac, change the `configure` command for both GMP and MPFR as follows, and ignore the `make check` command:
 ```
 $ CFLAGS="-arch arm64" CXXFLAGS="$CFLAGS" ./configure -host=aarch64-apple-darwin --disable-shared 
 ```
