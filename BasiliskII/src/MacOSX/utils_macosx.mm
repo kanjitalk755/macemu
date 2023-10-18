@@ -19,9 +19,14 @@
  */
 
 #include <Cocoa/Cocoa.h>
+#include <QuartzCore/QuartzCore.h>
+#include <objc/runtime.h>
 #include "sysdeps.h"
-#include <SDL.h>
 #include "utils_macosx.h"
+#include <SDL.h>
+
+#include "utils_macosx.h"
+#include <vector>
 
 #if SDL_VERSION_ATLEAST(2,0,0)
 #include <SDL_syswm.h>
@@ -54,6 +59,82 @@ void disable_SDL2_macosx_menu_bar_keyboard_shortcuts() {
 		}
 	}
 }
+
+#ifdef VIDEO_ROOTLESS
+void make_window_transparent(SDL_Window * window)
+{
+    if (!window) {
+        return;
+    }
+    
+    extern int native_menubar_size;
+    native_menubar_size = (int)[[NSApp mainMenu] menuBarHeight];
+    
+    SDL_SysWMinfo wmInfo;
+    SDL_VERSION(&wmInfo.version);
+    if (!SDL_GetWindowWMInfo(window, &wmInfo)) {
+        return;
+    }
+    
+    CGColorRef clearColor = [NSColor clearColor].CGColor;
+    NSWindow *cocoaWindow = wmInfo.info.cocoa.window;
+    NSView *sdlView = cocoaWindow.contentView;
+    sdlView.wantsLayer = YES;
+    sdlView.layer.backgroundColor = [NSColor clearColor].CGColor;
+    if (SDL_GetWindowData(window, "observing") == NULL) {
+        NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+        [nc addObserverForName:NSWindowDidBecomeKeyNotification object:cocoaWindow queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
+            NSWindow *window = (NSWindow*)note.object;
+            window.level = NSMainMenuWindowLevel+1;
+        }];
+        [nc addObserverForName:NSWindowDidResignKeyNotification object:cocoaWindow queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
+            NSWindow *window = (NSWindow*)note.object;
+            // hack for window to be sent behind new key window
+            [window setIsVisible:NO];
+            [window setLevel:NSNormalWindowLevel];
+            [window setIsVisible:YES];
+        }];
+        SDL_SetWindowData(window, "observing", nc);
+    }
+    if (SDL_GetWindowData(window, "maskLayer") == NULL) {
+        CALayer *maskLayer = [CAShapeLayer layer];
+        sdlView.layer.mask = maskLayer;
+        SDL_SetWindowData(window, "maskLayer", maskLayer);
+    }
+    cocoaWindow.backgroundColor = [NSColor clearColor];
+    cocoaWindow.hasShadow = NO;
+    cocoaWindow.opaque = NO;
+    if (cocoaWindow.isKeyWindow) {
+        cocoaWindow.level = NSMainMenuWindowLevel+1;
+    }
+    
+    // make metal layer transparent
+    for (NSView *view in sdlView.subviews) {
+        if ([view.className isEqualToString:@"SDL_cocoametalview"]) {
+            view.layer.opaque = NO;
+            view.layer.backgroundColor = clearColor;
+            return;
+        }
+    }
+
+    // make OpenGL surface transparent
+    GLint zero = 0;
+    [[NSOpenGLContext currentContext] setValues:&zero forParameter:NSOpenGLCPSurfaceOpacity];
+}
+
+void update_window_mask_rects(SDL_Window * window, int h, const std::vector<SDL_Rect> &rects)
+{
+    CAShapeLayer *maskLayer = (CAShapeLayer*)SDL_GetWindowData(window, "maskLayer");
+    CGMutablePathRef path = CGPathCreateMutable();
+    for(auto it = rects.begin(); it != rects.end(); ++it) {
+        SDL_Rect rect = *it;
+        CGPathAddRect(path, NULL, CGRectMake(rect.x, rect.y, rect.w, rect.h));
+    }
+    maskLayer.path = path;
+    maskLayer.affineTransform = CGAffineTransformScale(CGAffineTransformMakeTranslation(0, h), 1.0, -1.0);
+    CGPathRelease(path);
+}
+#endif
 
 bool is_fullscreen_osx(SDL_Window * window)
 {

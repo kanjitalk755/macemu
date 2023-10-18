@@ -70,6 +70,14 @@
 #include "vm_alloc.h"
 #include "cdrom.h"
 
+#ifdef VIDEO_ROOTLESS
+extern bool update_display_mask(SDL_Window * window, int w, int h);
+extern void apply_display_mask(SDL_Surface * host_surface, SDL_Rect update_rect);
+extern bool cursor_point_opaque(void);
+static bool force_redraw = false;
+static spinlock_t force_redraw_lock = SPIN_LOCK_UNLOCKED;
+#endif
+
 #define DEBUG 0
 #include "debug.h"
 
@@ -90,7 +98,8 @@ extern int display_type;							// See enum above
 #else
 enum {
 	DISPLAY_WINDOW,									// windowed display
-	DISPLAY_SCREEN									// fullscreen display
+	DISPLAY_SCREEN, 								// fullscreen display
+    DISPLAY_ROOTLESS                                // fullscreen with transparent desktop
 };
 static int display_type = DISPLAY_WINDOW;			// See enum above
 #endif
@@ -758,6 +767,11 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
 #endif
 	
 	if (!sdl_window) {
+#ifdef VIDEO_ROOTLESS
+        if (display_type == DISPLAY_ROOTLESS) {
+            window_flags |= SDL_WINDOW_BORDERLESS;
+        }
+#endif
 		int m = get_mag_rate();
 		sdl_window = SDL_CreateWindow(
 			"",
@@ -949,6 +963,11 @@ static int present_sdl_video()
 	}
 	UNLOCK_PALETTE; // passed potential deadlock, can unlock palette
 	
+#ifdef VIDEO_ROOTLESS
+    // Apply mask
+    apply_display_mask(host_surface, sdl_update_video_rect);
+#endif
+
     // Update the host OS' texture
 	uint8_t *srcPixels = (uint8_t *)host_surface->pixels +
 		sdl_update_video_rect.y * host_surface->pitch +
@@ -1447,6 +1466,13 @@ bool VideoInit(bool classic)
 			display_type = DISPLAY_WINDOW;
 		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
 			display_type = DISPLAY_SCREEN;
+#ifdef VIDEO_ROOTLESS
+        else if (strncmp(mode_str, "rootless", 8) == 0) {
+            display_type = DISPLAY_ROOTLESS;
+            default_width = sdl_display_width();
+            default_height = sdl_display_height();
+        }
+#endif
 	}
 	if (default_width <= 0)
 		default_width = sdl_display_width();
@@ -1536,7 +1562,18 @@ bool VideoInit(bool classic)
 			for (int d = VIDEO_DEPTH_1BIT; d <= default_depth; d++)
 				add_mode(display_type, w, h, video_modes[i].resolution_id, TrivialBytesPerRow(w, (video_depth)d), d);
 		}
-	}
+#ifdef VIDEO_ROOTLESS
+    } else if (display_type == DISPLAY_ROOTLESS) {
+        for (int i = 0; video_modes[i].w != 0; i++) {
+            const int w = video_modes[i].w;
+            const int h = video_modes[i].h;
+            if (i > 0 && (w >= default_width || h >= default_height))
+                continue;
+            for (int d = VIDEO_DEPTH_1BIT; d <= default_depth; d++)
+                add_mode(display_type, w, h, video_modes[i].resolution_id, TrivialBytesPerRow(w, (video_depth)d), d);
+        }
+#endif
+    }
 
 	if (VideoModes.empty()) {
 		ErrorAlert(STR_NO_XVISUAL_ERR);
@@ -1795,6 +1832,12 @@ void VideoInterrupt(void)
 	if (toggle_fullscreen)
 		do_toggle_fullscreen();
 
+#ifdef VIDEO_ROOTLESS
+	bool f = update_display_mask(sdl_window, host_surface->w, host_surface->h);
+	spin_lock(&force_redraw_lock);
+	force_redraw |= f;
+	spin_unlock(&force_redraw_lock);
+#endif
 	present_sdl_video();
 
 	// Temporarily give up frame buffer lock (this is the point where
@@ -2333,6 +2376,11 @@ static void handle_events(void)
 
 			// Mouse button
 			case SDL_MOUSEBUTTONDOWN: {
+#ifdef VIDEO_ROOTLESS
+                if (!cursor_point_opaque()) {
+                    break;
+                }
+#endif
 				unsigned int button = event.button.button;
 				if (button == SDL_BUTTON_LEFT)
 					ADBMouseDown(0);
@@ -2623,6 +2671,13 @@ static void update_display_static(driver_base *drv)
 // XXX use NQD bounding boxes to help detect dirty areas?
 static void update_display_static_bbox(driver_base *drv)
 {
+#ifdef VIDEO_ROOTLESS
+	spin_lock(&force_redraw_lock);
+	bool redraw = force_redraw;
+	force_redraw = false;
+	spin_unlock(&force_redraw_lock);
+#endif
+
 	const VIDEO_MODE &mode = drv->mode;
 	bool blit = (int)VIDEO_MODE_DEPTH == VIDEO_DEPTH_16BIT;
 
@@ -2655,7 +2710,11 @@ static void update_display_static_bbox(driver_base *drv)
 			for (uint32 j = y; j < (y + h); j++) {
 				const uint32 yb = j * bytes_per_row;
 				const uint32 dst_yb = j * dst_bytes_per_row;
+#ifdef VIDEO_ROOTLESS
+				if (redraw || memcmp(&the_buffer[yb + xb], &the_buffer_copy[yb + xb], xs) != 0) {
+#else
 				if (memcmp(&the_buffer[yb + xb], &the_buffer_copy[yb + xb], xs) != 0) {
+#endif
 					memcpy(&the_buffer_copy[yb + xb], &the_buffer[yb + xb], xs);
 					if (blit) Screen_blit((uint8 *)drv->s->pixels + dst_yb + xb, the_buffer + yb + xb, xs);
 					dirty = true;

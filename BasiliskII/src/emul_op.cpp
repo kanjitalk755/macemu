@@ -596,6 +596,15 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 #endif
 			break;
 		}
+#ifdef VIDEO_ROOTLESS
+        case M68K_EMUL_OP_PAINTRGN:
+        case M68K_EMUL_OP_DRAGGRAYRGN: {
+            // Patched traps for tracking dragged outlines
+            extern void check_drag_region(M68kRegisters *r, uint16 opcode);
+            check_drag_region(r, opcode);
+            break;
+        }
+#endif
 
 		default:
 			printf("FATAL: EMUL_OP called with bogus opcode %08x\n", opcode);
