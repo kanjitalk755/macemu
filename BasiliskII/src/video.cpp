@@ -481,6 +481,12 @@ int16 monitor_desc::driver_open(void)
 
 	// Init color palette (solid gray)
 	set_gray_palette();
+    
+    // Enable rootless video
+#ifdef VIDEO_ROOTLESS
+    extern int16 InstallRootlessProc(void);
+    return InstallRootlessProc();
+#endif
 	return noErr;
 }
 
