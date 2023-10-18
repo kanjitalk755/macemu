@@ -22,9 +22,7 @@
 #include <QuartzCore/QuartzCore.h>
 #include <objc/runtime.h>
 #include "sysdeps.h"
-#include "utils_macosx.h"
 #include <SDL.h>
-
 #include "utils_macosx.h"
 #include <vector>
 
