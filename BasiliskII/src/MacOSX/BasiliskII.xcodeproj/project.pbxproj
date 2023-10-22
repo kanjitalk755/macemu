@@ -1077,7 +1077,7 @@
 					0x1000,
 				);
 				PRECOMPS_INCLUDE_HEADERS_FROM_BUILT_PRODUCTS_DIR = NO;
-				PRODUCT_BUNDLE_IDENTIFIER = "org.wpdos.basilisk-rootless";
+				PRODUCT_BUNDLE_IDENTIFIER = "net.cebix.basilisk";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				USE_HEADERMAP = YES;
 				VALID_ARCHS = "x86_64 arm64";
@@ -1161,7 +1161,7 @@
 					0x1000,
 				);
 				PRECOMPS_INCLUDE_HEADERS_FROM_BUILT_PRODUCTS_DIR = NO;
-				PRODUCT_BUNDLE_IDENTIFIER = "org.wpdos.basilisk-rootless";
+				PRODUCT_BUNDLE_IDENTIFIER = "net.cebix.basilisk";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				USE_HEADERMAP = YES;
 				VALID_ARCHS = "x86_64 arm64";
