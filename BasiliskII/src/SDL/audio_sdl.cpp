@@ -25,6 +25,7 @@
 #include "user_strings.h"
 #include "audio.h"
 #include "audio_defs.h"
+#include "xpram.h"
 
 #include <SDL_mutex.h>
 #include <SDL_audio.h>
@@ -369,6 +370,7 @@ void audio_set_speaker_volume(uint32 vol)
 	speaker_volume = ((vol >> 16) + (vol & 0xffff)) / 2;
 	if (speaker_volume > MAC_MAX_VOLUME)
 		speaker_volume = MAC_MAX_VOLUME;
+	XPRAM[8] = (XPRAM[8] & 0xf8) | (speaker_volume * 7 / 256 & 7);
 }
 
 static int get_audio_volume() {

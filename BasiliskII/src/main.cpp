@@ -38,6 +38,7 @@
 #include "user_strings.h"
 #include "prefs.h"
 #include "main.h"
+#include "audio.h"
 
 #define DEBUG 0
 #include "debug.h"
@@ -168,6 +169,9 @@ bool InitAll(const char *vmdir)
 
 	// Init audio
 	AudioInit();
+	int vol = (XPRAM[8] & 7) * 256 / 7;
+	vol += vol < 256;
+	audio_set_speaker_volume(vol | vol << 16);
 
 	// Init video
 	if (!VideoInit(ROMVersion == ROM_VERSION_64K || ROMVersion == ROM_VERSION_PLUS || ROMVersion == ROM_VERSION_CLASSIC))
