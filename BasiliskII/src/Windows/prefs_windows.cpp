@@ -61,7 +61,7 @@ prefs_desc platform_prefs_items[] = {
 
 
 // Prefs file name and path
-const TCHAR PREFS_FILE_NAME[] = TEXT("BasiliskII_prefs");
+const TCHAR PREFS_FILE_NAME[] = TEXT("BasiliskII_prefs.txt");
 tstring UserPrefsPath;
 static tstring prefs_path;
 
