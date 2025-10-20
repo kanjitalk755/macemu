@@ -421,7 +421,7 @@ AC_SYS_LARGEFILE
 dnl Checks for header files.
 AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS(malloc.h stdint.h)
+AC_CHECK_HEADERS(malloc.h stdint.h sys/types.h)
 AC_CHECK_HEADERS(mach/vm_map.h mach/mach_init.h sys/mman.h linux/sched.h)
 AC_CHECK_HEADERS(unistd.h fcntl.h byteswap.h dirent.h)
 AC_CHECK_HEADERS(sys/socket.h sys/ioctl.h sys/filio.h sys/bitypes.h sys/wait.h)
