@@ -422,7 +422,7 @@ dnl Checks for header files.
 AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
 AC_CHECK_HEADERS(malloc.h stdint.h)
-AC_CHECK_HEADERS(mach/vm_map.h mach/mach_init.h sys/mman.h)
+AC_CHECK_HEADERS(mach/vm_map.h mach/mach_init.h sys/mman.h linux/sched.h)
 AC_CHECK_HEADERS(unistd.h fcntl.h byteswap.h dirent.h)
 AC_CHECK_HEADERS(sys/socket.h sys/ioctl.h sys/filio.h sys/bitypes.h sys/wait.h)
 AC_CHECK_HEADERS(sys/time.h sys/poll.h sys/select.h arpa/inet.h)
