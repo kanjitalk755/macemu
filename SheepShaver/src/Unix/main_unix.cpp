@@ -1796,8 +1796,8 @@ void sigusr2_handler(int sig, siginfo_t *sip, void *scp)
 	switch (ReadMacInt32(XLM_RUN_MODE)) {
 		case MODE_68K:
 			// 68k emulator active, trigger 68k interrupt level 1
-			WriteMacInt16(ReadMacInt32(0x67c), 1);
-			r->cr() |= ReadMacInt32(0x674);
+			WriteMacInt16(ReadMacInt32(KERNEL_DATA_BASE + 0x67c), 1);
+			r->cr() |= ReadMacInt32(KERNEL_DATA_BASE + 0x674);
 			break;
 
 #if INTERRUPTS_IN_NATIVE_MODE
@@ -1809,8 +1809,10 @@ void sigusr2_handler(int sig, siginfo_t *sip, void *scp)
 				sigaltstack(&extra_stack, NULL);
 				
 				// Prepare for 68k interrupt level 1
-				WriteMacInt16(ReadMacInt32(0x67c), 1);
-				WriteMacInt32(ReadMacInt32(0x658) + 0xdc, ReadMacInt32(ReadMacInt32(0x658) + 0xdc) | ReadMacInt32(0x674));
+				WriteMacInt16(ReadMacInt32(KERNEL_DATA_BASE + 0x67c), 1);
+				WriteMacInt32(ReadMacInt32(KERNEL_DATA_BASE + 0x658) + 0xdc,
+								ReadMacInt32(ReadMacInt32(KERNEL_DATA_BASE + 0x658) + 0xdc)
+								| ReadMacInt32(KERNEL_DATA_BASE + 0x674));
 
 				// Execute nanokernel interrupt routine (this will activate the 68k emulator)
 				DisableInterrupt();
