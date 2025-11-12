@@ -248,6 +248,7 @@ static void *emul_func(void *)
 #undef LOAD_REG
 		: :  "r" ((uintptr)&emul_thread_regs[0]) : "r0");
 #undef REG
+	return NULL;
 }
 
 
