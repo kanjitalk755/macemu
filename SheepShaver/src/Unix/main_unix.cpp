@@ -922,7 +922,8 @@ int main(int argc, char **argv)
 	if (use_gui == -1)
 		use_gui = !PrefsFindBool("nogui");
 
-#if SDL_PLATFORM_MACOS && SDL_VERSION_ATLEAST(2,0,0)
+#if SDL_PLATFORM_MACOS
+#if SDL_VERSION_ATLEAST(2,0,0)
 	// On Mac OS X hosts, SDL2 will create its own menu bar.  This is mostly OK,
 	// except that it will also install keyboard shortcuts, such as Command + Q,
 	// which can interfere with keyboard shortcuts in the guest OS.
@@ -930,6 +931,7 @@ int main(int argc, char **argv)
 	// HACK: disable these shortcuts, while leaving all other pieces of SDL2's
 	// menu bar in-place.
 	disable_SDL2_macosx_menu_bar_keyboard_shortcuts();
+#endif
 #endif
 	
 	// Any command line arguments left?
