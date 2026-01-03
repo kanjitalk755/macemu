@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        echo ""
+        echo "=== macemu-webrtc installed successfully! ==="
+        echo ""
+        echo "Installation directory: /opt/macemu-webrtc/"
+        echo ""
+        echo "To get started:"
+        echo "  1. Run setup: macemu-webrtc-setup"
+        echo "  2. Add ROMs: cp /path/to/roms/*.ROM ~/.macemu/storage/roms/"
+        echo "  3. Add disks: cp /path/to/disks/*.dsk ~/.macemu/storage/images/"
+        echo "  4. Start server: macemu-webrtc"
+        echo "  5. Open browser: http://localhost:8000"
+        echo ""
+        echo "Configuration:"
+        echo "  Config file: ~/.macemu/macemu-config.json"
+        echo "  BasiliskII prefs: ~/.config/BasiliskII/prefs"
+        echo "  SheepShaver prefs: ~/.config/SheepShaver/prefs"
+        echo ""
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

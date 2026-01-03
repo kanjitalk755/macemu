@@ -482,7 +482,14 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 		// Sound component functions (delegated)
 		case kSoundComponentAddSourceSelect:
 			D(bug(" AddSource\n"));
-			AudioStatus.num_sources++;
+			{
+				int old_sources = AudioStatus.num_sources;
+				AudioStatus.num_sources++;
+				// Wake audio thread if transitioning from 0→1 sources
+				if (old_sources == 0 && AudioStatus.num_sources == 1) {
+					audio_enter_stream();
+				}
+			}
 			goto delegate;
 
 		case kSoundComponentRemoveSourceSelect:

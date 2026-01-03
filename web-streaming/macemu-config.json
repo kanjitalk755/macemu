@@ -1,0 +1,41 @@
+{
+  "common": {
+    "extfs": "./storage",
+    "ram": 64,
+    "screen": "1024x768",
+    "sound": true
+  },
+  "m68k": {
+    "cdroms": [],
+    "cpu": 4,
+    "disks": [],
+    "fpu": true,
+    "idlewait": true,
+    "ignoresegv": true,
+    "jit": true,
+    "keyboardtype": 5,
+    "modelid": 14,
+    "rom": "",
+    "swap_opt_cmd": true
+  },
+  "ppc": {
+    "cdroms": [],
+    "cpu": 4,
+    "disks": [],
+    "fpu": true,
+    "idlewait": true,
+    "ignoreillegal": false,
+    "ignoresegv": true,
+    "jit": true,
+    "jit68k": false,
+    "keyboardtype": 5,
+    "modelid": 14,
+    "rom": "4MB ROMs/1997-02 - 960E4BE9 - Power Mac 7300 & 7600 & 8600 & 9600 (v1).ROM"
+  },
+  "version": 1,
+  "web": {
+    "codec": "h264",
+    "emulator": "ppc",
+    "mousemode": "relative"
+  }
+}

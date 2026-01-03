@@ -24,6 +24,15 @@ FPNG_CFLAGS = @FPNG_CFLAGS@
 
 # Source files
 SERVER_SRCS = $(SERVER_DIR)/server.cpp \
+              $(SERVER_DIR)/config/server_config.cpp \
+              $(SERVER_DIR)/utils/keyboard_map.cpp \
+              $(SERVER_DIR)/utils/json_utils.cpp \
+              $(SERVER_DIR)/ipc/ipc_connection.cpp \
+              $(SERVER_DIR)/storage/file_scanner.cpp \
+              $(SERVER_DIR)/storage/prefs_manager.cpp \
+              $(SERVER_DIR)/http/http_server.cpp \
+              $(SERVER_DIR)/http/api_handlers.cpp \
+              $(SERVER_DIR)/http/static_files.cpp \
               $(SERVER_DIR)/h264_encoder.cpp \
               $(SERVER_DIR)/av1_encoder.cpp \
               $(SERVER_DIR)/opus_encoder.cpp \
@@ -32,6 +41,15 @@ SERVER_SRCS = $(SERVER_DIR)/server.cpp \
 
 # Object files
 SERVER_OBJS = $(BUILD_DIR)/server.o \
+              $(BUILD_DIR)/server_config.o \
+              $(BUILD_DIR)/keyboard_map.o \
+              $(BUILD_DIR)/json_utils.o \
+              $(BUILD_DIR)/ipc_connection.o \
+              $(BUILD_DIR)/file_scanner.o \
+              $(BUILD_DIR)/prefs_manager.o \
+              $(BUILD_DIR)/http_server.o \
+              $(BUILD_DIR)/api_handlers.o \
+              $(BUILD_DIR)/static_files.o \
               $(BUILD_DIR)/h264_encoder.o \
               $(BUILD_DIR)/av1_encoder.o \
               $(BUILD_DIR)/opus_encoder.o \
@@ -103,9 +121,37 @@ $(BUILD_DIR)/png_encoder.o: $(SERVER_DIR)/png_encoder.cpp \
 $(BUILD_DIR)/fpng.o: $(SERVER_DIR)/fpng.cpp $(SERVER_DIR)/fpng.h
 	$(CXX) $(CXXFLAGS) $(FPNG_CFLAGS) -c $< -o $@
 
+# Compile server modules
+$(BUILD_DIR)/server_config.o: $(SERVER_DIR)/config/server_config.cpp $(SERVER_DIR)/config/server_config.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/keyboard_map.o: $(SERVER_DIR)/utils/keyboard_map.cpp $(SERVER_DIR)/utils/keyboard_map.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/json_utils.o: $(SERVER_DIR)/utils/json_utils.cpp $(SERVER_DIR)/utils/json_utils.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ipc_connection.o: $(SERVER_DIR)/ipc/ipc_connection.cpp $(SERVER_DIR)/ipc/ipc_connection.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/file_scanner.o: $(SERVER_DIR)/storage/file_scanner.cpp $(SERVER_DIR)/storage/file_scanner.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/prefs_manager.o: $(SERVER_DIR)/storage/prefs_manager.cpp $(SERVER_DIR)/storage/prefs_manager.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/http_server.o: $(SERVER_DIR)/http/http_server.cpp $(SERVER_DIR)/http/http_server.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/api_handlers.o: $(SERVER_DIR)/http/api_handlers.cpp $(SERVER_DIR)/http/api_handlers.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/static_files.o: $(SERVER_DIR)/http/static_files.cpp $(SERVER_DIR)/http/static_files.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
 # Link server
 $(SERVER): $(SERVER_OBJS)
-	$(CXX) -o $@ $(SERVER_OBJS) $(SERVER_LIBS)
+	$(CXX) $(CXXFLAGS) -o $@ $(SERVER_OBJS) $(SERVER_LIBS)
 
 # Run server
 run: $(SERVER)

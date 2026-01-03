@@ -28,6 +28,9 @@ extern bool audio_set_sample_rate(int index);
 extern bool audio_set_sample_size(int index);
 extern bool audio_set_channels(int index);
 
+// Pull model: Server requests audio data
+extern void audio_request_data(uint32 requested_samples);
+
 #endif // ENABLE_IPC_AUDIO
 
 #endif // AUDIO_IPC_H

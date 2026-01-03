@@ -1,0 +1,57 @@
+# Basilisk II preferences - minimal config for cold boot
+
+# ROM file (configure via web UI)
+rom 
+
+# Boot volume (configure via web UI)
+bootdrive 0
+bootdriver 0
+
+# Screen (IPC mode for web streaming)
+screen ipc/1024/768
+
+# CPU and emulation
+modelid 14
+cpu 4
+fpu true
+jit true
+nosound false
+
+# Video codec for web streaming (png, h264, av1, or vp9)
+webcodec png
+
+# Mouse mode for web streaming (relative or absolute)
+mousemode absolute
+
+# JIT settings
+jitfpu true
+jitcachesize 8192
+jitlazyflush true
+jitinline true
+jitdebug false
+
+# Display settings
+displaycolordepth 0
+frameskip 0
+scale_nearest false
+scale_integer false
+
+# Input settings
+keyboardtype 5
+keycodes false
+mousewheelmode 1
+mousewheellines 3
+swap_opt_cmd true
+hotkey 0
+
+# Serial/Network
+seriala /dev/null
+serialb /dev/null
+udptunnel false
+udpport 6066
+etherpermanentaddress true
+ethermulticastmode 0
+routerenabled false
+
+# Performance
+idlewait true

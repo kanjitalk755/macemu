@@ -1,0 +1,99 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Configure BasiliskII with IPC support
+	cd BasiliskII/src/Unix && ./autogen.sh && \
+		./configure --enable-ipc-video --enable-ipc-audio
+
+	# Configure SheepShaver with IPC support
+	cd SheepShaver/src/Unix && ./autogen.sh && \
+		./configure --enable-ipc-video --enable-ipc-audio
+
+	# Configure WebRTC server
+	cd web-streaming && ./autogen.sh && ./configure
+
+override_dh_auto_build:
+	# Build BasiliskII
+	$(MAKE) -C BasiliskII/src/Unix
+
+	# Build SheepShaver
+	$(MAKE) -C SheepShaver/src/Unix
+
+	# Build WebRTC server
+	$(MAKE) -C web-streaming
+
+override_dh_auto_install:
+	# Create installation directories
+	install -d $(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc
+	install -d $(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/bin
+	install -d $(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/client
+	install -d $(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/share
+	install -d $(CURDIR)/debian/macemu-webrtc/usr/bin
+
+	# Install compiled binaries to /opt/macemu-webrtc/bin/
+	install -m 0755 BasiliskII/src/Unix/BasiliskII \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/bin/BasiliskII
+	install -m 0755 SheepShaver/src/Unix/SheepShaver \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/bin/SheepShaver
+	install -m 0755 web-streaming/build/macemu-webrtc \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/bin/macemu-webrtc-server
+
+	# Install web client files to /opt/macemu-webrtc/client/
+	install -m 0644 web-streaming/client/index.html \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/client/
+	install -m 0644 web-streaming/client/client.js \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/client/
+	install -m 0644 web-streaming/client/styles.css \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/client/
+	install -m 0644 web-streaming/client/Apple.svg \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/client/
+	install -m 0644 web-streaming/client/Motorola.svg \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/client/
+	install -m 0644 web-streaming/client/PowerPC.svg \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/client/
+
+	# Install default config template to /opt/macemu-webrtc/share/
+	install -m 0644 web-streaming/macemu-config.json \
+		$(CURDIR)/debian/macemu-webrtc/opt/macemu-webrtc/share/macemu-config.json.template
+
+	# Install documentation
+	install -d $(CURDIR)/debian/macemu-webrtc/usr/share/doc/macemu-webrtc
+	install -m 0644 README-WEBRTC.md \
+		$(CURDIR)/debian/macemu-webrtc/usr/share/doc/macemu-webrtc/
+
+	# Install setup script to /usr/bin
+	install -m 0755 debian/macemu-webrtc-setup \
+		$(CURDIR)/debian/macemu-webrtc/usr/bin/macemu-webrtc-setup
+
+	# Install runner script to /usr/bin
+	install -m 0755 debian/macemu-webrtc-run \
+		$(CURDIR)/debian/macemu-webrtc/usr/bin/macemu-webrtc
+
+override_dh_auto_clean:
+	# Clean BasiliskII
+	if [ -f BasiliskII/src/Unix/Makefile ]; then \
+		$(MAKE) -C BasiliskII/src/Unix clean || true; \
+	fi
+
+	# Clean SheepShaver
+	if [ -f SheepShaver/src/Unix/Makefile ]; then \
+		$(MAKE) -C SheepShaver/src/Unix clean || true; \
+	fi
+
+	# Clean WebRTC server
+	if [ -f web-streaming/Makefile ]; then \
+		$(MAKE) -C web-streaming clean || true; \
+	fi
+
+	dh_auto_clean

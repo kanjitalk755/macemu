@@ -4,6 +4,7 @@ dnl Written in 2025
 AC_INIT([macemu-webrtc], [1.0], [])
 AC_CONFIG_SRCDIR([server/server.cpp])
 AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIRS([m4])
 AC_PREREQ([2.69])
 
@@ -76,6 +77,55 @@ AC_CHECK_LIB([yuv], [I420Copy], [], [
   AC_MSG_ERROR([libyuv library not found. Please install libyuv-dev.])
 ])
 
+dnl Check for Opus
+AC_MSG_CHECKING([for Opus])
+OPUS_CFLAGS=$($PKG_CONFIG --cflags opus 2>/dev/null)
+OPUS_LIBS=$($PKG_CONFIG --libs opus 2>/dev/null)
+if test "x$OPUS_LIBS" = "x"; then
+  OPUS_LIBS="-lopus"
+fi
+if $PKG_CONFIG --exists opus 2>/dev/null; then
+  AC_MSG_RESULT([yes])
+  AC_DEFINE([HAVE_OPUS], [1], [Define if Opus is available])
+else
+  AC_MSG_ERROR([opus not found. Install with: apt install libopus-dev])
+fi
+AC_SUBST([OPUS_CFLAGS])
+AC_SUBST([OPUS_LIBS])
+
+dnl Check for SVT-AV1
+AC_MSG_CHECKING([for SVT-AV1])
+SVTAV1_CFLAGS=$($PKG_CONFIG --cflags SvtAv1Enc 2>/dev/null)
+SVTAV1_LIBS=$($PKG_CONFIG --libs SvtAv1Enc 2>/dev/null)
+if test "x$SVTAV1_LIBS" = "x"; then
+  SVTAV1_CFLAGS="-I/usr/include/svt-av1 -DEB_DLL"
+  SVTAV1_LIBS="-lSvtAv1Enc"
+fi
+if test -f "/usr/include/svt-av1/EbSvtAv1Enc.h" || $PKG_CONFIG --exists SvtAv1Enc 2>/dev/null; then
+  AC_MSG_RESULT([yes])
+  AC_DEFINE([HAVE_SVTAV1], [1], [Define if SVT-AV1 is available])
+else
+  AC_MSG_ERROR([SVT-AV1 not found. Install with: apt install libsvtav1-dev libsvtav1enc-dev])
+fi
+AC_SUBST([SVTAV1_CFLAGS])
+AC_SUBST([SVTAV1_LIBS])
+
+dnl Check for libvpx (VP9 encoder)
+AC_MSG_CHECKING([for libvpx])
+VPX_CFLAGS=$($PKG_CONFIG --cflags vpx 2>/dev/null)
+VPX_LIBS=$($PKG_CONFIG --libs vpx 2>/dev/null)
+if test "x$VPX_LIBS" = "x"; then
+  VPX_LIBS="-lvpx"
+fi
+if $PKG_CONFIG --exists vpx 2>/dev/null; then
+  AC_MSG_RESULT([yes])
+  AC_DEFINE([HAVE_VPX], [1], [Define if libvpx is available])
+else
+  AC_MSG_ERROR([libvpx not found. Install with: apt install libvpx-dev])
+fi
+AC_SUBST([VPX_CFLAGS])
+AC_SUBST([VPX_LIBS])
+
 dnl Check for pthread
 AC_CHECK_LIB([pthread], [pthread_create], [], [
   AC_MSG_ERROR([pthread library not found.])
@@ -90,7 +140,7 @@ dnl Check for libdatachannel (hard requirement - user must build it)
 LIBDATACHANNEL_DIR="libdatachannel"
 LIBDATACHANNEL_BUILD="${LIBDATACHANNEL_DIR}/build"
 LIBDATACHANNEL_LIB="${LIBDATACHANNEL_BUILD}/libdatachannel.a"
-LIBDATACHANNEL_INCLUDES="-I${LIBDATACHANNEL_DIR}/include"
+LIBDATACHANNEL_INCLUDES="-I${LIBDATACHANNEL_DIR}/include -I${LIBDATACHANNEL_DIR}/deps/json/include -Iserver"
 
 AC_MSG_CHECKING([for libdatachannel])
 if test -f "$LIBDATACHANNEL_LIB"; then
@@ -124,15 +174,15 @@ LIBJUICE="${LIBDATACHANNEL_BUILD}/deps/libjuice/libjuice.a"
 LIBSRTP="${LIBDATACHANNEL_BUILD}/deps/libsrtp/libsrtp2.a"
 USRSCTP="${LIBDATACHANNEL_BUILD}/deps/usrsctp/usrsctplib/libusrsctp.a"
 
-dnl Compiler flags
-CXXFLAGS="$CXXFLAGS -Wall -Wextra -O2 -g -fPIC"
+dnl Compiler flags for debugging (full debug symbols, no optimization)
+CXXFLAGS="$CXXFLAGS -Wall -Wextra -g3 -O0 -fPIC -fno-omit-frame-pointer -rdynamic"
 
 dnl fpng flags (SSE4.1 and pclmul for fast CRC32)
 FPNG_CFLAGS="-msse4.1 -mpclmul"
 
 dnl Combined flags for server
-SERVER_CFLAGS="$LIBDATACHANNEL_INCLUDES $OPENH264_CFLAGS $OPENSSL_CFLAGS $FPNG_CFLAGS"
-SERVER_LIBS="$LIBDATACHANNEL_LIB $LIBJUICE $LIBSRTP $USRSCTP $OPENH264_LIBS $OPENSSL_LIBS -lyuv -lpthread -lrt"
+SERVER_CFLAGS="$LIBDATACHANNEL_INCLUDES $OPENH264_CFLAGS $SVTAV1_CFLAGS $OPENSSL_CFLAGS $FPNG_CFLAGS"
+SERVER_LIBS="$LIBDATACHANNEL_LIB $LIBJUICE $LIBSRTP $USRSCTP $OPENH264_LIBS $OPENSSL_LIBS -lyuv -lpthread -lrt $OPUS_LIBS $SVTAV1_LIBS $VPX_LIBS"
 
 dnl Substitutions
 AC_SUBST([SERVER_CFLAGS])
@@ -156,6 +206,9 @@ echo "C++ Compiler ..................... : $CXX"
 echo "C++ Flags ........................ : $CXXFLAGS"
 echo "OpenSSL .......................... : yes"
 echo "OpenH264 ......................... : yes"
+echo "SVT-AV1 .......................... : yes"
+echo "libvpx (VP9) ..................... : yes"
+echo "Opus ............................. : yes"
 echo "libyuv ........................... : yes"
 echo "libdatachannel ................... : $HAVE_LIBDATACHANNEL"
 if test "x$HAVE_LIBDATACHANNEL" = "xno"; then

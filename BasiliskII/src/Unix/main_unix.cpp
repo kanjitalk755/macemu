@@ -25,6 +25,10 @@
 #include <signal.h>
 #include <errno.h>
 #include <sstream>
+#include <execinfo.h>  // For backtrace
+#include <unistd.h>    // For write
+#include <sys/wait.h>  // For waitpid
+#include "crash_handler.h"
 
 #ifdef USE_SDL
 # include "my_sdl.h"
@@ -300,11 +304,18 @@ static void sigsegv_dump_state(sigsegv_info_t *sip)
 {
 	const sigsegv_address_t fault_address = sigsegv_get_fault_address(sip);
 	const sigsegv_address_t fault_instruction = sigsegv_get_fault_instruction_address(sip);
-	fprintf(stderr, "Caught SIGSEGV at address %p", fault_address);
+
+	fprintf(stderr, "\n=== SIGSEGV HANDLER (from sigsegv.cpp framework) ===\n");
+	fprintf(stderr, "Fault address: %p", fault_address);
 	if (fault_instruction != SIGSEGV_INVALID_ADDRESS)
 		fprintf(stderr, " [IP=%p]", fault_instruction);
-	fprintf(stderr, "\n");
+	fprintf(stderr, "\n\n");
+
+	// Print backtrace
+	print_backtrace("SIGSEGV");
+
 #if EMULATED_68K
+	fprintf(stderr, "=== EMULATED M68K STATE ===\n");
 	uaecptr nextpc;
 #ifdef UPDATE_UAE
 	extern void m68k_dumpstate(FILE *, uaecptr *nextpc);
@@ -313,10 +324,13 @@ static void sigsegv_dump_state(sigsegv_info_t *sip)
 	extern void m68k_dumpstate(uaecptr *nextpc);
 	m68k_dumpstate(&nextpc);
 #endif
+	fprintf(stderr, "=== END M68K STATE ===\n\n");
 #endif
 #if USE_JIT && JIT_DEBUG
+	fprintf(stderr, "=== JIT COMPILER STATE ===\n");
 	extern void compiler_dumpstate(void);
 	compiler_dumpstate();
+	fprintf(stderr, "=== END JIT STATE ===\n\n");
 #endif
 	VideoQuitFullScreen();
 #ifdef ENABLE_MON
@@ -449,6 +463,124 @@ static void gui_activate (GtkApplication *app)
 #endif
 #endif
 
+/*
+ *  Signal handler for crashes - print comprehensive crash report
+ */
+static void crash_handler(int sig, siginfo_t *info, void *context)
+{
+	// Print crash header
+	print_crash_header(sig, info, "BasiliskII Emulator");
+
+	// Print register state
+	ucontext_t *uctx = (ucontext_t *)context;
+	print_register_state(uctx);
+
+	// Print native stack trace with source locations
+	fprintf(stderr, "=== NATIVE BACKTRACE ===\n");
+	void *bt_array[64];
+	size_t bt_size = backtrace(bt_array, 64);
+	char **bt_strings = backtrace_symbols(bt_array, bt_size);
+
+	// Get binary base address from /proc/self/maps
+	FILE *maps = fopen("/proc/self/maps", "r");
+	unsigned long base_addr = 0;
+	if (maps) {
+		char line[512];
+		if (fgets(line, sizeof(line), maps)) {
+			// First line is the base mapping
+			sscanf(line, "%lx-", &base_addr);
+		}
+		fclose(maps);
+	}
+
+	fprintf(stderr, "Binary base address: 0x%lx\n\n", base_addr);
+
+	// Print with symbols and calculate offsets
+	for (size_t i = 0; i < bt_size; i++) {
+		unsigned long offset = (unsigned long)bt_array[i] - base_addr;
+		fprintf(stderr, "  [%2zu] %p (offset 0x%lx)", i, bt_array[i], offset);
+		if (bt_strings && bt_strings[i]) {
+			fprintf(stderr, " %s", bt_strings[i]);
+		}
+		fprintf(stderr, "\n");
+	}
+
+	fprintf(stderr, "\nDecoded (using addr2line via fork/exec):\n");
+	fflush(stderr);
+
+	// Fork and use addr2line to decode with offsets (signal-safe)
+	pid_t pid = fork();
+	if (pid == 0) {
+		// Child process - run addr2line
+		char exe_path[256];
+		ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+		if (len == -1) {
+			_exit(1);
+		}
+		exe_path[len] = '\0';
+
+		// Build argv for addr2line using offsets from base
+		char *argv[bt_size + 10];
+		argv[0] = (char*)"addr2line";
+		argv[1] = (char*)"-e";
+		argv[2] = exe_path;
+		argv[3] = (char*)"-f";
+		argv[4] = (char*)"-C";
+		argv[5] = (char*)"-i";
+		argv[6] = (char*)"-p";
+
+		char addr_strs[64][32];
+		for (size_t i = 0; i < bt_size; i++) {
+			unsigned long offset = (unsigned long)bt_array[i] - base_addr;
+			snprintf(addr_strs[i], sizeof(addr_strs[i]), "0x%lx", offset);
+			argv[7 + i] = addr_strs[i];
+		}
+		argv[7 + bt_size] = NULL;
+
+		execvp("addr2line", argv);
+		_exit(1);  // If execvp fails
+	} else if (pid > 0) {
+		// Parent - wait for addr2line to finish
+		int status;
+		waitpid(pid, &status, 0);
+	}
+
+	if (bt_strings) {
+		free(bt_strings);
+	}
+
+	fprintf(stderr, "=== END BACKTRACE ===\n\n");
+
+#if EMULATED_68K
+	// Print emulated CPU state
+	fprintf(stderr, "=== EMULATED M68K STATE ===\n");
+	uaecptr nextpc;
+#ifdef UPDATE_UAE
+	extern void m68k_dumpstate(FILE *, uaecptr *nextpc);
+	m68k_dumpstate(stderr, &nextpc);
+#else
+	extern void m68k_dumpstate(uaecptr *nextpc);
+	m68k_dumpstate(&nextpc);
+#endif
+	fprintf(stderr, "=== END M68K STATE ===\n\n");
+#endif
+
+#if USE_JIT && JIT_DEBUG
+	// Print JIT compiler state
+	fprintf(stderr, "=== JIT COMPILER STATE ===\n");
+	extern void compiler_dumpstate(void);
+	compiler_dumpstate();
+	fprintf(stderr, "=== END JIT STATE ===\n\n");
+#endif
+
+	fprintf(stderr, "Crash report complete. Exiting...\n");
+	fflush(stderr);
+
+	// Re-raise the signal with default handler to generate core dump
+	signal(sig, SIG_DFL);
+	raise(sig);
+}
+
 int main(int argc, char **argv)
 {
 #ifdef ENABLE_GTK3
@@ -457,6 +589,19 @@ int main(int argc, char **argv)
 #endif
 	const char *vmdir = NULL;
 	char str[256];
+
+	// Install crash handler with SA_SIGINFO to get full context
+	// Note: SIGSEGV is handled by sigsegv.cpp framework (installed later) for VOSF/JIT
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_sigaction = crash_handler;
+	sa.sa_flags = SA_SIGINFO | SA_RESETHAND;  // Get siginfo_t, and reset to default after first call
+	sigemptyset(&sa.sa_mask);
+
+	sigaction(SIGABRT, &sa, NULL);  // Abort signals
+	sigaction(SIGBUS, &sa, NULL);   // Bus errors
+	sigaction(SIGILL, &sa, NULL);   // Illegal instructions (common with JIT bugs)
+	sigaction(SIGFPE, &sa, NULL);   // Floating point exceptions
 
 	// Initialize variables
 	RAMBaseHost = NULL;

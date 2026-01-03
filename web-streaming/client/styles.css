@@ -17,7 +17,7 @@ body {
 /* Header */
 header {
     background: #2d2d2d;
-    padding: 10px 20px;
+    padding: 6px 12px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -28,11 +28,11 @@ header {
 .logo {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 .logo h1 {
-    font-size: 1.2em;
+    font-size: 1.1em;
     font-weight: 500;
 }
 
@@ -47,14 +47,28 @@ header {
 /* Status Bar */
 .status-bar {
     display: flex;
-    gap: 20px;
-    font-size: 0.9em;
+    gap: 12px;
+    font-size: 0.85em;
 }
 
 .status-item {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
+}
+
+.status-item span {
+    font-size: 1.1em;
+    transition: filter 0.3s, opacity 0.3s;
+}
+
+.status-item span.inactive {
+    filter: grayscale(100%);
+    opacity: 0.4;
+}
+
+.status-item span.connecting {
+    animation: pulse 1s infinite;
 }
 
 .status-dot {
@@ -86,17 +100,47 @@ header {
 /* Controls */
 .controls {
     display: flex;
-    gap: 10px;
+    gap: 8px;
+    align-items: center;
+}
+
+.codec-selector {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    background: #3d3d3d;
+    border-radius: 4px;
+}
+
+.codec-selector label {
+    font-size: 0.9em;
+    color: #aaa;
+}
+
+.codec-selector select {
+    background: #2d2d2d;
+    color: #fff;
+    border: 1px solid #555;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    cursor: pointer;
+    outline: none;
+}
+
+.codec-selector select:hover {
+    border-color: #777;
 }
 
 .btn {
     background: #3d3d3d;
     border: none;
     color: #fff;
-    padding: 8px 16px;
+    padding: 6px 12px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 0.9em;
+    font-size: 0.85em;
     transition: background 0.2s;
 }
 
@@ -136,10 +180,41 @@ main {
 #display-container {
     position: relative;
     background: #000;
-    border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
     display: inline-block;
+}
+
+/* Disconnected state - grey out and show visual indicator */
+#display-container.disconnected {
+    filter: grayscale(100%) brightness(0.5);
+    opacity: 0.7;
+}
+
+#display-container.disconnected::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100px;
+    height: 100px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+#display-container.disconnected::before {
+    content: '⚠';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 48px;
+    color: rgba(255, 255, 255, 0.6);
+    z-index: 1;
+    text-shadow: 0 0 10px rgba(0, 0, 0, 0.8);
 }
 
 #display {
@@ -436,10 +511,6 @@ body.fullscreen main {
 
 body.fullscreen #video-section {
     padding: 0;
-}
-
-body.fullscreen #display-container {
-    border-radius: 0;
 }
 
 body.fullscreen #display {

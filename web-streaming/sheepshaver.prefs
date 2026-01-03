@@ -1,0 +1,38 @@
+# SheepShaver preferences - generated from macemu-config.json
+
+rom storage/roms/New World ROM/1999-05-14 - Mac OS ROM 1.6.rom
+
+disk storage/images/9.0.4.img
+
+screen ipc/1024x768
+
+modelid 14
+cpu 4
+fpu true
+ramsize 67108864
+
+jit true
+jit68k false
+
+idlewait true
+ignoresegv true
+ignoreillegal false
+
+keyboardtype 5
+
+extfs ./storage
+
+# Web streaming settings
+webcodec h264
+mousemode relative
+
+bootdrive 0
+bootdriver 0
+
+nogui true
+
+# Serial/Network
+seriala /dev/null
+serialb /dev/null
+udptunnel false
+udpport 6066

@@ -1,0 +1,16 @@
+macemu-webrtc (1.0.0-1) unstable; urgency=medium
+
+  * Initial release
+  * BasiliskII and SheepShaver with IPC video/audio support
+  * WebRTC streaming server with multiple codec support:
+    - H.264 via OpenH264
+    - AV1 via SVT-AV1
+    - VP9 via libvpx
+    - PNG via fpng (bundled)
+    - WebP via libwebp
+  * Opus audio streaming
+  * Browser-based web client
+  * Dirty rectangle optimization for still-image codecs
+  * Unreliable DataChannel mode for low latency
+
+ -- Your Name <your.email@example.com>  Mon, 30 Dec 2024 00:00:00 +0000

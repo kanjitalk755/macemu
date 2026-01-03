@@ -2,7 +2,7 @@
 # Generated from Makefile.in by configure
 
 CXX = g++ -std=c++17
-CXXFLAGS = -g -O2 -Wall -Wextra -O2 -g -fPIC
+CXXFLAGS = -g -O2 -Wall -Wextra -g3 -O0 -fPIC -fno-omit-frame-pointer -rdynamic
 INSTALL = /usr/bin/install -c
 
 # Directories
@@ -18,30 +18,47 @@ HAVE_LIBDATACHANNEL = yes
 CMAKE = 
 
 # Compiler and linker flags from configure
-SERVER_CFLAGS = -I../BasiliskII/src/IPC -Ilibdatachannel/include   -msse4.1 -mpclmul -I/usr/include/svt-av1 -DEB_DLL
-SERVER_LIBS = libdatachannel/build/libdatachannel.a libdatachannel/build/deps/libjuice/libjuice.a libdatachannel/build/deps/libsrtp/libsrtp2.a libdatachannel/build/deps/usrsctp/usrsctplib/libusrsctp.a -lopenh264  -lssl -lcrypto  -lyuv -lopus -lpthread -lrt -lSvtAv1Enc
+SERVER_CFLAGS = -I../BasiliskII/src/IPC -Ilibdatachannel/include -Ilibdatachannel/deps/json/include -Iserver  -I/usr/include/svt-av1 -DEB_DLL   -msse4.1 -mpclmul -I/usr/include/svt-av1 -DEB_DLL
+SERVER_LIBS = libdatachannel/build/libdatachannel.a libdatachannel/build/deps/libjuice/libjuice.a libdatachannel/build/deps/libsrtp/libsrtp2.a libdatachannel/build/deps/usrsctp/usrsctplib/libusrsctp.a -lopenh264  -lssl -lcrypto  -lyuv -lpthread -lrt -lopus  -lSvtAv1Enc  -lvpx -lm  -lopus -lSvtAv1Enc -lwebp
 FPNG_CFLAGS = -msse4.1 -mpclmul
 
 # Source files
 SERVER_SRCS = $(SERVER_DIR)/server.cpp \
-              $(SERVER_DIR)/json_utils.cpp \
-              $(SERVER_DIR)/keycode_map.cpp \
-              $(SERVER_DIR)/storage_manager.cpp \
+              $(SERVER_DIR)/config/server_config.cpp \
+              $(SERVER_DIR)/config/config_manager.cpp \
+              $(SERVER_DIR)/utils/keyboard_map.cpp \
+              $(SERVER_DIR)/utils/json_utils.cpp \
+              $(SERVER_DIR)/ipc/ipc_connection.cpp \
+              $(SERVER_DIR)/storage/file_scanner.cpp \
+              $(SERVER_DIR)/storage/prefs_manager.cpp \
+              $(SERVER_DIR)/http/http_server.cpp \
+              $(SERVER_DIR)/http/api_handlers.cpp \
+              $(SERVER_DIR)/http/static_files.cpp \
               $(SERVER_DIR)/h264_encoder.cpp \
               $(SERVER_DIR)/av1_encoder.cpp \
               $(SERVER_DIR)/opus_encoder.cpp \
               $(SERVER_DIR)/png_encoder.cpp \
+              $(SERVER_DIR)/webp_encoder.cpp \
               $(SERVER_DIR)/fpng.cpp
 
 # Object files
 SERVER_OBJS = $(BUILD_DIR)/server.o \
+              $(BUILD_DIR)/server_config.o \
+              $(BUILD_DIR)/config_manager.o \
+              $(BUILD_DIR)/keyboard_map.o \
               $(BUILD_DIR)/json_utils.o \
-              $(BUILD_DIR)/keycode_map.o \
-              $(BUILD_DIR)/storage_manager.o \
+              $(BUILD_DIR)/ipc_connection.o \
+              $(BUILD_DIR)/file_scanner.o \
+              $(BUILD_DIR)/prefs_manager.o \
+              $(BUILD_DIR)/http_server.o \
+              $(BUILD_DIR)/api_handlers.o \
+              $(BUILD_DIR)/static_files.o \
               $(BUILD_DIR)/h264_encoder.o \
               $(BUILD_DIR)/av1_encoder.o \
+              $(BUILD_DIR)/vp9_encoder.o \
               $(BUILD_DIR)/opus_encoder.o \
               $(BUILD_DIR)/png_encoder.o \
+              $(BUILD_DIR)/webp_encoder.o \
               $(BUILD_DIR)/fpng.o
 
 # Target
@@ -77,35 +94,8 @@ $(LIBDATACHANNEL_LIB):
 $(BUILD_DIR)/server.o: $(SERVER_DIR)/server.cpp \
                        ../BasiliskII/src/IPC/ipc_protocol.h \
                        $(SERVER_DIR)/codec.h \
-                       $(SERVER_DIR)/video_stream.h \
-                       $(SERVER_DIR)/h264_stream.h \
-                       $(SERVER_DIR)/av1_stream.h \
-                       $(SERVER_DIR)/png_stream.h \
-                       $(SERVER_DIR)/json_utils.h \
-                       $(SERVER_DIR)/keycode_map.h \
-                       $(SERVER_DIR)/storage_manager.h \
                        $(SERVER_DIR)/h264_encoder.h \
-                       $(SERVER_DIR)/av1_encoder.h \
-                       $(SERVER_DIR)/png_encoder.h \
-                       $(SERVER_DIR)/httplib.h \
                        $(LIBDATACHANNEL_LIB)
-	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
-
-# Compile JSON utilities
-$(BUILD_DIR)/json_utils.o: $(SERVER_DIR)/json_utils.cpp \
-                            $(SERVER_DIR)/json_utils.h
-	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
-
-# Compile keycode map
-$(BUILD_DIR)/keycode_map.o: $(SERVER_DIR)/keycode_map.cpp \
-                             $(SERVER_DIR)/keycode_map.h
-	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
-
-# Compile storage manager
-$(BUILD_DIR)/storage_manager.o: $(SERVER_DIR)/storage_manager.cpp \
-                                 $(SERVER_DIR)/storage_manager.h \
-                                 $(SERVER_DIR)/json_utils.h \
-                                 $(SERVER_DIR)/codec.h
 	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
 
 # Compile H.264 encoder
@@ -117,6 +107,12 @@ $(BUILD_DIR)/h264_encoder.o: $(SERVER_DIR)/h264_encoder.cpp \
 # Compile AV1 encoder
 $(BUILD_DIR)/av1_encoder.o: $(SERVER_DIR)/av1_encoder.cpp \
                              $(SERVER_DIR)/av1_encoder.h \
+                             $(SERVER_DIR)/codec.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+# Compile VP9 encoder
+$(BUILD_DIR)/vp9_encoder.o: $(SERVER_DIR)/vp9_encoder.cpp \
+                             $(SERVER_DIR)/vp9_encoder.h \
                              $(SERVER_DIR)/codec.h
 	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
 
@@ -132,13 +128,46 @@ $(BUILD_DIR)/png_encoder.o: $(SERVER_DIR)/png_encoder.cpp \
                              $(SERVER_DIR)/fpng.h
 	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/webp_encoder.o: $(SERVER_DIR)/webp_encoder.cpp \
+                              $(SERVER_DIR)/webp_encoder.h \
+                              $(SERVER_DIR)/codec.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
 # Compile fpng (fast PNG library)
 $(BUILD_DIR)/fpng.o: $(SERVER_DIR)/fpng.cpp $(SERVER_DIR)/fpng.h
 	$(CXX) $(CXXFLAGS) $(FPNG_CFLAGS) -c $< -o $@
 
+# Compile server modules
+$(BUILD_DIR)/server_config.o: $(SERVER_DIR)/config/server_config.cpp $(SERVER_DIR)/config/server_config.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/keyboard_map.o: $(SERVER_DIR)/utils/keyboard_map.cpp $(SERVER_DIR)/utils/keyboard_map.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/json_utils.o: $(SERVER_DIR)/utils/json_utils.cpp $(SERVER_DIR)/utils/json_utils.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ipc_connection.o: $(SERVER_DIR)/ipc/ipc_connection.cpp $(SERVER_DIR)/ipc/ipc_connection.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/file_scanner.o: $(SERVER_DIR)/storage/file_scanner.cpp $(SERVER_DIR)/storage/file_scanner.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/prefs_manager.o: $(SERVER_DIR)/storage/prefs_manager.cpp $(SERVER_DIR)/storage/prefs_manager.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/http_server.o: $(SERVER_DIR)/http/http_server.cpp $(SERVER_DIR)/http/http_server.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/api_handlers.o: $(SERVER_DIR)/http/api_handlers.cpp $(SERVER_DIR)/http/api_handlers.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/static_files.o: $(SERVER_DIR)/http/static_files.cpp $(SERVER_DIR)/http/static_files.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@
+
 # Link server
 $(SERVER): $(SERVER_OBJS)
-	$(CXX) -o $@ $(SERVER_OBJS) $(SERVER_LIBS)
+	$(CXX) $(CXXFLAGS) -o $@ $(SERVER_OBJS) $(SERVER_LIBS)
 
 # Run server
 run: $(SERVER)
@@ -186,3 +215,9 @@ help:
 	@echo "  6. Open http://localhost:8000 in browser"
 
 .PHONY: all dirs run clean distclean help libdatachannel install
+
+# Config manager
+$(BUILD_DIR)/config_manager.o: $(SERVER_DIR)/config/config_manager.cpp \
+                                $(SERVER_DIR)/config/config_manager.h \
+                                $(SERVER_DIR)/utils/json_utils.h
+	$(CXX) $(CXXFLAGS) $(SERVER_CFLAGS) -c $< -o $@

@@ -38,6 +38,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include "audio_config.h"
+#include <cerrno>
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -60,26 +62,34 @@ extern MacEmuIPCBuffer* IPC_GetVideoSHM();
 #define DEBUG 0
 #include "debug.h"
 
-// Audio buffer for mixing/conversion before writing to SHM
+// Audio buffer for mixing/conversion before writing to SHM ring buffer
 static uint8_t* audio_mix_buffer = nullptr;
 static size_t audio_mix_buffer_size = 0;
 
-// Streaming thread (C++11 style, consistent with video_ipc.cpp)
+// Ring buffer is now in SHM (MacEmuIPCBuffer::audio_ring_buffer)
+// Indices are atomic fields in SHM (audio_ring_write_pos, audio_ring_read_pos)
+// No local copy needed - zero-copy architecture!
+
+// Frame-based audio architecture:
+// - Mac side: Audio thread produces frames at ~20ms intervals (variable sample rate)
+// - Frame size: Dynamic based on sample rate (e.g., 882 samples @ 44.1kHz, 960 @ 48kHz)
+// - Server side: Consumes frames at 20ms intervals, resamples to 48kHz for Opus
+// - Ring buffer: 8 frames (160ms) absorbs timing jitter and clock drift
+
+// Audio thread
 static std::thread audio_thread;
 static std::atomic<bool> audio_thread_running(false);
-static std::atomic<bool> audio_thread_cancel(false);
 
-// Synchronization for AudioInterrupt
+// Synchronization for AudioInterrupt (audio thread → Mac emulation thread)
 static std::mutex audio_irq_mutex;
 static std::condition_variable audio_irq_done_cv;
 static bool audio_irq_done = false;
 
-// Wake-up mechanism for audio thread
-static std::mutex audio_wakeup_mutex;
-static std::condition_variable audio_wakeup_cv;
-
-// Timing for 20ms audio frames
-static auto last_audio_frame_time = std::chrono::steady_clock::now();
+// Synchronization for server audio requests (server → audio thread)
+static std::mutex audio_request_mutex;
+static std::condition_variable audio_request_cv;
+static bool audio_request_pending = false;
+static uint32_t audio_requested_samples = 0;
 
 // Counters for debug
 static uint64_t audio_frames_sent = 0;
@@ -89,7 +99,7 @@ static uint64_t last_log_frame = 0;
 static bool g_debug_audio = false;
 
 // Forward declarations
-static void write_audio_to_shm(const uint8_t* data, size_t len);
+static void ring_buffer_write(const uint8_t* data, size_t len);
 static void audio_thread_func();
 
 
@@ -102,10 +112,12 @@ void AudioInit(void)
 	// Read debug flag once at startup
 	g_debug_audio = (getenv("MACEMU_DEBUG_AUDIO") != nullptr);
 
-	// Init audio status and feature flags
-	AudioStatus.sample_rate = 44100 << 16;  // Default 44.1kHz (Mac format: upper 16 bits = integer part)
-	AudioStatus.sample_size = 16;            // 16-bit samples
-	AudioStatus.channels = 2;                // Stereo
+	// Init audio status and feature flags using centralized audio_config.h constants
+	// Mac will calculate frame size: sample_rate * frame_duration_ms / 1000
+	// Example: 48000 * 20ms / 1000 = 960 samples (perfect for Opus)
+	AudioStatus.sample_rate = AUDIO_SAMPLE_RATE << 16;  // Mac format: upper 16 bits = integer part
+	AudioStatus.sample_size = AUDIO_SAMPLE_SIZE;
+	AudioStatus.channels = AUDIO_CHANNELS;
 	AudioStatus.mixer = 0;
 	AudioStatus.num_sources = 0;
 	audio_component_flags = cmpWantsRegisterMessage | kStereoOut | k16BitOut;
@@ -144,28 +156,29 @@ void AudioInit(void)
 
 	memset(audio_mix_buffer, 0, audio_mix_buffer_size);
 
-	// Set audio frames per block
-	// For 44.1kHz @ 20ms: 882 samples
-	// For 48kHz @ 20ms: 960 samples
-	// Use 4096 like OSS/SDL to match their behavior
-	audio_frames_per_block = 4096;
+	// Set audio frames per block to 20ms worth of samples at current rate
+	// This matches Opus frame duration for efficient streaming
+	// Calculate based on actual sample rate: samples = (rate * 20) / 1000
+	uint32_t sample_rate = AudioStatus.sample_rate >> 16;
+	audio_frames_per_block = (sample_rate * 20) / 1000;
+
+	// Examples at different rates:
+	//   11025 Hz: 220 samples
+	//   22050 Hz: 441 samples
+	//   44100 Hz: 882 samples
+	//   48000 Hz: 960 samples
 
 	// Mark audio as available
 	audio_open = true;
 
-	// Start streaming thread immediately (runs continuously, checks num_sources each loop)
-	// This avoids thread start/stop overhead for brief sounds
-	// Using std::thread for consistency with video_ipc.cpp
-	audio_thread_cancel = false;
-	audio_thread = std::thread(audio_thread_func);
+	// Start the request-driven audio thread immediately
+	// Thread will wait for requests from server, even when num_sources == 0
 	audio_thread_running = true;
-
-	if (g_debug_audio) {
-		fprintf(stderr, "Audio IPC: Streaming thread started\n");
-	}
+	audio_thread = std::thread(audio_thread_func);
 
 	fprintf(stderr, "Audio IPC: Initialized and READY (buffer size: %zu bytes, frames per block: %d, sample rates: 11025-48000 Hz)\n",
 	        audio_mix_buffer_size, audio_frames_per_block);
+	fprintf(stderr, "Audio IPC: Request-driven audio thread started (PULL MODEL)\n");
 	D(bug("Audio IPC: Initialized (buffer size: %zu bytes, frames: %d)\n", audio_mix_buffer_size, audio_frames_per_block));
 }
 
@@ -176,22 +189,20 @@ void AudioInit(void)
 
 void AudioExit(void)
 {
-	// Stop streaming thread if active
+	// Stop request-driven audio thread if running
 	if (audio_thread_running) {
-		audio_thread_cancel = true;
-
-		// Wake up thread if it's sleeping
-		audio_wakeup_cv.notify_one();
-
-		// Wait for thread to finish
+		fprintf(stderr, "Audio IPC: Stopping request-driven audio thread...\n");
+		audio_thread_running = false;
+		// Wake up thread so it can see the shutdown flag
+		{
+			std::lock_guard<std::mutex> lock(audio_request_mutex);
+			audio_request_pending = true;
+			audio_request_cv.notify_one();
+		}
 		if (audio_thread.joinable()) {
 			audio_thread.join();
 		}
-
-		audio_thread_running = false;
-		if (g_debug_audio) {
-			fprintf(stderr, "Audio IPC: Streaming thread stopped\n");
-		}
+		fprintf(stderr, "Audio IPC: Request-driven audio thread stopped\n");
 	}
 
 	if (audio_mix_buffer) {
@@ -214,16 +225,289 @@ void audio_enter_stream()
 		fprintf(stderr, "Audio IPC: Stream started (num_sources 0→1)\n");
 	}
 	D(bug("Audio IPC: Stream started\n"));
-	last_audio_frame_time = std::chrono::steady_clock::now();
 
-	// Wake up audio thread immediately (instead of waiting for next 20ms timeout)
-	audio_wakeup_cv.notify_one();
+	// Update SHM with current audio format
+	MacEmuIPCBuffer* shm = IPC_GetVideoSHM();
+	if (shm) {
+		uint32_t sample_rate = AudioStatus.sample_rate >> 16;
+		shm->audio_sample_rate = sample_rate;
+		shm->audio_channels = AudioStatus.channels;
+		shm->audio_format = MACEMU_AUDIO_FORMAT_PCM_S16;
+		if (g_debug_audio) {
+			fprintf(stderr, "Audio IPC: Set SHM audio format - %u Hz, %u ch\n",
+				sample_rate, AudioStatus.channels);
+		}
+	}
+
+	// Thread is already running (started in AudioInit), no need to start here
+}
+
+/*
+ *  Frame-based audio thread (PULL MODEL - request-driven)
+ *  Waits for server requests, then produces frames on-demand
+ *  Server controls timing, Mac just responds to requests
+ */
+
+static void audio_thread_func()
+{
+	while (audio_thread_running) {
+		// Wait for server request (BLOCKING - no autonomous timing!)
+		{
+			std::unique_lock<std::mutex> lock(audio_request_mutex);
+			audio_request_cv.wait(lock, []{
+				return audio_request_pending || !audio_thread_running;
+			});
+
+			if (!audio_thread_running) break;  // Shutting down
+
+			audio_request_pending = false;  // Consume request
+		}
+
+		MacEmuIPCBuffer* shm = IPC_GetVideoSHM();
+		if (!shm) continue;
+
+		// Process audio request (even if num_sources == 0, send silence)
+		if (AudioStatus.num_sources > 0) {
+			// Get current sample rate (Mac OS may change it dynamically)
+			uint32_t sample_rate = AudioStatus.sample_rate >> 16;  // Convert from Mac format
+			if (sample_rate == 0) sample_rate = 44100;  // Default
+
+			// Trigger Mac audio interrupt to get fresh data
+			SetInterruptFlag(INTFLAG_AUDIO);
+			TriggerInterrupt();
+
+			// Wait for Mac to fill audio data
+			{
+				std::unique_lock<std::mutex> lock(audio_irq_mutex);
+				audio_irq_done_cv.wait(lock, []{ return audio_irq_done; });
+				audio_irq_done = false;
+			}
+
+			// Get write frame from ring buffer
+			MacEmuIPCBuffer* shm = IPC_GetVideoSHM();
+			if (shm && audio_data) {
+				uint32 apple_stream_info = ReadMacInt32(audio_data + adatStreamInfo);
+				bool wrote_frame = false;
+
+				if (apple_stream_info) {
+					uint32 sample_count = ReadMacInt32(apple_stream_info + scd_sampleCount);
+					uint32 buffer_ptr = ReadMacInt32(apple_stream_info + scd_buffer);
+					uint32 num_channels = ReadMacInt16(apple_stream_info + scd_numChannels);
+					uint32 sample_size = ReadMacInt16(apple_stream_info + scd_sampleSize);
+
+					if (g_debug_audio) {
+						static int log_count = 0;
+						if (log_count++ < 5) {
+							fprintf(stderr, "Audio IPC: Mac provided %u samples, %u ch, %u-bit @ %u Hz\n",
+								sample_count, num_channels, sample_size, sample_rate);
+						}
+					}
+
+					if (sample_count > 0 && buffer_ptr != 0) {
+						// Get write index
+						uint32_t write_idx = ATOMIC_LOAD(shm->audio_frame_write_idx);
+						uint32_t read_idx = ATOMIC_LOAD(shm->audio_frame_read_idx);
+						uint32_t next_write_idx = (write_idx + 1) % MACEMU_AUDIO_FRAME_RING_SIZE;
+
+						// Check if ring buffer is full
+						if (next_write_idx == read_idx) {
+							if (g_debug_audio) {
+								static int overflow_count = 0;
+								if (++overflow_count <= 10) {
+									fprintf(stderr, "Audio IPC: Ring buffer full, dropping frame (count=%d)\n",
+										overflow_count);
+								}
+							}
+							// Drop this frame - server is too slow
+						} else {
+							// Get pointer to frame
+							MacEmuAudioFrame* frame = &shm->audio_frame_ring[write_idx];
+
+							// Fill metadata
+							frame->sample_rate = sample_rate;
+							frame->channels = num_channels;
+							frame->format = MACEMU_AUDIO_FORMAT_PCM_S16;
+
+							// Process audio data
+							uint32 bytes_per_sample = (sample_size >> 3);
+							size_t data_len = sample_count * bytes_per_sample * num_channels;
+
+							if (data_len > MACEMU_AUDIO_MAX_FRAME_SIZE) {
+								data_len = MACEMU_AUDIO_MAX_FRAME_SIZE;
+								sample_count = data_len / (bytes_per_sample * num_channels);
+							}
+
+							uint8_t* src = Mac2HostAddr(buffer_ptr);
+
+							// AUDIO DEBUG: Capture raw Mac audio data
+							// Only capture non-silent frames (skip silence between sounds)
+							static FILE* capture_file = nullptr;
+							static int frames_captured = 0;
+							static int silent_frames = 0;
+							static bool capture_started = false;
+
+							// Check for capture trigger from shared memory (set by server when user presses 'C')
+							uint32_t trigger = ATOMIC_LOAD(shm->capture_trigger);
+							if (trigger && !capture_started) {
+								capture_started = true;
+								frames_captured = 0;  // Reset counter
+								fprintf(stderr, "[IPC Emulator] *** CAPTURE TRIGGERED *** (via shared memory flag)\n");
+							}
+
+							if (capture_started && frames_captured < AUDIO_MAX_CAPTURE_FRAMES) {
+								// Calculate energy to detect non-silence
+								uint64_t energy = 0;
+								if (sample_size == 16) {
+									int16_t* samples = (int16_t*)src;
+									for (uint32 i = 0; i < sample_count * num_channels; i++) {
+										int16_t val_be = samples[i];
+										// Interpret as big-endian
+										int16_t val = (int16_t)(((val_be & 0xFF) << 8) | ((val_be >> 8) & 0xFF));
+										energy += (val < 0) ? -val : val;
+									}
+								}
+
+								// Only capture non-silent frames
+								if (energy > AUDIO_ENERGY_THRESHOLD) {
+									if (!capture_file) {
+										capture_file = fopen("/tmp/ipc_emulator_capture.raw", "wb");
+										fprintf(stderr, "IPC (emulator): Starting audio capture to /tmp/ipc_emulator_capture.raw\n");
+										fprintf(stderr, "IPC (emulator): Format: %u-bit, %u channels, %u Hz\n",
+										        sample_size, num_channels, sample_rate);
+										fprintf(stderr, "IPC (emulator): Capturing only non-silent frames (max %d frames)\n", AUDIO_MAX_CAPTURE_FRAMES);
+									}
+									fwrite(src, 1, data_len, capture_file);
+									frames_captured++;
+									silent_frames = 0;
+
+									// Log every 50 frames
+									if (frames_captured % 50 == 0) {
+										fprintf(stderr, "IPC (emulator): Captured %d non-silent frames\n", frames_captured);
+									}
+
+									// Stop after max frames
+									if (frames_captured >= AUDIO_MAX_CAPTURE_FRAMES) {
+										fclose(capture_file);
+										fprintf(stderr, "IPC (emulator): Audio capture complete (%d frames)\n", frames_captured);
+									}
+								} else {
+									silent_frames++;
+									// Log long silences
+									if (silent_frames == 50) {
+										fprintf(stderr, "IPC (emulator): Skipping silence (captured %d frames so far)\n", frames_captured);
+									}
+								}
+							}
+
+							if (sample_size == 8) {
+								// Convert U8 to S16
+								uint8_t* src_u8 = src;
+								int16_t* dst_s16 = (int16_t*)frame->data;
+								for (uint32 i = 0; i < sample_count * num_channels; i++) {
+									dst_s16[i] = ((int16_t)src_u8[i] - 128) << 8;
+								}
+								frame->samples = sample_count;
+							} else {
+								// S16 data - direct copy (Mac provides S16MSB format)
+								memcpy(frame->data, src, data_len);
+								frame->samples = sample_count;
+							}
+
+							// Get timestamp
+							struct timespec ts;
+							clock_gettime(CLOCK_REALTIME, &ts);
+							frame->timestamp_us = (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+
+							// Publish frame (atomic store with release semantics)
+							ATOMIC_STORE(shm->audio_frame_write_idx, next_write_idx);
+
+							audio_frames_sent++;
+							wrote_frame = true;
+
+							// Log every 100 frames (~2 seconds at 20ms/frame) if debug enabled
+							if (g_debug_audio && (audio_frames_sent - last_log_frame >= 100)) {
+								fprintf(stderr, "Audio IPC: Sent %lu frames (%u samples/frame, %uHz, %uch)\n",
+									audio_frames_sent, sample_count, sample_rate, num_channels);
+								last_log_frame = audio_frames_sent;
+							}
+						}
+					}
+				}
+
+				// If Mac didn't provide data (not ready yet), send silence frame
+				// This ensures server always gets a response to its request
+				if (!wrote_frame) {
+					uint32_t write_idx = ATOMIC_LOAD(shm->audio_frame_write_idx);
+					uint32_t read_idx = ATOMIC_LOAD(shm->audio_frame_read_idx);
+					uint32_t next_write_idx = (write_idx + 1) % MACEMU_AUDIO_FRAME_RING_SIZE;
+
+					if (next_write_idx != read_idx) {
+						MacEmuAudioFrame* frame = &shm->audio_frame_ring[write_idx];
+
+						// Fill with silence at current sample rate
+						frame->sample_rate = sample_rate;
+						frame->channels = AudioStatus.channels;
+						frame->format = MACEMU_AUDIO_FORMAT_PCM_S16;
+						// Calculate samples for 20ms at current rate
+						frame->samples = (sample_rate * 20) / 1000;
+
+						// Zero out audio data (silence)
+						memset(frame->data, 0, frame->samples * 2 * frame->channels);
+
+						// Get timestamp
+						struct timespec ts;
+						clock_gettime(CLOCK_REALTIME, &ts);
+						frame->timestamp_us = (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+
+						// Publish silence frame
+						ATOMIC_STORE(shm->audio_frame_write_idx, next_write_idx);
+
+						if (g_debug_audio) {
+							static int silence_count = 0;
+							if (++silence_count <= 10) {
+								fprintf(stderr, "Audio IPC: Mac not ready, sent silence frame (count=%d)\n",
+									silence_count);
+							}
+						}
+					}
+				}
+			}
+			// NO SLEEP! Server controls timing via requests
+			// Mac just responds immediately and waits for next request
+		} else {
+			// No audio sources - send silence frame to prevent underruns
+			uint32_t write_idx = ATOMIC_LOAD(shm->audio_frame_write_idx);
+			uint32_t read_idx = ATOMIC_LOAD(shm->audio_frame_read_idx);
+			uint32_t next_write_idx = (write_idx + 1) % MACEMU_AUDIO_FRAME_RING_SIZE;
+
+			if (next_write_idx != read_idx) {
+				MacEmuAudioFrame* frame = &shm->audio_frame_ring[write_idx];
+
+				// Fill with silence at default rate
+				frame->sample_rate = 44100;
+				frame->channels = 2;
+				frame->format = MACEMU_AUDIO_FORMAT_PCM_S16;
+				frame->samples = 882;  // 20ms @ 44.1kHz
+
+				// Zero out audio data (silence)
+				memset(frame->data, 0, frame->samples * 2 * frame->channels);
+
+				// Get timestamp
+				struct timespec ts;
+				clock_gettime(CLOCK_REALTIME, &ts);
+				frame->timestamp_us = (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+
+				// Publish silence frame
+				ATOMIC_STORE(shm->audio_frame_write_idx, next_write_idx);
+			}
+		}
+	}
 }
 
 
 /*
  *  Last source removed (num_sources 1→0)
- *  Thread continues running, just stops processing
+ *  Thread continues running, just starts sending silence frames
  */
 
 void audio_exit_stream()
@@ -233,8 +517,7 @@ void audio_exit_stream()
 	}
 	D(bug("Audio IPC: Stream stopped\n"));
 
-	// Thread continues running, will automatically stop processing
-	// when it sees num_sources == 0 on next loop iteration
+	// Thread keeps running - will send silence frames when num_sources == 0
 
 	// Signal audio paused (not disabled)
 	MacEmuIPCBuffer* video_shm = IPC_GetVideoSHM();
@@ -264,7 +547,12 @@ void AudioInterrupt(void)
 
 	// Call GetSourceData to fill apple_stream_info (like SDL does)
 	// This tells the Apple Mixer to prepare audio data for us to read
-	if (AudioStatus.mixer) {
+	if (!audio_data) {
+		// Audio component has been closed, audio_data freed
+		if (g_debug_audio) {
+			fprintf(stderr, "Audio IPC: AudioInterrupt - audio_data is NULL, component closed\n");
+		}
+	} else if (AudioStatus.mixer) {
 		M68kRegisters r;
 		r.a[0] = audio_data + adatStreamInfo;
 		r.a[1] = AudioStatus.mixer;
@@ -284,54 +572,27 @@ void AudioInterrupt(void)
 
 
 /*
- *  Write audio frame to shared memory
+ * Request audio data (called by server via socket)
+ * This is the pull model entry point - server asks, Mac responds
  */
 
-static void write_audio_to_shm(const uint8_t* data, size_t len)
+void audio_request_data(uint32_t requested_samples)
 {
-	MacEmuIPCBuffer* video_shm = IPC_GetVideoSHM();
-	if (!video_shm) {
-		return;
+	if (g_debug_audio) {
+		static int request_count = 0;
+		if (++request_count <= 10 || request_count % 100 == 0) {
+			fprintf(stderr, "Audio IPC: Server requested %u samples (count=%d)\n",
+				requested_samples, request_count);
+		}
 	}
 
-	// Check if audio eventfd is available
-	if (video_shm->audio_ready_eventfd < 0) {
-		return;  // Audio not enabled in server
+	// Wake up audio thread with request
+	{
+		std::lock_guard<std::mutex> lock(audio_request_mutex);
+		audio_requested_samples = requested_samples;
+		audio_request_pending = true;
 	}
-
-	// Get current audio format
-	uint32_t sample_rate = AudioStatus.sample_rate >> 16;  // Convert from Mac format
-	uint32_t channels = AudioStatus.channels;
-	uint32_t samples = len / (2 * channels);  // Assuming 16-bit (2 bytes per sample)
-
-	if (samples == 0 || len > MACEMU_AUDIO_MAX_FRAME_SIZE) {
-		return;  // Invalid
-	}
-
-	// Get write buffer
-	uint8_t* audio_frame = macemu_get_write_audio(video_shm);
-
-	// Copy audio data
-	memcpy(audio_frame, data, len);
-
-	// Get timestamp
-	struct timespec ts;
-	clock_gettime(CLOCK_REALTIME, &ts);
-	uint64_t timestamp_us = (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
-
-	// Publish frame (atomically updates metadata and signals server)
-	macemu_audio_frame_complete(video_shm, sample_rate, channels, samples, timestamp_us);
-
-	audio_frames_sent++;
-
-	// Log every 100 frames (~2 seconds at 50fps) if debug enabled
-	if (g_debug_audio && (audio_frames_sent - last_log_frame >= 100)) {
-		fprintf(stderr, "Audio IPC: Sent %lu frames (%u samples/frame, %uHz, %uch)\n",
-		        audio_frames_sent, samples, sample_rate, channels);
-		last_log_frame = audio_frames_sent;
-	}
-
-	D(bug("Audio IPC: Sent %u samples (%uHz, %uch)\n", samples, sample_rate, channels));
+	audio_request_cv.notify_one();
 }
 
 
@@ -406,163 +667,20 @@ bool audio_set_channels(int index)
 }
 
 
+// No dedicated audio thread needed - audio processing happens inline in audio_request_data()
+
+
 /*
- *  Audio streaming thread
- *  Periodically triggers audio interrupt to get new data from Mac
- *  Uses condition_variable for efficient wake-up (no polling overhead)
+ *  Startup sound (SheepShaver only)
  */
 
-static void audio_thread_func()
-{
-	if (g_debug_audio) {
-		fprintf(stderr, "Audio IPC: Streaming thread running\n");
-	}
-
-	// Frame timing: 20ms for audio processing
-	const auto frame_interval = std::chrono::milliseconds(20);
-
-	int loop_count = 0;
-	int zero_sources_count = 0;
-	int no_data_count = 0;
-
-	while (!audio_thread_cancel) {
-		if (AudioStatus.num_sources) {
-			// Trigger audio interrupt to signal Mac we're ready for data
-			loop_count++;
-			if (g_debug_audio && loop_count == 1) {
-				fprintf(stderr, "Audio IPC: Thread FIRST LOOP with num_sources=%d\n", AudioStatus.num_sources);
-			}
-			if (g_debug_audio && loop_count % 50 == 0) {  // Log every ~1 second
-				fprintf(stderr, "Audio IPC: Thread active (num_sources=%d, loop=%d)\n",
-				        AudioStatus.num_sources, loop_count);
-			}
-			D(bug("Audio IPC: Triggering audio interrupt\n"));
-			if (g_debug_audio && loop_count <= 10) {
-				fprintf(stderr, "Audio IPC: About to trigger interrupt (loop=%d)\n", loop_count);
-			}
-			SetInterruptFlag(INTFLAG_AUDIO);
-			TriggerInterrupt();
-
-			// Wait for AudioInterrupt() to complete
-			D(bug("Audio IPC: Waiting for interrupt completion\n"));
-			if (g_debug_audio && loop_count <= 10) {
-				fprintf(stderr, "Audio IPC: Waiting for AudioInterrupt() to complete...\n");
-			}
-			{
-				std::unique_lock<std::mutex> lock(audio_irq_mutex);
-				audio_irq_done_cv.wait(lock, []{ return audio_irq_done; });
-				audio_irq_done = false;  // Reset for next iteration
-			}
-			D(bug("Audio IPC: Interrupt complete\n"));
-			if (g_debug_audio && loop_count <= 10) {
-				fprintf(stderr, "Audio IPC: AudioInterrupt() completed, now reading data\n");
-			}
-
-			// Now read the audio data (like OSS/SDL do)
-			MacEmuIPCBuffer* video_shm = IPC_GetVideoSHM();
-			if (g_debug_audio && loop_count <= 10) {
-				fprintf(stderr, "Audio IPC: video_shm=%p\n", (void*)video_shm);
-			}
-			if (video_shm) {
-				uint32 apple_stream_info = ReadMacInt32(audio_data + adatStreamInfo);
-
-				// Debug: log first time and periodically if debug enabled
-				static int read_count = 0;
-				read_count++;
-				if (g_debug_audio && (read_count <= 20 || read_count % 100 == 0)) {
-					fprintf(stderr, "Audio IPC: Reading stream (count=%d, stream_info=0x%x, audio_data=0x%x)\n",
-					        read_count, apple_stream_info, audio_data);
-				}
-
-				if (apple_stream_info) {
-					uint32 sample_count = ReadMacInt32(apple_stream_info + scd_sampleCount);
-					uint32 buffer_ptr = ReadMacInt32(apple_stream_info + scd_buffer);
-					uint32 num_channels = ReadMacInt16(apple_stream_info + scd_numChannels);
-					uint32 sample_size = ReadMacInt16(apple_stream_info + scd_sampleSize);
-					uint32 sample_rate = ReadMacInt32(apple_stream_info + scd_sampleRate);
-
-					// Debug: log what we got
-					if (g_debug_audio && (read_count <= 20 || read_count % 100 == 0)) {
-						fprintf(stderr, "Audio IPC: Got sample_count=%u, buffer_ptr=0x%x, channels=%u, size=%u, rate=%u\n",
-						        sample_count, buffer_ptr, num_channels, sample_size, sample_rate >> 16);
-					}
-
-					if (sample_count > 0 && buffer_ptr != 0) {
-						// We have data! Process it
-						uint32 sample_size = AudioStatus.sample_size;
-						uint32 channels = AudioStatus.channels;
-						uint32 bytes_per_sample = (sample_size >> 3);
-						size_t data_len = sample_count * bytes_per_sample * channels;
-
-						if (data_len > audio_mix_buffer_size) {
-							data_len = audio_mix_buffer_size;
-							sample_count = data_len / (bytes_per_sample * channels);
-						}
-
-						// Copy and convert audio data
-						uint8_t* src = Mac2HostAddr(buffer_ptr);
-
-						if (sample_size == 8) {
-							// Convert U8 to S16
-							uint8_t* src_u8 = src;
-							int16_t* dst_s16 = (int16_t*)audio_mix_buffer;
-							for (uint32 i = 0; i < sample_count * channels; i++) {
-								dst_s16[i] = ((int16_t)src_u8[i] - 128) << 8;
-							}
-							data_len = sample_count * channels * 2;
-						} else {
-							// Convert S16MSB (big-endian) to S16LE (little-endian)
-							int16_t* src_s16 = (int16_t*)src;
-							int16_t* dst_s16 = (int16_t*)audio_mix_buffer;
-							for (uint32 i = 0; i < sample_count * channels; i++) {
-								uint16_t sample = src_s16[i];
-								dst_s16[i] = (sample >> 8) | (sample << 8);
-							}
-						}
-
-						// Write to SHM
-						if (g_debug_audio && read_count <= 20) {
-							fprintf(stderr, "Audio IPC: Writing %zu bytes to SHM (%u samples, %u channels)\n",
-							        data_len, sample_count, channels);
-						}
-						write_audio_to_shm(audio_mix_buffer, data_len);
-						no_data_count = 0;  // Reset
-					} else {
-						// No data yet
-						no_data_count++;
-						if (g_debug_audio && no_data_count % 100 == 0) {
-							fprintf(stderr, "Audio IPC: No data available yet (%d checks, sample_count=%u, buffer_ptr=0x%x)\n",
-							        no_data_count, sample_count, buffer_ptr);
-						}
-					}
-				} else {
-					// No stream info yet
-					no_data_count++;
-					if (g_debug_audio && no_data_count % 100 == 0) {
-						fprintf(stderr, "Audio IPC: No stream info yet (%d checks)\n", no_data_count);
-					}
-				}
-			}
-		} else {
-			// No sources, reset counters
-			zero_sources_count++;
-			if (g_debug_audio && zero_sources_count == 1) {
-				fprintf(stderr, "Audio IPC: Thread loop with num_sources=0 (audio not active yet)\n");
-			}
-			loop_count = 0;
-			no_data_count = 0;
-		}
-
-		// Sleep with timeout - wakes immediately on notify OR after 20ms
-		// When audio active: maintains 20ms frame timing
-		// When idle: waits for audio_enter_stream() to wake us
-		std::unique_lock<std::mutex> lock(audio_wakeup_mutex);
-		audio_wakeup_cv.wait_for(lock, frame_interval);
-	}
-
-	if (g_debug_audio) {
-		fprintf(stderr, "Audio IPC: Streaming thread exiting\n");
-	}
+#ifdef SHEEPSHAVER
+// SheepShaver-specific function (not used in BasiliskII)
+void PlayStartupSound() {
+	// Startup sound is handled by Mac OS ROM in SheepShaver
+	// No emulator-side implementation needed with IPC audio
 }
+#endif
+
 
 #endif // ENABLE_IPC_AUDIO

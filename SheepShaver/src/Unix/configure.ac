@@ -75,6 +75,10 @@ AC_ARG_ENABLE(sdl-framework-prefix,    [  --enable-sdl-framework-prefix=PFX    d
 AC_ARG_WITH(sdl1,            [  --with-sdl1             use SDL 1.x, rather than SDL 2.x [default=no]], [WANT_SDL_VERSION_MAJOR=1], [])
 AC_ARG_WITH(sdl3,            [  --with-sdl3             use SDL 3.x, rather than SDL 2.x [default=no]], [WANT_SDL_VERSION_MAJOR=3], [])
 
+dnl IPC options (for WebRTC streaming)
+AC_ARG_ENABLE(ipc-video,     [  --enable-ipc-video      enable IPC video driver for web streaming [default=no]], [WANT_IPC_VIDEO=$enableval], [WANT_IPC_VIDEO=no])
+AC_ARG_ENABLE(ipc-audio,     [  --enable-ipc-audio      enable IPC audio driver for web streaming [default=no]], [WANT_IPC_AUDIO=$enableval], [WANT_IPC_AUDIO=no])
+
 dnl Checks for programs.
 AC_PROG_CC_C99
 AC_PROG_CPP
@@ -802,6 +806,17 @@ fi
 if [[ "x$WANT_SDL_AUDIO" = "xyes" ]]; then
   AC_DEFINE(USE_SDL_AUDIO, 1, [Define to enable SDL audio support])
   AUDIOSRC="../SDL/audio_sdl.cpp ../SDL/audio_sdl3.cpp"
+fi
+
+dnl IPC driver overrides (for WebRTC streaming)
+if [[ "x$WANT_IPC_VIDEO" = "xyes" ]]; then
+  AC_DEFINE(ENABLE_IPC_VIDEO, 1, [Define to enable IPC video driver])
+  VIDEOSRCS="../IPC/video_ipc_sheep.cpp"
+  EXTRASYSSRCS="$EXTRASYSSRCS ../IPC/control_ipc.cpp"
+fi
+if [[ "x$WANT_IPC_AUDIO" = "xyes" ]]; then
+  AC_DEFINE(ENABLE_IPC_AUDIO, 1, [Define to enable IPC audio driver])
+  AUDIOSRC="../IPC/audio_ipc.cpp"
 fi
 
 dnl BINCUE overrides
@@ -1770,6 +1785,8 @@ echo Enable video on SEGV signals ..... : $WANT_VOSF
 echo ESD sound support ................ : $WANT_ESD
 echo GTK user interface ............... : $WANT_GTK
 echo mon debugger support ............. : $WANT_MON
+echo IPC video driver ................. : $WANT_IPC_VIDEO
+echo IPC audio driver ................. : $WANT_IPC_AUDIO
 echo Addressing mode .................. : $WANT_ADDRESSING_MODE
 echo Bad memory access recovery type .. : $sigsegv_recovery
 echo

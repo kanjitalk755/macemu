@@ -296,6 +296,19 @@ void ADBSetRelMouseMode(bool relative)
 
 
 /*
+ *  Get current mouse position
+ */
+
+void ADBGetMousePos(int *x, int *y)
+{
+	B2_lock_mutex(mouse_lock);
+	if (x) *x = mouse_x;
+	if (y) *y = mouse_y;
+	B2_unlock_mutex(mouse_lock);
+}
+
+
+/*
  *  Key pressed ("code" is the Mac key code)
  */
 

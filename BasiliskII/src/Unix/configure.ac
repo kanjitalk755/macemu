@@ -227,6 +227,16 @@ AC_PROG_CC_C99
 AC_PROG_CC_C_O
 AC_PROG_CPP
 AC_PROG_CXX
+
+dnl Override default CFLAGS/CXXFLAGS for better debugging
+dnl AC_PROG_CC and AC_PROG_CXX set these to -g -O2 by default
+if test "x$CFLAGS" = "x-g -O2"; then
+  CFLAGS="-g3 -O0 -fno-omit-frame-pointer"
+fi
+if test "x$CXXFLAGS" = "x-g -O2"; then
+  CXXFLAGS="-g3 -O0 -fno-omit-frame-pointer"
+fi
+
 AC_PROG_MAKE_SET
 AC_PROG_INSTALL
 AC_PROG_EGREP
@@ -950,7 +960,7 @@ fi
 dnl Video source selection - IPC video is mutually exclusive with SDL/X11
 if [[ "x$WANT_IPC_VIDEO" = "xyes" ]]; then
   dnl IPC video mode - shared memory video for standalone WebRTC server
-  VIDEOSRCS="../IPC/video_ipc.cpp"
+  VIDEOSRCS="../IPC/video_ipc.cpp ../IPC/control_ipc.cpp"
   KEYCODES="../SDL/keycodes"
   EXTRASYSSRCS="$EXTRASYSSRCS ../dummy/clip_dummy.cpp"
   dnl Set audio source for IPC audio if enabled
@@ -2012,6 +2022,9 @@ fi
 
 CFLAGS="$CFLAGS -fwrapv"
 CXXFLAGS="$CXXFLAGS -fwrapv"
+
+dnl Add -rdynamic for better backtraces
+LDFLAGS="$LDFLAGS -rdynamic"
 
 dnl Generate Makefile.
 AC_SUBST(DEFINES)

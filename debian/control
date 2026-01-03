@@ -1,0 +1,46 @@
+Source: macemu-webrtc
+Section: utils
+Priority: optional
+Maintainer: Your Name <your.email@example.com>
+Build-Depends: debhelper-compat (= 13),
+               autoconf,
+               automake,
+               libtool,
+               cmake,
+               pkg-config,
+               libssl-dev,
+               libopenh264-dev,
+               libsvtav1-dev,
+               libsvtav1enc-dev,
+               libvpx-dev,
+               libwebp-dev,
+               libopus-dev,
+               libyuv-dev,
+               libsdl2-dev,
+               libgtk-3-dev
+Standards-Version: 4.6.0
+Homepage: https://github.com/cebix/macemu
+Vcs-Git: https://github.com/cebix/macemu.git
+
+Package: macemu-webrtc
+Architecture: amd64
+Depends: ${shlibs:Depends},
+         ${misc:Depends}
+Description: Classic Macintosh emulation with WebRTC streaming
+ BasiliskII and SheepShaver emulators with browser-based streaming support.
+ .
+ Features:
+  - Stream classic Mac OS (System 7, Mac OS 8, Mac OS 9) to web browsers
+  - Multiple video codecs: H.264, AV1, VP9, PNG, WebP
+  - Low-latency audio streaming via Opus
+  - WebRTC-based peer-to-peer streaming
+  - Dirty rectangle optimization for still-image codecs
+  - Browser-based UI with configuration management
+ .
+ This package includes:
+  - BasiliskII (68k Mac emulator)
+  - SheepShaver (PowerPC Mac emulator)
+  - WebRTC streaming server
+  - Web-based client interface
+ .
+ After installation, run 'macemu-webrtc-setup' to initialize your environment.

@@ -13,20 +13,32 @@
 #include "codec.h"
 #include "h264_encoder.h"
 #include "av1_encoder.h"
+#include "vp9_encoder.h"
 #include "png_encoder.h"
+#include "webp_encoder.h"
 #include "opus_encoder.h"
-#include "h264_stream.h"
-#include "av1_stream.h"
-#include "png_stream.h"
-#include "json_utils.h"
-#include "keycode_map.h"
-#include "storage_manager.h"
+#include "audio_config.h"
+
+// Utility modules
+#include "utils/keyboard_map.h"
+#include "utils/json_utils.h"
+#include "config/server_config.h"
+#include "config/config_manager.h"
+#include "ipc/ipc_connection.h"
+#include "storage/file_scanner.h"
+#include "storage/prefs_manager.h"
+#include "http/http_server.h"
+#include "http/api_handlers.h"
+#include "http/static_files.h"
 
 #include <rtc/rtc.hpp>
 #include <rtc/rtppacketizer.hpp>
 #include <rtc/h264rtppacketizer.hpp>
 #include <rtc/av1rtppacketizer.hpp>
+#include <rtc/vp9rtppacketizer.hpp>
 #include <rtc/rtppacketizationconfig.hpp>
+#include <rtc/rtcpsrreporter.hpp>
+#include <rtc/rtcpnackresponder.hpp>
 #include <rtc/frameinfo.hpp>
 
 #include <string>
@@ -42,6 +54,8 @@
 #include <fstream>
 #include <csignal>
 #include <iomanip>
+#include <execinfo.h>
+#include <ucontext.h>
 
 // POSIX IPC and process management
 #include <fcntl.h>
@@ -63,38 +77,64 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 
-// Configuration
-static int g_http_port = 8000;
-static int g_signaling_port = 8090;
-// g_roms_path, g_images_path, g_prefs_path now in storage_manager.cpp/h
-static std::string g_emulator_path;    // Path to BasiliskII/SheepShaver executable
-static bool g_auto_start_emulator = true;
-static pid_t g_target_emulator_pid = 0;  // If specified, connect to this PID
-CodecType g_server_codec = CodecType::PNG;  // Server-side codec preference (default: PNG) - now non-static for storage_manager
-static bool g_enable_stun = false;  // STUN disabled by default (for localhost/LAN)
-static std::string g_stun_server = "stun:stun.l.google.com:19302";  // Default STUN server
+// Configuration (centralized in ServerConfig)
+static server_config::ServerConfig g_config;
 
-// Debug/verbosity flags (extern in encoders for cross-module access)
-static bool g_debug_connection = false;  // WebRTC, ICE, signaling logs
-bool g_debug_mode_switch = false;        // Mode/resolution/color depth changes (non-static for encoders)
-static bool g_debug_perf = false;        // Performance stats, ping logs
-static bool g_debug_frames = false;      // Save frame dumps to disk (.ppm files)
-static bool g_debug_audio = false;       // Audio processing logs (server + emulator)
+// Helper: Expand $HOME in paths
+static std::string expand_path(const std::string& path) {
+    if (path.find("$HOME") == 0) {
+        const char* home = getenv("HOME");
+        if (!home) {
+            struct passwd* pw = getpwuid(getuid());
+            home = pw ? pw->pw_dir : "/tmp";
+        }
+        return std::string(home) + path.substr(5);  // Skip "$HOME"
+    }
+    return path;
+}
+
+// Legacy accessors for gradual migration
+// TODO: Phase 7 - Pass ServerConfig reference instead of using globals
+#define g_http_port         (g_config.http_port)
+#define g_signaling_port    (g_config.signaling_port)
+#define g_roms_path         (g_config.roms_path)
+#define g_images_path       (g_config.images_path)
+#define g_prefs_path        (g_config.prefs_path)
+#define g_emulator_path     (g_config.emulator_path)
+#define g_auto_start_emulator (g_config.auto_start_emulator)
+#define g_target_emulator_pid (g_config.target_emulator_pid)
+#define g_server_codec      (g_config.server_codec)
+#define g_enable_stun       (g_config.enable_stun)
+#define g_stun_server       (g_config.stun_server)
+#define g_debug_connection  (g_config.debug_connection)
+#define g_debug_perf        (g_config.debug_perf)
+#define g_debug_frames      (g_config.debug_frames)
+#define g_debug_audio       (g_config.debug_audio)
+#define g_debug_mouse       (g_config.debug_mouse)
+
+// g_debug_mode_switch and g_debug_png need to be non-static for encoders
+bool g_debug_mode_switch = false;
+bool g_debug_png = false;
 
 // Global state
 static std::atomic<bool> g_running(true);
 static std::atomic<bool> g_emulator_connected(false);
 static std::atomic<bool> g_restart_emulator_requested(false);
+static std::atomic<bool> g_user_stopped_emulator(false);  // User explicitly stopped via web UI
 static pid_t g_emulator_pid = -1;
+static CodecType g_previous_codec = CodecType::PNG;  // Track codec changes for peer disconnection
 
-// IPC handles - server connects to emulator's resources
-static MacEmuIPCBuffer* g_video_shm = nullptr;
-static int g_video_shm_fd = -1;
-static int g_control_socket = -1;
-static int g_frame_ready_eventfd = -1;  // Server's copy of eventfd for video frame notifications
-static int g_audio_ready_eventfd = -1;  // Server's copy of eventfd for audio frame notifications
-static std::string g_connected_shm_name;
-static std::string g_connected_socket_path;
+// IPC connection (replaces individual global handles)
+static ipc::IPCConnection g_ipc;
+
+// Legacy accessors for gradual migration
+// TODO: Phase 7 - Pass IPCConnection reference instead of using globals
+#define g_ipc_shm           (g_ipc.get_shm())  // Shared memory for both video and audio
+#define g_control_socket    (g_ipc.get_control_socket())
+#define g_frame_ready_eventfd (g_ipc.get_frame_eventfd())
+#define g_audio_ready_eventfd (g_ipc.get_audio_eventfd())
+#define g_connected_shm_name  (g_ipc.get_shm_name())
+#define g_connected_socket_path (g_ipc.get_socket_path())
 
 // Input event counters (for stats)
 static std::atomic<uint64_t> g_mouse_move_count(0);
@@ -105,313 +145,224 @@ static std::atomic<uint64_t> g_key_count(0);
 // Global flag to request keyframe (set when new peer connects)
 static std::atomic<bool> g_request_keyframe(false);
 
+// Audio capture trigger (removed - was debug feature via stdin monitor)
+// static std::atomic<bool> g_capture_requested(false);
+
 // Audio encoder (shared across all peers)
 static std::unique_ptr<OpusAudioEncoder> g_audio_encoder;
 
-// Forward declarations
-class WebRTCServer;
-
-// Signal handler
+// Signal handler for graceful shutdown
 static void signal_handler(int sig) {
     fprintf(stderr, "\nServer: Received signal %d, shutting down...\n", sig);
     g_running = false;
 }
 
-
-// Browser keycode conversion moved to keycode_map.cpp/h
-
-
-// JSON helpers moved to json_utils.cpp/h
-
-
-/*
- * IPC: Connect to emulator's shared memory by PID
- */
-
-static bool connect_to_video_shm(pid_t pid) {
-    std::string shm_name = std::string(MACEMU_VIDEO_SHM_PREFIX) + std::to_string(pid);
-
-    g_video_shm_fd = shm_open(shm_name.c_str(), O_RDONLY, 0);
-    if (g_video_shm_fd < 0) {
-        // Not an error during scanning - emulator may not exist yet
-        return false;
+// Crash handler for fatal signals with full backtrace
+static void crash_handler(int sig, siginfo_t *info, void *context) {
+    // Use async-signal-safe functions only
+    const char *signame = "UNKNOWN";
+    switch (sig) {
+        case SIGSEGV: signame = "SIGSEGV (Segmentation Fault)"; break;
+        case SIGBUS:  signame = "SIGBUS (Bus Error)"; break;
+        case SIGABRT: signame = "SIGABRT (Abort)"; break;
+        case SIGILL:  signame = "SIGILL (Illegal Instruction)"; break;
+        case SIGFPE:  signame = "SIGFPE (Floating Point Exception)"; break;
     }
 
-    // Map shared memory (read-only for server)
-    g_video_shm = (MacEmuIPCBuffer*)mmap(nullptr, sizeof(MacEmuIPCBuffer),
-                                          PROT_READ, MAP_SHARED,
-                                          g_video_shm_fd, 0);
-    if (g_video_shm == MAP_FAILED) {
-        fprintf(stderr, "IPC: Failed to map video SHM for PID %d: %s\n", pid, strerror(errno));
-        close(g_video_shm_fd);
-        g_video_shm_fd = -1;
-        g_video_shm = nullptr;
-        return false;
-    }
+    fprintf(stderr, "\n");
+    fprintf(stderr, "╔════════════════════════════════════════════════════════════════╗\n");
+    fprintf(stderr, "║              FATAL CRASH IN WEBRTC SERVER                      ║\n");
+    fprintf(stderr, "╚════════════════════════════════════════════════════════════════╝\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Signal:  %d (%s)\n", sig, signame);
 
-    // Validate
-    int result = macemu_validate_ipc_buffer(g_video_shm, pid);
-    if (result != 0) {
-        fprintf(stderr, "IPC: SHM validation failed for PID %d (error %d)\n", pid, result);
-        munmap(g_video_shm, sizeof(MacEmuIPCBuffer));
-        close(g_video_shm_fd);
-        g_video_shm_fd = -1;
-        g_video_shm = nullptr;
-        return false;
-    }
-
-    g_connected_shm_name = shm_name;
-    g_emulator_pid = pid;
-    fprintf(stderr, "IPC: Connected to video SHM '%s' (%dx%d)\n",
-            shm_name.c_str(), g_video_shm->width, g_video_shm->height);
-    return true;
-}
-
-static void disconnect_video_shm() {
-    if (g_video_shm && g_video_shm != MAP_FAILED) {
-        munmap(g_video_shm, sizeof(MacEmuIPCBuffer));
-        g_video_shm = nullptr;
-    }
-    if (g_video_shm_fd >= 0) {
-        close(g_video_shm_fd);
-        g_video_shm_fd = -1;
-    }
-    g_connected_shm_name.clear();
-}
-
-
-/*
- * IPC: Connect to emulator's control socket by PID
- */
-
-static bool connect_to_control_socket(pid_t pid) {
-    std::string socket_path = std::string(MACEMU_CONTROL_SOCK_PREFIX) + std::to_string(pid) +
-                              std::string(MACEMU_CONTROL_SOCK_SUFFIX);
-
-    g_control_socket = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (g_control_socket < 0) {
-        fprintf(stderr, "IPC: Failed to create socket: %s\n", strerror(errno));
-        return false;
-    }
-
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
-
-    if (connect(g_control_socket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(g_control_socket);
-        g_control_socket = -1;
-        return false;
-    }
-
-    // Set non-blocking
-    int flags = fcntl(g_control_socket, F_GETFL, 0);
-    if (flags < 0) {
-        fprintf(stderr, "IPC: Failed to get socket flags: %s\n", strerror(errno));
-        close(g_control_socket);
-        g_control_socket = -1;
-        return false;
-    }
-    if (fcntl(g_control_socket, F_SETFL, flags | O_NONBLOCK) < 0) {
-        fprintf(stderr, "IPC: Failed to set non-blocking mode: %s\n", strerror(errno));
-        close(g_control_socket);
-        g_control_socket = -1;
-        return false;
-    }
-
-    g_connected_socket_path = socket_path;
-    g_emulator_connected = true;
-    fprintf(stderr, "IPC: Connected to control socket '%s'\n", socket_path.c_str());
-
-    // Receive eventfds from emulator via SCM_RIGHTS for low-latency notifications
-    // The emulator sends video and audio eventfds immediately after accepting the connection
-    struct msghdr msg = {};
-    struct cmsghdr *cmsg;
-    char buf[CMSG_SPACE(sizeof(int) * 2)];  // Space for 2 file descriptors
-    char data;
-    struct iovec iov = { &data, 1 };
-
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    msg.msg_control = buf;
-    msg.msg_controllen = sizeof(buf);
-
-    // Try to receive the eventfds (with short timeout since it's sent immediately)
-    if (fcntl(g_control_socket, F_SETFL, flags & ~O_NONBLOCK) < 0) {
-        fprintf(stderr, "IPC: Warning: Failed to set blocking mode: %s\n", strerror(errno));
-    }
-    struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
-    if (setsockopt(g_control_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        fprintf(stderr, "IPC: Warning: Failed to set socket timeout: %s\n", strerror(errno));
-    }
-
-    ssize_t n = recvmsg(g_control_socket, &msg, 0);
-    if (n > 0 && data == 'E') {
-        for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != nullptr; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-            if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
-                // Receive 1 or 2 eventfds (video, and optionally audio)
-                size_t num_fds = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
-                int* fds = (int*)CMSG_DATA(cmsg);
-
-                if (num_fds >= 1) {
-                    g_frame_ready_eventfd = fds[0];
-                    fprintf(stderr, "IPC: Received eventfd %d from emulator for low-latency sync\n", g_frame_ready_eventfd);
-                }
-                if (num_fds >= 2) {
-                    g_audio_ready_eventfd = fds[1];
-                    fprintf(stderr, "IPC: Received audio eventfd %d from emulator\n", g_audio_ready_eventfd);
-                }
-                break;
-            }
+    if (info) {
+        fprintf(stderr, "Code:    %d\n", info->si_code);
+        if (sig == SIGSEGV || sig == SIGBUS) {
+            fprintf(stderr, "Address: %p (invalid memory access)\n", info->si_addr);
         }
     }
 
-    // Restore non-blocking mode
-    if (fcntl(g_control_socket, F_SETFL, flags | O_NONBLOCK) < 0) {
-        fprintf(stderr, "IPC: Warning: Failed to restore non-blocking mode: %s\n", strerror(errno));
+    // Print register state (x86-64 specific)
+#if defined(__x86_64__)
+    if (context) {
+        ucontext_t *uctx = (ucontext_t *)context;
+        mcontext_t *mctx = &uctx->uc_mcontext;
+
+        fprintf(stderr, "\n=== REGISTER STATE ===\n");
+        fprintf(stderr, "  RIP: 0x%016llx  (instruction pointer)\n", (unsigned long long)mctx->gregs[REG_RIP]);
+        fprintf(stderr, "  RSP: 0x%016llx  (stack pointer)\n", (unsigned long long)mctx->gregs[REG_RSP]);
+        fprintf(stderr, "  RBP: 0x%016llx  (base pointer)\n", (unsigned long long)mctx->gregs[REG_RBP]);
+        fprintf(stderr, "  RAX: 0x%016llx  RBX: 0x%016llx\n",
+            (unsigned long long)mctx->gregs[REG_RAX],
+            (unsigned long long)mctx->gregs[REG_RBX]);
+        fprintf(stderr, "  RCX: 0x%016llx  RDX: 0x%016llx\n",
+            (unsigned long long)mctx->gregs[REG_RCX],
+            (unsigned long long)mctx->gregs[REG_RDX]);
+        fprintf(stderr, "=== END REGISTER STATE ===\n");
+    }
+#endif
+
+    // Print backtrace with source locations using addr2line
+    fprintf(stderr, "\n=== BACKTRACE ===\n");
+    void *array[64];
+    size_t size = backtrace(array, 64);
+    char **strings = backtrace_symbols(array, size);
+
+    // Get binary base address from /proc/self/maps
+    FILE *maps = fopen("/proc/self/maps", "r");
+    unsigned long base_addr = 0;
+    if (maps) {
+        char line[512];
+        if (fgets(line, sizeof(line), maps)) {
+            // First line is the base mapping
+            sscanf(line, "%lx-", &base_addr);
+        }
+        fclose(maps);
     }
 
-    return true;
+    fprintf(stderr, "Binary base address: 0x%lx\n\n", base_addr);
+
+    // Print with symbols and calculate offsets
+    for (size_t i = 0; i < size; i++) {
+        unsigned long offset = (unsigned long)array[i] - base_addr;
+        fprintf(stderr, "  [%2zu] %p (offset 0x%lx)", i, array[i], offset);
+        if (strings && strings[i]) {
+            fprintf(stderr, " %s", strings[i]);
+        }
+        fprintf(stderr, "\n");
+    }
+
+    fprintf(stderr, "\nDecoded (using addr2line via fork/exec):\n");
+    fflush(stderr);
+
+    // Fork and use addr2line to decode with offsets (signal-safe)
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process - run addr2line
+        char exe_path[256];
+        ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (len == -1) {
+            _exit(1);
+        }
+        exe_path[len] = '\0';
+
+        // Build argv for addr2line using offsets from base
+        char *argv[size + 10];
+        argv[0] = (char*)"addr2line";
+        argv[1] = (char*)"-e";
+        argv[2] = exe_path;
+        argv[3] = (char*)"-f";
+        argv[4] = (char*)"-C";
+        argv[5] = (char*)"-i";
+        argv[6] = (char*)"-p";
+
+        char addr_strs[64][32];
+        for (size_t i = 0; i < size; i++) {
+            unsigned long offset = (unsigned long)array[i] - base_addr;
+            snprintf(addr_strs[i], sizeof(addr_strs[i]), "0x%lx", offset);
+            argv[7 + i] = addr_strs[i];
+        }
+        argv[7 + size] = NULL;
+
+        execvp("addr2line", argv);
+        _exit(1);  // If execvp fails
+    } else if (pid > 0) {
+        // Parent - wait for addr2line to finish
+        int status;
+        waitpid(pid, &status, 0);
+    }
+
+    if (strings) {
+        free(strings);
+    }
+
+    fprintf(stderr, "=== END BACKTRACE ===\n\n");
+
+    // Print server state information
+    fprintf(stderr, "=== SERVER STATE ===\n");
+    fprintf(stderr, "  Emulator connected: %s\n", g_emulator_connected.load() ? "YES" : "NO");
+    if (g_emulator_pid > 0) {
+        fprintf(stderr, "  Emulator PID:       %d\n", g_emulator_pid);
+    }
+    fprintf(stderr, "  Codec:              %s\n",
+        g_server_codec == CodecType::H264 ? "H.264" :
+        g_server_codec == CodecType::AV1 ? "AV1" :
+        g_server_codec == CodecType::VP9 ? "VP9" :
+        g_server_codec == CodecType::WEBP ? "WebP" : "PNG");
+    fprintf(stderr, "=== END SERVER STATE ===\n\n");
+
+    fprintf(stderr, "Crash report complete. Generating core dump...\n");
+    fflush(stderr);
+
+    // Re-raise signal with default handler to generate core dump
+    signal(sig, SIG_DFL);
+    raise(sig);
 }
 
-static void disconnect_control_socket() {
-    if (g_control_socket >= 0) {
-        close(g_control_socket);
-        g_control_socket = -1;
+
+// Browser keycode to Mac ADB keycode conversion moved to utils/keyboard_map.cpp
+
+// JSON helpers moved to utils/json_utils.cpp
+// Using nlohmann/json library instead of hand-written parsing
+using json = json_utils::json;
+
+// JSON utility for parsing WebSocket messages
+static std::string json_get_string(const std::string& json_str, const std::string& key) {
+    try {
+        json j = json::parse(json_str);
+        return json_utils::get_string(j, key);
+    } catch (...) {
+        return "";
     }
-    if (g_frame_ready_eventfd >= 0) {
-        close(g_frame_ready_eventfd);
-        g_frame_ready_eventfd = -1;
-    }
-    if (g_audio_ready_eventfd >= 0) {
-        close(g_audio_ready_eventfd);
-        g_audio_ready_eventfd = -1;
-    }
-    g_emulator_connected = false;
-    g_connected_socket_path.clear();
 }
 
 
-/*
- * Send binary input to emulator
- */
+// IPC functions moved to ipc/ipc_connection.cpp
 
+// Wrapper functions for compatibility during migration
 static bool send_key_input(int mac_keycode, bool down) {
-    if (g_control_socket < 0) return false;
-
-    MacEmuKeyInput msg;
-    msg.hdr.type = MACEMU_INPUT_KEY;
-    msg.hdr.flags = down ? MACEMU_KEY_DOWN : MACEMU_KEY_UP;
-    msg.hdr._reserved = 0;
-    msg.mac_keycode = mac_keycode;
-    msg.modifiers = 0;  // TODO: track modifier state
-    msg._reserved = 0;
-
-    return send(g_control_socket, &msg, sizeof(msg), MSG_NOSIGNAL) == sizeof(msg);
+    return g_ipc.send_key_input(mac_keycode, down);
 }
 
-static bool send_mouse_input(int dx, int dy, uint8_t buttons, uint64_t browser_timestamp_ms) {
-    if (g_control_socket < 0) return false;
+static bool send_mouse_input(int dx, int dy, uint8_t buttons, uint64_t browser_timestamp_ms, bool absolute = false) {
+    return g_ipc.send_mouse_input(dx, dy, buttons, browser_timestamp_ms, absolute);
+}
 
-    MacEmuMouseInput msg;
-    msg.hdr.type = MACEMU_INPUT_MOUSE;
-    msg.hdr.flags = 0;
-    msg.hdr._reserved = 0;
-    msg.x = dx;
-    msg.y = dy;
-    msg.buttons = buttons;
-    memset(msg._reserved, 0, sizeof(msg._reserved));
-    msg.timestamp_ms = browser_timestamp_ms;
-
-    return send(g_control_socket, &msg, sizeof(msg), MSG_NOSIGNAL) == sizeof(msg);
+static bool send_mouse_mode_change(bool relative) {
+    return g_ipc.send_mouse_mode_change(relative);
 }
 
 static bool send_command(uint8_t command) {
-    if (g_control_socket < 0) return false;
-
-    MacEmuCommandInput msg;
-    msg.hdr.type = MACEMU_INPUT_COMMAND;
-    msg.hdr.flags = 0;
-    msg.hdr._reserved = 0;
-    msg.command = command;
-    memset(msg._reserved, 0, sizeof(msg._reserved));
-
-    return send(g_control_socket, &msg, sizeof(msg), MSG_NOSIGNAL) == sizeof(msg);
+    return g_ipc.send_command(command);
 }
 
 static bool send_ping_input(uint32_t sequence, uint64_t t1_browser_send_ms) {
-    if (g_control_socket < 0) return false;
-
-    // Add server receive timestamp (t2)
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    uint64_t t2_server_recv_us = (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
-
-    MacEmuPingInput msg;
-    msg.hdr.type = MACEMU_INPUT_PING;
-    msg.hdr.flags = 0;
-    msg.hdr._reserved = 0;
-    msg.sequence = sequence;
-    msg.t1_browser_send_ms = t1_browser_send_ms;
-    msg.t2_server_recv_us = t2_server_recv_us;
-    msg.t3_emulator_recv_us = 0;  // Will be filled by emulator
-
-    return send(g_control_socket, &msg, sizeof(msg), MSG_NOSIGNAL) == sizeof(msg);
+    return g_ipc.send_ping_input(sequence, t1_browser_send_ms);
 }
-
-
-/*
- * Try to connect to a running emulator
- */
 
 static bool try_connect_to_emulator(pid_t pid) {
-    // First try to connect to SHM
-    if (!connect_to_video_shm(pid)) {
-        return false;
+    bool success = g_ipc.connect_to_emulator(pid);
+    if (success) {
+        g_emulator_pid = pid;
+        g_emulator_connected = true;
+        // Request keyframe so browser gets a full frame from new emulator
+        g_request_keyframe.store(true);
     }
-
-    // Then try to connect to control socket
-    if (!connect_to_control_socket(pid)) {
-        disconnect_video_shm();
-        return false;
-    }
-
-    return true;
+    return success;
 }
 
-// Forward declaration - implementation after WebRTCServer class
-static void disconnect_from_emulator(WebRTCServer* webrtc = nullptr);
+// Forward declarations
+class WebRTCServer;
+static void disconnect_from_emulator(WebRTCServer* webrtc = nullptr, bool disconnect_peers = false);
 
 
 /*
- * Scan for running emulators (look for SHM files)
+ * Scan for running emulators (wrapper for ipc::scan_for_emulators)
  */
 
 static std::vector<pid_t> scan_for_emulators() {
-    std::vector<pid_t> pids;
-
-    DIR* dir = opendir("/dev/shm");
-    if (!dir) return pids;
-
-    struct dirent* entry;
-    const char* prefix = "macemu-video-";
-    size_t prefix_len = strlen(prefix);
-
-    while ((entry = readdir(dir)) != nullptr) {
-        if (strncmp(entry->d_name, prefix, prefix_len) == 0) {
-            pid_t pid = atoi(entry->d_name + prefix_len);
-            if (pid > 0) {
-                // Check if process still exists
-                if (kill(pid, 0) == 0) {
-                    pids.push_back(pid);
-                }
-            }
-        }
-    }
-    closedir(dir);
-
-    return pids;
+    return ipc::scan_for_emulators();
 }
 
 
@@ -465,13 +416,69 @@ static bool start_emulator() {
         g_started_emulator_pid = -1;
     }
 
-    std::string emu_path = find_emulator();
-    if (emu_path.empty()) {
-        fprintf(stderr, "Emulator: No emulator found. Place BasiliskII or SheepShaver in current directory.\n");
+    // Load unified JSON config from ~/.macemu/
+    const char* home = getenv("HOME");
+    if (!home) {
+        struct passwd* pw = getpwuid(getuid());
+        home = pw ? pw->pw_dir : "/tmp";
+    }
+    std::string config_path = std::string(home) + "/.macemu/macemu-config.json";
+    config::MacemuConfig cfg = config::load_config(config_path);
+
+    // Update server codec from config
+    if (cfg.web.codec == "h264") {
+        g_config.server_codec = CodecType::H264;
+    } else if (cfg.web.codec == "av1") {
+        g_config.server_codec = CodecType::AV1;
+    } else if (cfg.web.codec == "vp9") {
+        g_config.server_codec = CodecType::VP9;
+    } else if (cfg.web.codec == "webp") {
+        g_config.server_codec = CodecType::WEBP;
+    } else {
+        g_config.server_codec = CodecType::PNG;
+    }
+
+    // Determine which emulator to launch (use binaries in PATH)
+    bool is_ppc = (cfg.web.emulator == "ppc");
+    const char* emu_name = is_ppc ? "sheepshaver-webrtc" : "basiliskii-webrtc";
+
+    // Generate appropriate prefs file and ensure config directories exist
+    std::string prefs_content;
+    std::string prefs_file;
+    // home already declared above when loading config
+
+    if (is_ppc) {
+        prefs_content = config::generate_sheepshaver_prefs(cfg, g_roms_path, g_images_path);
+        // SheepShaver reads from ~/.config/SheepShaver/prefs by default
+        std::string config_dir = std::string(home) + "/.config/SheepShaver";
+        // Create directory if it doesn't exist
+        mkdir((std::string(home) + "/.config").c_str(), 0755);
+        mkdir(config_dir.c_str(), 0755);
+        prefs_file = config_dir + "/prefs";
+    } else {
+        prefs_content = config::generate_basilisk_prefs(cfg, g_roms_path, g_images_path);
+        // BasiliskII will use --config flag
+        std::string config_dir = std::string(home) + "/.config/BasiliskII";
+        // Create directory if it doesn't exist
+        mkdir((std::string(home) + "/.config").c_str(), 0755);
+        mkdir(config_dir.c_str(), 0755);
+        prefs_file = config_dir + "/prefs";
+    }
+
+    // Write prefs file
+    if (!storage::write_prefs_file(prefs_file, prefs_content)) {
+        fprintf(stderr, "Emulator: Failed to write prefs file: %s\n", prefs_file.c_str());
         return false;
     }
 
-    fprintf(stderr, "Emulator: Starting %s --config %s\n", emu_path.c_str(), g_prefs_path.c_str());
+    fprintf(stderr, "\n");
+    fprintf(stderr, "🚀 LAUNCHING EMULATOR:\n");
+    fprintf(stderr, "   Type:   %s\n", is_ppc ? "SheepShaver (PPC)" : "BasiliskII (68k)");
+    fprintf(stderr, "   Binary: %s (from PATH)\n", emu_name);
+    fprintf(stderr, "   Prefs:  %s (generated from macemu-config.json)\n", prefs_file.c_str());
+    fprintf(stderr, "   Codec:  %s\n", cfg.web.codec.c_str());
+    fprintf(stderr, "   Mouse:  %s\n", cfg.web.mousemode.c_str());
+    fprintf(stderr, "\n");
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -492,18 +499,24 @@ static bool start_emulator() {
         if (g_debug_perf) setenv("MACEMU_DEBUG_PERF", "1", 1);
         if (g_debug_frames) setenv("MACEMU_DEBUG_FRAMES", "1", 1);
 
-        // Execute emulator with prefs file
-        // BasiliskII uses --config, SheepShaver uses --prefs
-        if (emu_path.find("SheepShaver") != std::string::npos) {
-            execl(emu_path.c_str(), emu_path.c_str(),
-                  "--prefs", g_prefs_path.c_str(), nullptr);
+        // Execute emulator with generated prefs file (search PATH)
+        // BasiliskII uses --config and --xpram flags
+        // SheepShaver reads from ~/.config/SheepShaver/prefs by default
+        if (is_ppc) {
+            // SheepShaver: no args needed, reads prefs from default location
+            execlp(emu_name, emu_name, nullptr);
         } else {
-            execl(emu_path.c_str(), emu_path.c_str(),
-                  "--config", g_prefs_path.c_str(), nullptr);
+            // BasiliskII: use --config and --xpram flags
+            std::string xpram_path = std::string(home) + "/.config/BasiliskII/xpram";
+            execlp(emu_name, emu_name,
+                   "--config", prefs_file.c_str(),
+                   "--xpram", xpram_path.c_str(),
+                   nullptr);
         }
 
         // If exec fails
-        fprintf(stderr, "Emulator: Exec failed: %s\n", strerror(errno));
+        fprintf(stderr, "Emulator: Failed to execute %s: %s\n", emu_name, strerror(errno));
+        fprintf(stderr, "Emulator: Make sure %s is installed and in your PATH\n", emu_name);
         _exit(1);
     }
 
@@ -519,30 +532,50 @@ static void stop_emulator() {
     fprintf(stderr, "Emulator: Stopping PID %d\n", g_started_emulator_pid);
 
     // Try graceful shutdown first via control socket
+    bool sent_graceful_stop = false;
     if (g_control_socket >= 0) {
-        send_command(MACEMU_CMD_STOP);
+        sent_graceful_stop = send_command(MACEMU_CMD_STOP);
+        if (sent_graceful_stop) {
+            fprintf(stderr, "Emulator: Sent graceful stop command via socket\n");
+        }
     }
 
-    // Also send SIGTERM
+    // Wait up to 2 seconds for graceful shutdown
+    if (sent_graceful_stop) {
+        for (int i = 0; i < 20; i++) {
+            int status;
+            pid_t result = waitpid(g_started_emulator_pid, &status, WNOHANG);
+            if (result != 0) {
+                g_started_emulator_pid = -1;
+                fprintf(stderr, "Emulator: Stopped gracefully\n");
+                return;
+            }
+            usleep(100000);  // 100ms
+        }
+        fprintf(stderr, "Emulator: Graceful shutdown timed out, sending SIGTERM\n");
+    }
+
+    // Graceful shutdown failed or not attempted - send SIGTERM
     kill(g_started_emulator_pid, SIGTERM);
 
-    // Wait up to 3 seconds
+    // Wait up to 3 seconds for SIGTERM
     for (int i = 0; i < 30; i++) {
         int status;
         pid_t result = waitpid(g_started_emulator_pid, &status, WNOHANG);
         if (result != 0) {
             g_started_emulator_pid = -1;
-            fprintf(stderr, "Emulator: Stopped\n");
+            fprintf(stderr, "Emulator: Stopped via SIGTERM\n");
             return;
         }
         usleep(100000);  // 100ms
     }
 
-    // Force kill
-    fprintf(stderr, "Emulator: Force killing\n");
+    // Force kill with SIGKILL
+    fprintf(stderr, "Emulator: SIGTERM timed out, force killing with SIGKILL\n");
     kill(g_started_emulator_pid, SIGKILL);
     waitpid(g_started_emulator_pid, nullptr, 0);
     g_started_emulator_pid = -1;
+    fprintf(stderr, "Emulator: Force killed\n");
 }
 
 // Returns: 0 if still running, -1 if not running/error, positive if exited with code
@@ -564,7 +597,7 @@ static int check_emulator_status() {
             fprintf(stderr, "Emulator: Killed by signal %d\n", WTERMSIG(status));
         }
         g_started_emulator_pid = -1;
-        g_emulator_connected = false;
+        // disconnect_from_emulator() will set g_emulator_connected to false
         disconnect_from_emulator();
         return exit_code >= 0 ? exit_code : -1;
     } else if (result == 0) {
@@ -574,238 +607,117 @@ static int check_emulator_status() {
 }
 
 
-// Storage scanning and config moved to storage_manager.cpp/h
+/*
+ * Storage and prefs management
+ *
+ * Wrapper functions for compatibility - delegate to storage modules
+ * TODO: Phase 7 - Remove wrappers and call modules directly
+ */
+
+// Wrapper: Create minimal prefs if needed
+static void create_minimal_prefs_if_needed() {
+    storage::create_minimal_prefs_if_needed(g_prefs_path);
+}
 
 
 /*
- * HTTP Server with simple routing
+ * HTTP Server (wrapper for http:: modules)
+ *
+ * TODO: Phase 7 - Remove wrapper and use http:: modules directly
  */
-
-// HTTP Server using cpp-httplib
-#include "httplib.h"
 
 class HTTPServer {
 public:
     HTTPServer() {
-        setup_routes();
+        // Initialize API context (will be populated before start())
+        api_ctx_.debug_connection = false;
+        api_ctx_.debug_mode_switch = false;
+        api_ctx_.server_codec = &g_server_codec;  // Point to global codec
+        api_ctx_.debug_perf = false;
+        api_ctx_.emulator_connected = false;
+        api_ctx_.emulator_pid = -1;
+        api_ctx_.started_emulator_pid = -1;
+        api_ctx_.ipc_shm = nullptr;
     }
 
     bool start(int port) {
-        port_ = port;
+        // Populate API context with current state
+        update_api_context();
 
-        // Start server in background thread
-        thread_ = std::thread([this, port]() {
-            fprintf(stderr, "HTTP: Starting server on port %d\n", port);
-            if (!server_.listen("0.0.0.0", port)) {
-                fprintf(stderr, "HTTP: Failed to bind port %d\n", port);
+        // Create API router and static file handler
+        api_router_ = std::make_unique<http::APIRouter>(&api_ctx_);
+
+        // Client files are in ~/.macemu/client/
+        const char* home = getenv("HOME");
+        if (!home) {
+            struct passwd* pw = getpwuid(getuid());
+            home = pw ? pw->pw_dir : "/tmp";
+        }
+        std::string client_path = std::string(home) + "/.macemu/client";
+        static_handler_ = std::make_unique<http::StaticFileHandler>(client_path);
+
+        // Start HTTP server with combined request handler
+        auto handler = [this](const http::Request& req) -> http::Response {
+            // Update context before each request (for dynamic state)
+            update_api_context();
+
+            // Try API routes first
+            bool handled = false;
+            http::Response resp = api_router_->handle(req, &handled);
+            if (handled) {
+                return resp;
             }
-        });
 
-        // Wait for server to be ready
-        server_.wait_until_ready();
-        fprintf(stderr, "HTTP: Server ready on port %d\n", port);
-        return true;
+            // Try static files
+            if (static_handler_->handles(req.path)) {
+                return static_handler_->serve(req.path);
+            }
+
+            // Not found
+            return http::Response::not_found();
+        };
+
+        return server_.start(port, handler);
     }
 
     void stop() {
         server_.stop();
-        if (thread_.joinable()) {
-            thread_.join();
-        }
     }
+
+    // Set WebRTC server reference for codec change notifications
+    // Implementation after WebRTCServer class definition
+    void set_webrtc_server(WebRTCServer* webrtc);
 
 private:
-    void setup_routes() {
-        // Static file serving
-        if (!server_.set_mount_point("/", "client")) {
-            fprintf(stderr, "HTTP: Warning: Failed to set mount point for client files\n");
-        }
+    // Populate API context with current state (called before handling requests)
+    void update_api_context() {
+        api_ctx_.debug_connection = g_debug_connection;
+        api_ctx_.debug_mode_switch = g_debug_mode_switch;
+        api_ctx_.debug_perf = g_debug_perf;
+        api_ctx_.prefs_path = g_prefs_path;
+        api_ctx_.roms_path = g_roms_path;
+        api_ctx_.images_path = g_images_path;
+        api_ctx_.emulator_connected = g_emulator_connected;
+        api_ctx_.emulator_pid = g_emulator_pid;
+        api_ctx_.started_emulator_pid = g_started_emulator_pid;
+        api_ctx_.ipc_shm = g_ipc_shm;
+        api_ctx_.user_stopped_emulator = &g_user_stopped_emulator;
 
-        // API endpoints
+        // Codec state (set once in constructor)
+        // api_ctx_.server_codec and notify_codec_change_fn are already set
 
-        // GET /api/config - Return debug configuration flags
-        server_.Get("/api/config", [](const httplib::Request& req, httplib::Response& res) {
-            std::ostringstream json;
-            json << "{";
-            json << "\"debug_connection\": " << (g_debug_connection ? "true" : "false");
-            json << ", \"debug_mode_switch\": " << (g_debug_mode_switch ? "true" : "false");
-            json << ", \"debug_perf\": " << (g_debug_perf ? "true" : "false");
-            json << "}";
-            res.set_content(json.str(), "application/json");
-        });
-
-        // GET /api/storage - Return storage information
-        server_.Get("/api/storage", [](const httplib::Request& req, httplib::Response& res) {
-            std::string json_body = get_storage_json();
-            res.set_content(json_body, "application/json");
-        });
-
-        // GET /api/prefs - Return prefs file content
-        server_.Get("/api/prefs", [](const httplib::Request& req, httplib::Response& res) {
-            std::string prefs_content = read_prefs_file();
-            std::string json_body = "{\"content\": \"" + json_escape(prefs_content) + "\", ";
-            json_body += "\"path\": \"" + json_escape(g_prefs_path) + "\", ";
-            json_body += "\"romsPath\": \"" + json_escape(g_roms_path) + "\", ";
-            json_body += "\"imagesPath\": \"" + json_escape(g_images_path) + "\"}";
-            res.set_content(json_body, "application/json");
-        });
-
-        // POST /api/prefs - Write prefs file content
-        server_.Post("/api/prefs", [](const httplib::Request& req, httplib::Response& res) {
-            fprintf(stderr, "Config: Received prefs POST (body length=%zu)\n", req.body.size());
-            std::string content = json_get_string(req.body, "content");
-            fprintf(stderr, "Config: Extracted content length=%zu\n", content.size());
-            if (content.empty()) {
-                fprintf(stderr, "Config: WARNING - extracted content is empty! Body: %s\n",
-                        req.body.substr(0, 200).c_str());
-            }
-            if (write_prefs_file(content)) {
-                res.set_content("{\"success\": true}", "application/json");
-            } else {
-                res.set_content("{\"success\": false, \"error\": \"Failed to write prefs file\"}", "application/json");
-            }
-        });
-
-        // POST /api/restart - Restart emulator
-        server_.Post("/api/restart", [](const httplib::Request& req, httplib::Response& res) {
-            fprintf(stderr, "Server: Restart requested via API\n");
-            send_command(MACEMU_CMD_RESET);
-            res.set_content("{\"success\": true, \"message\": \"Restart sent to emulator\"}", "application/json");
-        });
-
-        // GET /api/status - Return emulator status
-        server_.Get("/api/status", [](const httplib::Request& req, httplib::Response& res) {
-            std::ostringstream json;
-            json << "{";
-            json << "\"emulator_connected\": " << (g_emulator_connected ? "true" : "false");
-            json << ", \"emulator_running\": " << (g_started_emulator_pid > 0 ? "true" : "false");
-            json << ", \"emulator_pid\": " << g_emulator_pid;
-            if (g_video_shm) {
-                json << ", \"video\": {\"width\": " << g_video_shm->width;
-                json << ", \"height\": " << g_video_shm->height;
-                json << ", \"frame_count\": " << g_video_shm->frame_count;
-                json << ", \"state\": " << g_video_shm->state << "}";
-
-                // Mouse latency from emulator (atomic - can be updated by stats thread)
-                uint32_t latency_x10 = ATOMIC_LOAD(g_video_shm->mouse_latency_avg_ms);
-                uint32_t latency_samples = ATOMIC_LOAD(g_video_shm->mouse_latency_samples);
-                json << ", \"mouse_latency_ms\": " << std::fixed << std::setprecision(1) << (latency_x10 / 10.0);
-                json << ", \"mouse_latency_samples\": " << latency_samples;
-            }
-            json << "}";
-            res.set_content(json.str(), "application/json");
-        });
-
-        // POST /api/emulator/start - Start emulator
-        server_.Post("/api/emulator/start", [](const httplib::Request& req, httplib::Response& res) {
-            std::string json_body;
-            if (g_started_emulator_pid > 0) {
-                json_body = "{\"success\": false, \"message\": \"Emulator already running\", \"pid\": " + std::to_string(g_started_emulator_pid) + "}";
-            } else if (start_emulator()) {
-                json_body = "{\"success\": true, \"message\": \"Emulator started\", \"pid\": " + std::to_string(g_started_emulator_pid) + "}";
-            } else {
-                json_body = "{\"success\": false, \"message\": \"Failed to start emulator\"}";
-            }
-            res.set_content(json_body, "application/json");
-        });
-
-        // POST /api/emulator/stop - Stop emulator
-        server_.Post("/api/emulator/stop", [](const httplib::Request& req, httplib::Response& res) {
-            std::string json_body;
-            if (g_started_emulator_pid <= 0 && g_emulator_pid <= 0) {
-                json_body = "{\"success\": false, \"message\": \"Emulator not running\"}";
-            } else {
-                if (g_started_emulator_pid > 0) {
-                    stop_emulator();
-                } else {
-                    // Just disconnect from external emulator
-                    send_command(MACEMU_CMD_STOP);
-                    disconnect_from_emulator();
-                }
-                json_body = "{\"success\": true, \"message\": \"Emulator stopped\"}";
-            }
-            res.set_content(json_body, "application/json");
-        });
-
-        // POST /api/emulator/restart - Restart emulator
-        server_.Post("/api/emulator/restart", [](const httplib::Request& req, httplib::Response& res) {
-            g_restart_emulator_requested = true;
-            res.set_content("{\"success\": true, \"message\": \"Restart requested\"}", "application/json");
-        });
-
-        // POST /api/log - Client logging endpoint
-        server_.Post("/api/log", [](const httplib::Request& req, httplib::Response& res) {
-            std::string level = json_get_string(req.body, "level");
-            std::string msg = json_get_string(req.body, "message");
-            std::string data = json_get_string(req.body, "data");
-
-            const char* prefix = "[Browser]";
-            if (level == "error") {
-                fprintf(stderr, "\033[31m%s ERROR: %s%s%s\033[0m\n", prefix, msg.c_str(),
-                        data.empty() ? "" : " | ", data.c_str());
-            } else if (level == "warn") {
-                fprintf(stderr, "\033[33m%s WARN: %s%s%s\033[0m\n", prefix, msg.c_str(),
-                        data.empty() ? "" : " | ", data.c_str());
-            } else {
-                fprintf(stderr, "%s %s: %s%s%s\n", prefix, level.c_str(), msg.c_str(),
-                        data.empty() ? "" : " | ", data.c_str());
-            }
-
-            res.set_content("{\"ok\": true}", "application/json");
-        });
-
-        // POST /api/error - Client error reporting endpoint
-        server_.Post("/api/error", [](const httplib::Request& req, httplib::Response& res) {
-            std::string message = json_get_string(req.body, "message");
-            std::string stack = json_get_string(req.body, "stack");
-            std::string url = json_get_string(req.body, "url");
-            std::string line = json_get_string(req.body, "line");
-            std::string col = json_get_string(req.body, "col");
-            std::string type = json_get_string(req.body, "type");
-
-            fprintf(stderr, "\033[1;31m[Browser ERROR]\033[0m ");
-
-            if (!type.empty()) {
-                fprintf(stderr, "%s: ", type.c_str());
-            }
-
-            fprintf(stderr, "%s", message.c_str());
-
-            if (!url.empty()) {
-                fprintf(stderr, "\n  at %s", url.c_str());
-                if (!line.empty()) {
-                    fprintf(stderr, ":%s", line.c_str());
-                    if (!col.empty()) {
-                        fprintf(stderr, ":%s", col.c_str());
-                    }
-                }
-            }
-
-            if (!stack.empty()) {
-                fprintf(stderr, "\n  Stack trace:\n");
-                size_t pos = 0;
-                std::string stack_copy = stack;
-                while ((pos = stack_copy.find('\n')) != std::string::npos) {
-                    std::string line = stack_copy.substr(0, pos);
-                    if (!line.empty()) {
-                        fprintf(stderr, "    %s\n", line.c_str());
-                    }
-                    stack_copy.erase(0, pos + 1);
-                }
-                if (!stack_copy.empty()) {
-                    fprintf(stderr, "    %s\n", stack_copy.c_str());
-                }
-            } else {
-                fprintf(stderr, "\n");
-            }
-
-            res.set_content("{\"ok\": true}", "application/json");
-        });
+        // Set command callbacks
+        api_ctx_.send_command_fn = [](uint8_t cmd) { send_command(cmd); };
+        api_ctx_.start_emulator_fn = []() { return start_emulator(); };
+        api_ctx_.stop_emulator_fn = []() { stop_emulator(); };
+        api_ctx_.disconnect_emulator_fn = []() { disconnect_from_emulator(); };
+        api_ctx_.request_restart_fn = [](bool val) { g_restart_emulator_requested = val; };
     }
 
-    int port_ = 8000;
-    httplib::Server server_;
-    std::thread thread_;
+    http::Server server_;
+    http::APIContext api_ctx_;
+    std::unique_ptr<http::APIRouter> api_router_;
+    std::unique_ptr<http::StaticFileHandler> static_handler_;
 };
 
 
@@ -821,9 +733,8 @@ struct PeerConnection {
     std::string id;
     CodecType codec = CodecType::H264;  // Codec type for this peer
     bool ready = false;
-    bool needs_first_frame = true;  // PNG/RAW peers need full first frame
-    bool has_remote_description = false;
-    std::vector<std::pair<std::string, std::string>> pending_candidates;  // candidate, mid
+    bool needs_first_frame = true;  // Still-image peers (PNG/WebP) need full first frame
+    // Note: pending_candidates removed - libdatachannel queues candidates internally
 };
 
 
@@ -847,6 +758,12 @@ public:
             ws_server_ = std::make_unique<rtc::WebSocketServer>(config);
 
             ws_server_->onClient([this](std::shared_ptr<rtc::WebSocket> ws) {
+                // Store WebSocket shared_ptr so we can send messages to it later
+                {
+                    std::lock_guard<std::mutex> lock(peers_mutex_);
+                    ws_connections_[ws.get()] = ws;
+                }
+
                 ws->onOpen([ws]() {
                     std::string welcome = "{\"type\":\"welcome\",\"peerId\":\"server\"}";
                     ws->send(welcome);
@@ -871,6 +788,8 @@ public:
                         peer_count_--;
                         fprintf(stderr, "[WebRTC] Peer disconnected, %d remaining\n", peer_count_.load());
                     }
+                    // Remove from WebSocket connections map
+                    ws_connections_.erase(ws.get());
                 });
             });
 
@@ -894,8 +813,8 @@ public:
     }
 
     // Send H.264 frame via RTP video track
-    void send_h264_frame(const std::vector<uint8_t>& data, bool is_keyframe) {
-        if (data.empty() || peer_count_ == 0) return;
+    void send_h264_frame(const EncodedFrame& frame) {
+        if (frame.data.empty() || peer_count_ == 0) return;
 
         std::lock_guard<std::mutex> lock(peers_mutex_);
 
@@ -908,19 +827,46 @@ public:
         rtc::FrameInfo frameInfo(elapsed);
 
         // Log only IDR frame sends (P frames logged in stats summary)
-        if (is_keyframe) {
-            fprintf(stderr, "[WebRTC] Sending IDR frame: %zu bytes\n", data.size());
+        if (frame.is_keyframe) {
+            fprintf(stderr, "[WebRTC] Sending IDR frame: %zu bytes\n", frame.data.size());
         }
+
+        // T7: Capture send timestamp right before sending
+        struct timespec ts_send;
+        clock_gettime(CLOCK_REALTIME, &ts_send);
+        uint64_t t7_server_send_us = (uint64_t)ts_send.tv_sec * 1000000 + ts_send.tv_nsec / 1000;
+
+        // Encode metadata header for data channel (all metadata in one message)
+        // Format: [cursor_x:2][cursor_y:2][cursor_visible:1][ping_seq:4][t1:8][t2:8][t3:8][t4:8][t5:8][t6:8][t7:8]
+        uint8_t metadata[65];  // 5 cursor + 4 seq + 7*8 timestamps = 65 bytes
+        metadata[0] = frame.cursor_x & 0xFF;
+        metadata[1] = (frame.cursor_x >> 8) & 0xFF;
+        metadata[2] = frame.cursor_y & 0xFF;
+        metadata[3] = (frame.cursor_y >> 8) & 0xFF;
+        metadata[4] = frame.cursor_visible;
+        std::memcpy(&metadata[5], &frame.ping_sequence, 4);
+        std::memcpy(&metadata[9], &frame.t1_browser_ms, 8);
+        std::memcpy(&metadata[17], &frame.t2_server_us, 8);
+        std::memcpy(&metadata[25], &frame.t3_emulator_us, 8);
+        std::memcpy(&metadata[33], &frame.t4_frame_us, 8);
+        std::memcpy(&metadata[41], &frame.t5_server_read_us, 8);
+        std::memcpy(&metadata[49], &frame.t6_encode_done_us, 8);
+        std::memcpy(&metadata[57], &t7_server_send_us, 8);
 
         for (auto& [id, peer] : peers_) {
             if (peer->codec != CodecType::H264) continue;  // Skip non-H264 peers
             if (peer->ready && peer->video_track && peer->video_track->isOpen()) {
                 try {
-                    // sendFrame with FrameInfo provides proper RTP timestamps
+                    // Send video frame via RTP video track
                     peer->video_track->sendFrame(
-                        reinterpret_cast<const std::byte*>(data.data()),
-                        data.size(),
+                        reinterpret_cast<const std::byte*>(frame.data.data()),
+                        frame.data.size(),
                         frameInfo);
+
+                    // Send metadata via data channel
+                    if (peer->data_channel && peer->data_channel->isOpen()) {
+                        peer->data_channel->send(reinterpret_cast<const std::byte*>(metadata), sizeof(metadata));
+                    }
                 } catch (const std::exception& e) {
                     fprintf(stderr, "[WebRTC] Send error to %s: %s\n", id.c_str(), e.what());
                 }
@@ -929,8 +875,8 @@ public:
     }
 
     // Send AV1 frame via RTP video track
-    void send_av1_frame(const std::vector<uint8_t>& data, bool is_keyframe) {
-        if (data.empty() || peer_count_ == 0) return;
+    void send_av1_frame(const EncodedFrame& frame) {
+        if (frame.data.empty() || peer_count_ == 0) return;
 
         std::lock_guard<std::mutex> lock(peers_mutex_);
 
@@ -938,18 +884,46 @@ public:
         auto elapsed = std::chrono::duration<double>(now - start_time_);
         rtc::FrameInfo frameInfo(elapsed);
 
-        if (is_keyframe) {
-            fprintf(stderr, "[WebRTC] Sending AV1 keyframe: %zu bytes\n", data.size());
+        if (frame.is_keyframe) {
+            fprintf(stderr, "[WebRTC] Sending AV1 keyframe: %zu bytes\n", frame.data.size());
         }
+
+        // T7: Capture send timestamp right before sending
+        struct timespec ts_send;
+        clock_gettime(CLOCK_REALTIME, &ts_send);
+        uint64_t t7_server_send_us = (uint64_t)ts_send.tv_sec * 1000000 + ts_send.tv_nsec / 1000;
+
+        // Encode metadata header for data channel (all metadata in one message)
+        // Format: [cursor_x:2][cursor_y:2][cursor_visible:1][ping_seq:4][t1:8][t2:8][t3:8][t4:8][t5:8][t6:8][t7:8]
+        uint8_t metadata[65];  // 5 cursor + 4 seq + 7*8 timestamps = 65 bytes
+        metadata[0] = frame.cursor_x & 0xFF;
+        metadata[1] = (frame.cursor_x >> 8) & 0xFF;
+        metadata[2] = frame.cursor_y & 0xFF;
+        metadata[3] = (frame.cursor_y >> 8) & 0xFF;
+        metadata[4] = frame.cursor_visible;
+        std::memcpy(&metadata[5], &frame.ping_sequence, 4);
+        std::memcpy(&metadata[9], &frame.t1_browser_ms, 8);
+        std::memcpy(&metadata[17], &frame.t2_server_us, 8);
+        std::memcpy(&metadata[25], &frame.t3_emulator_us, 8);
+        std::memcpy(&metadata[33], &frame.t4_frame_us, 8);
+        std::memcpy(&metadata[41], &frame.t5_server_read_us, 8);
+        std::memcpy(&metadata[49], &frame.t6_encode_done_us, 8);
+        std::memcpy(&metadata[57], &t7_server_send_us, 8);
 
         for (auto& [id, peer] : peers_) {
             if (peer->codec != CodecType::AV1) continue;
             if (peer->ready && peer->video_track && peer->video_track->isOpen()) {
                 try {
+                    // Send video frame via RTP video track
                     peer->video_track->sendFrame(
-                        reinterpret_cast<const std::byte*>(data.data()),
-                        data.size(),
+                        reinterpret_cast<const std::byte*>(frame.data.data()),
+                        frame.data.size(),
                         frameInfo);
+
+                    // Send metadata via data channel
+                    if (peer->data_channel && peer->data_channel->isOpen()) {
+                        peer->data_channel->send(reinterpret_cast<const std::byte*>(metadata), sizeof(metadata));
+                    }
                 } catch (const std::exception& e) {
                     fprintf(stderr, "[WebRTC] AV1 send error to %s: %s\n", id.c_str(), e.what());
                 }
@@ -957,51 +931,163 @@ public:
         }
     }
 
-    // Send Opus audio frame via RTP audio track
-    void send_audio_to_all_peers(const std::vector<uint8_t>& opus_data) {
-        if (opus_data.empty() || peer_count_ == 0) return;
+    // Send VP9 frame via RTP video track
+    void send_vp9_frame(const EncodedFrame& frame) {
+        if (frame.data.empty() || peer_count_ == 0) return;
 
         std::lock_guard<std::mutex> lock(peers_mutex_);
 
-        // Calculate audio timestamp using chrono for precise timing
-        // Opus clock rate is 48000 Hz
+        // Calculate frame timestamp using chrono for precise timing
+        // VP9 clock rate is 90000 Hz
         auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration<double>(now - audio_start_time_);
+        auto elapsed = std::chrono::duration<double>(now - start_time_);
+
+        // Use the sendFrame method with FrameInfo for proper RTP timestamps
         rtc::FrameInfo frameInfo(elapsed);
 
+        // Log only keyframe sends
+        if (frame.is_keyframe) {
+            fprintf(stderr, "[WebRTC] Sending VP9 keyframe: %zu bytes\n", frame.data.size());
+        }
+
+        // T7: Capture send timestamp right before sending
+        struct timespec ts_send;
+        clock_gettime(CLOCK_REALTIME, &ts_send);
+        uint64_t t7_server_send_us = (uint64_t)ts_send.tv_sec * 1000000 + ts_send.tv_nsec / 1000;
+
+        // Encode metadata header for data channel (all metadata in one message)
+        // Format: [cursor_x:2][cursor_y:2][cursor_visible:1][ping_seq:4][t1:8][t2:8][t3:8][t4:8][t5:8][t6:8][t7:8]
+        uint8_t metadata[65];  // 5 cursor + 4 seq + 7*8 timestamps = 65 bytes
+        metadata[0] = frame.cursor_x & 0xFF;
+        metadata[1] = (frame.cursor_x >> 8) & 0xFF;
+        metadata[2] = frame.cursor_y & 0xFF;
+        metadata[3] = (frame.cursor_y >> 8) & 0xFF;
+        metadata[4] = frame.cursor_visible;
+        std::memcpy(&metadata[5], &frame.ping_sequence, 4);
+        std::memcpy(&metadata[9], &frame.t1_browser_ms, 8);
+        std::memcpy(&metadata[17], &frame.t2_server_us, 8);
+        std::memcpy(&metadata[25], &frame.t3_emulator_us, 8);
+        std::memcpy(&metadata[33], &frame.t4_frame_us, 8);
+        std::memcpy(&metadata[41], &frame.t5_server_read_us, 8);
+        std::memcpy(&metadata[49], &frame.t6_encode_done_us, 8);
+        std::memcpy(&metadata[57], &t7_server_send_us, 8);
+
         for (auto& [id, peer] : peers_) {
-            if (peer->audio_track && peer->audio_track->isOpen()) {
+            if (peer->codec != CodecType::VP9) continue;  // Skip non-VP9 peers
+            if (peer->ready && peer->video_track && peer->video_track->isOpen()) {
                 try {
-                    peer->audio_track->sendFrame(
-                        reinterpret_cast<const std::byte*>(opus_data.data()),
-                        opus_data.size(),
+                    // Send video frame via RTP video track
+                    peer->video_track->sendFrame(
+                        reinterpret_cast<const std::byte*>(frame.data.data()),
+                        frame.data.size(),
                         frameInfo);
+
+                    // Send metadata via data channel
+                    if (peer->data_channel && peer->data_channel->isOpen()) {
+                        peer->data_channel->send(reinterpret_cast<const std::byte*>(metadata), sizeof(metadata));
+                    }
                 } catch (const std::exception& e) {
-                    fprintf(stderr, "[WebRTC] Audio send error to %s: %s\n", id.c_str(), e.what());
+                    fprintf(stderr, "[WebRTC] VP9 send error to %s: %s\n", id.c_str(), e.what());
                 }
             }
         }
     }
 
+    // Send Opus audio frame via RTP audio track
+    void send_audio_to_all_peers(const std::vector<uint8_t>& opus_data, uint64_t frame_number) {
+        if (opus_data.empty()) {
+            if (g_debug_audio) {
+                fprintf(stderr, "[WebRTC] Audio: Skipping empty opus_data\n");
+            }
+            return;
+        }
+
+        if (peer_count_ == 0) {
+            if (g_debug_audio) {
+                static int warn_count = 0;
+                if (warn_count++ % 50 == 0) {
+                    fprintf(stderr, "[WebRTC] Audio: No peers connected (%zu bytes Opus ready)\n", opus_data.size());
+                }
+            }
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+
+        // Calculate exact sample time based on frame number
+        // Each frame is exactly 20ms (960 samples at 48kHz)
+        // This ensures perfect timing regardless of jitter in the audio loop
+        auto elapsed = std::chrono::duration<double>(frame_number * 0.020); // 20ms = 0.020 seconds
+
+        // Create FrameInfo with exact sample time
+        // The RtcpSrReporter will convert this to RTP timestamps at 48kHz clock rate
+        rtc::FrameInfo frameInfo(elapsed);
+
+        int sent_count = 0;
+        int track_closed = 0;
+        int track_missing = 0;
+
+        for (auto& [id, peer] : peers_) {
+            if (!peer->audio_track) {
+                track_missing++;
+                continue;
+            }
+
+            if (!peer->audio_track->isOpen()) {
+                track_closed++;
+                continue;
+            }
+
+            try {
+                // Send raw Opus packet - RTP packetizer chain handles:
+                // 1. OpusRtpPacketizer: Wraps Opus data in RTP packet
+                // 2. RtcpSrReporter: Generates sender reports with proper timestamps
+                // 3. RtcpNackResponder: Handles retransmission requests
+                peer->audio_track->sendFrame(
+                    reinterpret_cast<const std::byte*>(opus_data.data()),
+                    opus_data.size(),
+                    frameInfo);
+                sent_count++;
+            } catch (const std::exception& e) {
+                fprintf(stderr, "[WebRTC] Audio send error to %s: %s\n", id.c_str(), e.what());
+            }
+        }
+
+        if (g_debug_audio) {
+            static int frame_count = 0;
+            if (frame_count++ % 50 == 0) {
+                fprintf(stderr, "[WebRTC] Audio sent: %zu bytes to %d peers (%d track_missing, %d track_closed)\n",
+                        opus_data.size(), sent_count, track_missing, track_closed);
+            }
+        }
+    }
+
+    // Capture trigger removed - was debug feature
+
     // Send PNG frame via DataChannel (binary) with metadata header
     // Frame format: [8-byte t1_frame_ready] [4-byte x] [4-byte y] [4-byte width] [4-byte height]
     //               [4-byte frame_width] [4-byte frame_height] [8-byte t4_send_time]
+    //               [2-byte cursor_x] [2-byte cursor_y] [1-byte cursor_visible]
     //               [4-byte ping_seq] [8-byte ping_t1] [8-byte ping_t2] [8-byte ping_t3]
-    //               [8-byte ping_t4] [8-byte ping_t5] [PNG data]
+    //               [8-byte ping_t4] [8-byte ping_t5] [8-byte ping_t6] [8-byte ping_t7] [PNG data]
+    //   Total header: 113 bytes (40 base + 5 cursor + 68 ping with 7 timestamps)
     //   All values are little-endian uint32/uint64
-    //   t1_frame_ready = emulator frame completion time (from SHM)
-    //   t4_send_time = server send time (captured here)
-    //   x, y, width, height = dirty rect position and size
-    //   frame_width, frame_height = full screen resolution
-    //   ping_* = complete ping roundtrip with timestamps at each layer (0 if no ping)
-    void send_png_frame(const std::vector<uint8_t>& data, uint64_t t1_frame_ready_ms,
+    //   Complete ping/pong round-trip timestamps:
+    //     t1 = browser send (performance.now ms)
+    //     t2 = server receive (CLOCK_REALTIME us)
+    //     t3 = emulator receive (CLOCK_REALTIME us)
+    //     t4 = frame ready in SHM (CLOCK_REALTIME us)
+    //     t5 = server read from SHM (CLOCK_REALTIME us)
+    //     t6 = encoding finished (CLOCK_REALTIME us)
+    //     t7 = server sending (CLOCK_REALTIME us)
+    void send_png_frame(const EncodedFrame& encoded_frame, uint64_t t1_frame_ready_ms,
                         uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                         uint32_t frame_width, uint32_t frame_height) {
-        if (data.empty() || peer_count_ == 0) return;
+        if (encoded_frame.data.empty() || peer_count_ == 0) return;
 
         // Sanity check: PNG data shouldn't be larger than 10MB for 1920x1080
-        if (data.size() > 10 * 1024 * 1024) {
-            fprintf(stderr, "[WebRTC] ERROR: PNG data size %zu is too large, skipping frame\n", data.size());
+        if (encoded_frame.data.size() > 10 * 1024 * 1024) {
+            fprintf(stderr, "[WebRTC] ERROR: PNG data size %zu is too large, skipping frame\n", encoded_frame.data.size());
             return;
         }
 
@@ -1011,36 +1097,15 @@ public:
         clock_gettime(CLOCK_REALTIME, &ts);
         uint64_t t4_send_ms = (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 
-        // Read ping echo from SHM (emulator stores last received ping with all timestamps)
-        // OPTIMIZED: Only ping_sequence is atomic - acts as "ready" flag
-        // Read-acquire on ping_sequence ensures all timestamp writes are visible
-        uint32_t ping_seq = 0;
-        uint64_t ping_t1_browser_ms = 0;
-        uint64_t ping_t2_server_us = 0;
-        uint64_t ping_t3_emulator_us = 0;
-        uint64_t ping_t4_frame_ready_us = 0;
-        if (g_video_shm) {
-            // Atomic read-acquire: ensures visibility of all previous writes to ping_timestamps
-            ping_seq = ATOMIC_LOAD(g_video_shm->ping_sequence);
+        // T7: Capture server send timestamp (for ping/pong)
+        uint64_t t7_server_send_us = t4_send_ms * 1000;  // Convert ms to us
 
-            // If ping available, read timestamp struct (no atomics needed - seq acts as guard)
-            if (ping_seq > 0) {
-                ping_t1_browser_ms = g_video_shm->ping_timestamps.t1_browser_ms;
-                ping_t2_server_us = g_video_shm->ping_timestamps.t2_server_us;
-                ping_t3_emulator_us = g_video_shm->ping_timestamps.t3_emulator_us;
-                ping_t4_frame_ready_us = g_video_shm->ping_timestamps.t4_frame_us;
-                // Note: Ping echo logging happens in browser when it receives the echo
-            }
-        }
-        // t5 is server send time (same as t4_send_ms from frame metadata)
-        uint64_t ping_t5_server_send_us = t4_send_ms * 1000;  // Convert ms to us
-
-        // Build frame with metadata header (84 bytes total: 40 base + 44 ping)
+        // Build frame with metadata header (113 bytes total: 40 base + 5 cursor + 68 ping)
         std::vector<uint8_t> frame_with_header;
         try {
-            frame_with_header.resize(84 + data.size());
+            frame_with_header.resize(113 + encoded_frame.data.size());
         } catch (const std::bad_alloc& e) {
-            fprintf(stderr, "[WebRTC] ERROR: Failed to allocate %zu bytes for frame header\n", 84 + data.size());
+            fprintf(stderr, "[WebRTC] ERROR: Failed to allocate %zu bytes for frame header\n", 113 + encoded_frame.data.size());
             return;
         }
 
@@ -1076,38 +1141,57 @@ public:
         for (int i = 0; i < 8; i++) {
             frame_with_header[32 + i] = (t4_send_ms >> (i * 8)) & 0xFF;
         }
+        // Cursor position (5 bytes: x, y, visible)
+        // 2-byte cursor_x
+        frame_with_header[40] = encoded_frame.cursor_x & 0xFF;
+        frame_with_header[41] = (encoded_frame.cursor_x >> 8) & 0xFF;
+        // 2-byte cursor_y
+        frame_with_header[42] = encoded_frame.cursor_y & 0xFF;
+        frame_with_header[43] = (encoded_frame.cursor_y >> 8) & 0xFF;
+        // 1-byte cursor_visible
+        frame_with_header[44] = encoded_frame.cursor_visible;
+
         // Ping echo with all timestamps (44 bytes: sequence + 5 timestamps)
         // 4-byte ping sequence number (0 if no ping received)
         for (int i = 0; i < 4; i++) {
-            frame_with_header[40 + i] = (ping_seq >> (i * 8)) & 0xFF;
+            frame_with_header[45 + i] = (encoded_frame.ping_sequence >> (i * 8)) & 0xFF;
         }
         // 8-byte t1: browser send time (performance.now() milliseconds)
         for (int i = 0; i < 8; i++) {
-            frame_with_header[44 + i] = (ping_t1_browser_ms >> (i * 8)) & 0xFF;
+            frame_with_header[49 + i] = (encoded_frame.t1_browser_ms >> (i * 8)) & 0xFF;
         }
         // 8-byte t2: server receive time (CLOCK_REALTIME microseconds)
         for (int i = 0; i < 8; i++) {
-            frame_with_header[52 + i] = (ping_t2_server_us >> (i * 8)) & 0xFF;
+            frame_with_header[57 + i] = (encoded_frame.t2_server_us >> (i * 8)) & 0xFF;
         }
         // 8-byte t3: emulator receive time (CLOCK_REALTIME microseconds)
         for (int i = 0; i < 8; i++) {
-            frame_with_header[60 + i] = (ping_t3_emulator_us >> (i * 8)) & 0xFF;
+            frame_with_header[65 + i] = (encoded_frame.t3_emulator_us >> (i * 8)) & 0xFF;
         }
         // 8-byte t4: emulator/frame ready time (CLOCK_REALTIME microseconds)
         for (int i = 0; i < 8; i++) {
-            frame_with_header[68 + i] = (ping_t4_frame_ready_us >> (i * 8)) & 0xFF;
+            frame_with_header[73 + i] = (encoded_frame.t4_frame_us >> (i * 8)) & 0xFF;
         }
-        // 8-byte t5: server send time (CLOCK_REALTIME microseconds)
+        // 8-byte t5: server read from SHM (CLOCK_REALTIME microseconds)
         for (int i = 0; i < 8; i++) {
-            frame_with_header[76 + i] = (ping_t5_server_send_us >> (i * 8)) & 0xFF;
+            frame_with_header[81 + i] = (encoded_frame.t5_server_read_us >> (i * 8)) & 0xFF;
         }
-        // Copy PNG data after 84-byte header
-        memcpy(frame_with_header.data() + 84, data.data(), data.size());
+        // 8-byte t6: encoding finished (CLOCK_REALTIME microseconds)
+        for (int i = 0; i < 8; i++) {
+            frame_with_header[89 + i] = (encoded_frame.t6_encode_done_us >> (i * 8)) & 0xFF;
+        }
+        // 8-byte t7: server sending (CLOCK_REALTIME microseconds)
+        for (int i = 0; i < 8; i++) {
+            frame_with_header[97 + i] = (t7_server_send_us >> (i * 8)) & 0xFF;
+        }
+        // Copy PNG data after 113-byte header (was 105, now 113)
+        memcpy(frame_with_header.data() + 113, encoded_frame.data.data(), encoded_frame.data.size());
 
         std::lock_guard<std::mutex> lock(peers_mutex_);
 
         for (auto& [id, peer] : peers_) {
-            if (peer->codec != CodecType::PNG) continue;  // Skip non-PNG peers
+            // Skip non-still-image peers (only PNG/WebP use DataChannel for video)
+            if (peer->codec != CodecType::PNG && peer->codec != CodecType::WEBP) continue;
             if (peer->ready && peer->data_channel && peer->data_channel->isOpen()) {
                 try {
                     peer->data_channel->send(
@@ -1120,11 +1204,52 @@ public:
         }
     }
 
+    // Populate frame metadata from shared memory (cursor + ping/pong data)
+    // Called after encoding, populates metadata fields in EncodedFrame
+    // t5_read = server read timestamp, t6_encode = encode done timestamp
+    void populate_frame_metadata(EncodedFrame& frame, uint64_t t5_read_us, uint64_t t6_encode_us) {
+        if (!g_ipc.is_connected() || !g_ipc_shm) return;
+
+        // Cursor position (always available)
+        frame.cursor_x = g_ipc_shm->cursor_x;
+        frame.cursor_y = g_ipc_shm->cursor_y;
+        frame.cursor_visible = g_ipc_shm->cursor_visible;
+
+        // Ping/pong timestamps (atomic read-acquire for sequence number)
+        frame.ping_sequence = ATOMIC_LOAD(g_ipc_shm->ping_sequence);
+
+        // If ping available, read timestamp struct (no atomics needed - seq acts as guard)
+        if (frame.ping_sequence > 0) {
+            frame.t1_browser_ms = g_ipc_shm->ping_timestamps.t1_browser_ms;
+            frame.t2_server_us = g_ipc_shm->ping_timestamps.t2_server_us;
+            frame.t3_emulator_us = g_ipc_shm->ping_timestamps.t3_emulator_us;
+            frame.t4_frame_us = g_ipc_shm->ping_timestamps.t4_frame_us;
+            frame.t5_server_read_us = t5_read_us;      // Server read time (passed in)
+            frame.t6_encode_done_us = t6_encode_us;    // Encode done time (passed in)
+            // t7_server_send_us will be set in send functions right before sending
+        }
+    }
+
     // Check if any peer uses a specific codec
     bool has_codec_peer(CodecType codec) {
         std::lock_guard<std::mutex> lock(peers_mutex_);
         for (auto& [id, peer] : peers_) {
-            if (peer->codec == codec && peer->ready) return true;
+            if (peer->codec == codec && peer->ready) {
+                if (g_debug_frames && codec == CodecType::H264) {
+                    static bool logged_once = false;
+                    if (!logged_once) {
+                        fprintf(stderr, "[Server] H.264 peer %s is ready\n", id.c_str());
+                        logged_once = true;
+                    }
+                }
+                return true;
+            }
+        }
+        if (g_debug_frames && codec == CodecType::H264) {
+            static int no_peer_count = 0;
+            if (no_peer_count++ < 5) {
+                fprintf(stderr, "[Server] No ready H.264 peer (total peers: %zu)\n", peers_.size());
+            }
         }
         return false;
     }
@@ -1133,7 +1258,8 @@ public:
     bool png_peer_needs_first_frame() {
         std::lock_guard<std::mutex> lock(peers_mutex_);
         for (auto& [id, peer] : peers_) {
-            if (peer->codec == CodecType::PNG && peer->ready && peer->needs_first_frame) {
+            // Check if still-image peer (PNG or WebP) needs first frame
+            if ((peer->codec == CodecType::PNG || peer->codec == CodecType::WEBP) && peer->ready && peer->needs_first_frame) {
                 peer->needs_first_frame = false;  // Clear flag so next frame uses dirty rect
                 return true;
             }
@@ -1145,8 +1271,9 @@ public:
     struct CodecPeerCounts {
         int h264 = 0;
         int av1 = 0;
+        int vp9 = 0;
         int png = 0;
-        int raw = 0;
+        int webp = 0;
     };
 
     CodecPeerCounts get_codec_peer_counts() {
@@ -1157,8 +1284,9 @@ public:
             switch (peer->codec) {
                 case CodecType::H264: counts.h264++; break;
                 case CodecType::AV1: counts.av1++; break;
+                case CodecType::VP9: counts.vp9++; break;
                 case CodecType::PNG: counts.png++; break;
-                case CodecType::RAW: counts.raw++; break;
+                case CodecType::WEBP: counts.webp++; break;
             }
         }
         return counts;
@@ -1191,10 +1319,43 @@ public:
         peer_count_.store(0);
     }
 
+    // Send "reconnect" message to all clients (for codec changes)
+    void notify_codec_change(CodecType new_codec) {
+        const char* codec_name = (new_codec == CodecType::H264) ? "h264" :
+                                 (new_codec == CodecType::AV1) ? "av1" :
+                                 (new_codec == CodecType::VP9) ? "vp9" :
+                                 (new_codec == CodecType::WEBP) ? "webp" : "png";
+
+        json msg = {
+            {"type", "reconnect"},
+            {"reason", "codec_change"},
+            {"codec", codec_name}
+        };
+        std::string msg_str = msg.dump();
+
+        fprintf(stderr, "[WebRTC] Notifying %d clients of codec change to %s\n",
+                (int)ws_connections_.size(), codec_name);
+
+        // Send to all connected WebSocket clients
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (auto& pair : ws_connections_) {
+            auto& ws = pair.second;
+            if (ws) {
+                try {
+                    ws->send(msg_str);
+                } catch (const std::exception& e) {
+                    fprintf(stderr, "[WebRTC] Failed to send reconnect message: %s\n", e.what());
+                }
+            }
+        }
+    }
+
 private:
     // Helper: Check if codec needs RTP video track (vs DataChannel)
     bool needs_video_track(CodecType codec) {
-        return codec == CodecType::H264 || codec == CodecType::AV1;
+        // H.264, AV1, and VP9 all use RTP video tracks
+        // PNG uses DataChannel for dirty-rect support
+        return codec == CodecType::H264 || codec == CodecType::AV1 || codec == CodecType::VP9;
     }
 
     // Helper: Setup AV1 video track with RTP packetizer
@@ -1212,6 +1373,38 @@ private:
             rtc::AV1RtpPacketizer::Packetization::TemporalUnit,
             rtpConfig
         );
+        peer->video_track->setMediaHandler(packetizer);
+
+        peer->video_track->onOpen([peer]() {
+            if (g_debug_connection) {
+                fprintf(stderr, "[WebRTC] Video track OPEN for %s - ready to send frames!\n", peer->id.c_str());
+            }
+            peer->ready = true;
+            g_request_keyframe.store(true);
+        });
+
+        peer->video_track->onClosed([peer]() {
+            fprintf(stderr, "[WebRTC] Video track CLOSED for %s\n", peer->id.c_str());
+            peer->ready = false;
+        });
+
+        peer->video_track->onError([peer](std::string error) {
+            fprintf(stderr, "[WebRTC] Video track ERROR for %s: %s\n", peer->id.c_str(), error.c_str());
+        });
+    }
+
+    // Helper: Setup VP9 video track with RTP packetizer
+    void setup_vp9_track(std::shared_ptr<PeerConnection> peer) {
+        rtc::Description::Video media("video-stream", rtc::Description::Direction::SendOnly);
+        media.addVP9Codec(96);  // VP9 uses payload type 96
+        media.addSSRC(ssrc_, "video-stream", "stream1", "video-stream");
+        peer->video_track = peer->pc->addTrack(media);
+
+        // Set up VP9 RTP packetizer (handles VP9 frame fragmentation per RFC 7741)
+        auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
+            ssrc_, "video-stream", 96, rtc::VP9RtpPacketizer::ClockRate
+        );
+        auto packetizer = std::make_shared<rtc::VP9RtpPacketizer>(rtpConfig);
         peer->video_track->setMediaHandler(packetizer);
 
         peer->video_track->onOpen([peer]() {
@@ -1271,16 +1464,33 @@ private:
     // Helper: Setup Opus audio track with RTP packetizer
     void setup_audio_track(std::shared_ptr<PeerConnection> peer) {
         rtc::Description::Audio media("audio-stream", rtc::Description::Direction::SendOnly);
-        media.addOpusCodec(97);  // Opus uses payload type 97
+
+        // Opus profile built from centralized audio_config.h constants
+        // See audio_config.h for tuning: bitrate, frame duration, FEC, etc.
+        std::string opusProfile = WEBRTC_OPUS_PROFILE;
+        fprintf(stderr, "[Audio] Opus SDP profile: %s\n", opusProfile.c_str());
+        media.addOpusCodec(OPUS_PAYLOAD_TYPE, opusProfile);
+
         media.addSSRC(ssrc_ + 1, "audio-stream", "stream1", "audio-stream");
         peer->audio_track = peer->pc->addTrack(media);
 
-        // Set up Opus RTP packetizer
+        // Set up Opus RTP packetizer with RTCP support (following libdatachannel best practices)
         // Opus uses 48000 Hz clock rate (defined in OpusRtpPacketizer template parameter)
         auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
-            ssrc_ + 1, "audio-stream", 97, 48000
+            ssrc_ + 1, "audio-stream", OPUS_PAYLOAD_TYPE, rtc::OpusRtpPacketizer::defaultClockRate
         );
         auto packetizer = std::make_shared<rtc::OpusRtpPacketizer>(rtpConfig);
+
+        // Add RTCP SR (Sender Report) for proper timestamp synchronization
+        // This is CRITICAL for browsers to correctly sync and play audio
+        auto srReporter = std::make_shared<rtc::RtcpSrReporter>(rtpConfig);
+        packetizer->addToChain(srReporter);
+
+        // Add RTCP NACK (Negative Acknowledgement) responder for packet loss recovery
+        // Improves audio quality on lossy networks
+        auto nackResponder = std::make_shared<rtc::RtcpNackResponder>();
+        packetizer->addToChain(nackResponder);
+
         peer->audio_track->setMediaHandler(packetizer);
 
         peer->audio_track->onOpen([peer]() {
@@ -1310,7 +1520,8 @@ private:
             peer->codec = g_server_codec;
             const char* codec_name = (g_server_codec == CodecType::H264) ? "h264" :
                                      (g_server_codec == CodecType::AV1) ? "av1" :
-                                     (g_server_codec == CodecType::PNG) ? "png" : "raw";
+                                     (g_server_codec == CodecType::VP9) ? "vp9" :
+                                     (g_server_codec == CodecType::WEBP) ? "webp" : "png";
             if (g_debug_connection) {
                 fprintf(stderr, "[WebRTC] Peer %s using %s codec (server-configured)\n",
                         peer_id.c_str(), codec_name);
@@ -1343,18 +1554,30 @@ private:
                               "\",\"codec\":\"" + codec_name + "\"}";
             ws->send(ack);
 
-            std::weak_ptr<rtc::PeerConnection> wpc = peer->pc;
-            peer->pc->onGatheringStateChange([ws, peer_id, wpc](rtc::PeerConnection::GatheringState state) {
-                if (state == rtc::PeerConnection::GatheringState::Complete) {
-                    if (auto pc = wpc.lock()) {
-                        auto description = pc->localDescription();
-                        if (description) {
-                            std::string sdp = std::string(description.value());
-                            std::string type_str = description->typeString();
-                            std::string response = "{\"type\":\"" + type_str + "\",\"sdp\":\"" + json_escape(sdp) + "\"}";
-                            ws->send(response);
-                        }
-                    }
+            // onLocalDescription: Called when SDP is ready (replaces manual gathering state check)
+            peer->pc->onLocalDescription([ws, peer_id](rtc::Description desc) {
+                json msg = {
+                    {"type", desc.typeString()},
+                    {"sdp", std::string(desc)}
+                };
+                ws->send(msg.dump());
+                if (g_debug_connection) {
+                    fprintf(stderr, "[WebRTC] Sent %s to %s (sdp length=%zu)\n",
+                            desc.typeString().c_str(), peer_id.c_str(), std::string(desc).size());
+                }
+            });
+
+            // onLocalCandidate: Automatic trickle ICE (sends candidates as they're gathered)
+            peer->pc->onLocalCandidate([ws, peer_id](rtc::Candidate cand) {
+                json msg = {
+                    {"type", "candidate"},
+                    {"candidate", std::string(cand)},
+                    {"mid", cand.mid()}
+                };
+                ws->send(msg.dump());
+                if (g_debug_connection) {
+                    fprintf(stderr, "[WebRTC] Sent ICE candidate to %s (mid=%s)\n",
+                            peer_id.c_str(), cand.mid().c_str());
                 }
             });
 
@@ -1364,9 +1587,11 @@ private:
                     setup_h264_track(peer);
                 } else if (peer->codec == CodecType::AV1) {
                     setup_av1_track(peer);
+                } else if (peer->codec == CodecType::VP9) {
+                    setup_vp9_track(peer);
                 }
             } else {
-                // PNG/RAW codecs use DataChannel for video, mark as ready immediately
+                // PNG codec uses DataChannel for video, mark as ready immediately
                 // when DataChannel opens (no video track needed)
                 if (g_debug_connection) {
                     fprintf(stderr, "[WebRTC] Peer %s using %s codec via DataChannel (no video track)\n",
@@ -1408,17 +1633,29 @@ private:
                 }
             });
 
-            // Add data channel for input
-            peer->data_channel = peer->pc->createDataChannel("input");
+            // Add data channel for input (and video for still-image codecs)
+            // For PNG/WebP: Use unreliable, unordered mode for lowest latency
+            // - Each frame is independent (no inter-frame dependencies)
+            // - Newer frames make old frames obsolete
+            // - No retransmission delays
+            rtc::DataChannelInit dc_init;
+            if (peer->codec == CodecType::PNG || peer->codec == CodecType::WEBP) {
+                dc_init.reliability.unordered = true;
+                dc_init.reliability.maxRetransmits = 0;  // No retransmits = unreliable
+                if (g_debug_connection) {
+                    fprintf(stderr, "[WebRTC] Creating unreliable DataChannel for %s (still-image codec)\n", peer_id.c_str());
+                }
+            }
+            peer->data_channel = peer->pc->createDataChannel("input", dc_init);
             peer->data_channel->onOpen([peer, peer_id = peer->id]() {
                 if (g_debug_connection) {
                     fprintf(stderr, "[WebRTC] DataChannel OPEN for %s\n", peer_id.c_str());
                 }
-                // For PNG/RAW codecs (no video track), mark peer as ready when DataChannel opens
-                if (peer->codec == CodecType::PNG || peer->codec == CodecType::RAW) {
+                // For still-image codecs (no video track), mark peer as ready when DataChannel opens
+                if (peer->codec == CodecType::PNG || peer->codec == CodecType::WEBP) {
                     peer->ready = true;
                     if (g_debug_connection) {
-                        fprintf(stderr, "[WebRTC] PNG/RAW peer %s marked ready (DataChannel opened)\n", peer_id.c_str());
+                        fprintf(stderr, "[WebRTC] PNG peer %s marked ready (DataChannel opened)\n", peer_id.c_str());
                     }
                 }
             });
@@ -1469,32 +1706,15 @@ private:
                             peer->id.c_str(), sdp.size());
                 }
 
-                // Set remote description
+                // Set remote description - libdatachannel handles pending candidates internally
                 try {
                     peer->pc->setRemoteDescription(rtc::Description(sdp, "answer"));
-                    peer->has_remote_description = true;
                     if (g_debug_connection) {
                         fprintf(stderr, "[WebRTC] Remote description set for %s\n", peer->id.c_str());
                     }
                 } catch (const std::exception& e) {
                     fprintf(stderr, "[WebRTC] ERROR setting remote description for %s: %s\n",
                             peer->id.c_str(), e.what());
-                    return;
-                }
-
-                // Now add any pending ICE candidates
-                if (!peer->pending_candidates.empty()) {
-                    fprintf(stderr, "[WebRTC] Adding %zu pending ICE candidates\n",
-                            peer->pending_candidates.size());
-                    for (const auto& [candidate, mid] : peer->pending_candidates) {
-                        try {
-                            peer->pc->addRemoteCandidate(rtc::Candidate(candidate, mid));
-                            fprintf(stderr, "[WebRTC] Added pending candidate: %s\n", mid.c_str());
-                        } catch (const std::exception& e) {
-                            fprintf(stderr, "[WebRTC] Failed to add pending candidate: %s\n", e.what());
-                        }
-                    }
-                    peer->pending_candidates.clear();
                 }
             }
         }
@@ -1506,20 +1726,15 @@ private:
                 std::string candidate = json_get_string(msg, "candidate");
                 std::string mid = json_get_string(msg, "mid");
                 if (!candidate.empty()) {
-                    if (peer->has_remote_description) {
-                        // Remote description is set, add candidate immediately
+                    // libdatachannel handles candidate queuing if remote description not set yet
+                    if (g_debug_connection) {
                         fprintf(stderr, "[WebRTC] Adding ICE candidate from %s (mid=%s)\n",
                                 peer->id.c_str(), mid.c_str());
-                        try {
-                            peer->pc->addRemoteCandidate(rtc::Candidate(candidate, mid));
-                        } catch (const std::exception& e) {
-                            fprintf(stderr, "[WebRTC] Failed to add candidate: %s\n", e.what());
-                        }
-                    } else {
-                        // Queue candidate - remote description not set yet
-                        fprintf(stderr, "[WebRTC] Queuing ICE candidate from %s (mid=%s)\n",
-                                peer->id.c_str(), mid.c_str());
-                        peer->pending_candidates.emplace_back(candidate, mid);
+                    }
+                    try {
+                        peer->pc->addRemoteCandidate(rtc::Candidate(candidate, mid));
+                    } catch (const std::exception& e) {
+                        fprintf(stderr, "[WebRTC] Failed to add candidate: %s\n", e.what());
                     }
                 }
             }
@@ -1528,24 +1743,27 @@ private:
 
     // Binary input protocol handler (new, optimized)
     // Format from browser:
-    // Mouse move: [type=1:1] [dx:int16] [dy:int16] [timestamp:float64]
+    // Mouse move (relative): [type=1:1] [dx:int16] [dy:int16] [timestamp:float64]
     // Mouse button: [type=2:1] [button:uint8] [down:uint8] [timestamp:float64]
     // Key: [type=3:1] [keycode:uint16] [down:uint8] [timestamp:float64]
     // Ping: [type=4:1] [sequence:uint32] [timestamp:float64]
+    // Mouse move (absolute): [type=5:1] [x:uint16] [y:uint16] [timestamp:float64]
+    // Mouse mode change: [type=6:1] [mode:uint8] (0=absolute, 1=relative)
     void handle_input_binary(const uint8_t* data, size_t len) {
         if (len < 1) return;
 
         uint8_t type = data[0];
         static uint8_t current_buttons = 0;
+        static bool mouse_mode_relative = false;  // Track current mouse mode
 
         switch (type) {
-            case 1: {  // Mouse move
+            case 1: {  // Mouse move (relative)
                 if (len < 13) return;  // 1 + 2 + 2 + 8
                 int16_t dx = *reinterpret_cast<const int16_t*>(data + 1);
                 int16_t dy = *reinterpret_cast<const int16_t*>(data + 3);
                 double timestamp = *reinterpret_cast<const double*>(data + 5);
                 uint64_t browser_ts = static_cast<uint64_t>(timestamp);
-                send_mouse_input(dx, dy, current_buttons, browser_ts);
+                send_mouse_input(dx, dy, current_buttons, browser_ts, false);  // relative=false for backward compat
                 g_mouse_move_count++;
                 break;
             }
@@ -1573,7 +1791,7 @@ private:
                 if (len < 12) return;  // 1 + 2 + 1 + 8
                 uint16_t keycode = *reinterpret_cast<const uint16_t*>(data + 1);
                 uint8_t down = data[3];
-                int mac_code = browser_to_mac_keycode(keycode);
+                int mac_code = keyboard_map::browser_to_mac_keycode(keycode);
                 if (mac_code >= 0) {
                     send_key_input(mac_code, down != 0);
                     g_key_count++;
@@ -1589,6 +1807,30 @@ private:
                 if (g_debug_perf) {
                     fprintf(stderr, "[Server] Binary ping #%u (t1=%.1fms) forwarded to emulator: %s\n",
                             sequence, timestamp, success ? "OK" : "FAILED");
+                }
+                break;
+            }
+            case 5: {  // Mouse move (absolute)
+                if (len < 13) return;  // 1 + 2 + 2 + 8
+                uint16_t x = *reinterpret_cast<const uint16_t*>(data + 1);
+                uint16_t y = *reinterpret_cast<const uint16_t*>(data + 3);
+                double timestamp = *reinterpret_cast<const double*>(data + 5);
+                uint64_t browser_ts = static_cast<uint64_t>(timestamp);
+                if (g_debug_mouse) {
+                    fprintf(stderr, "[Server] Absolute mouse: x=%u, y=%u\n", x, y);
+                }
+                send_mouse_input(x, y, current_buttons, browser_ts, true);  // absolute=true
+                g_mouse_move_count++;
+                break;
+            }
+            case 6: {  // Mouse mode change
+                if (len < 2) return;  // 1 + 1
+                uint8_t mode = data[1];
+                mouse_mode_relative = (mode == 1);
+                send_mouse_mode_change(mouse_mode_relative);
+                if (g_debug_mouse) {
+                    fprintf(stderr, "[Server] Mouse mode changed to: %s\n",
+                            mouse_mode_relative ? "relative" : "absolute");
                 }
                 break;
             }
@@ -1647,7 +1889,7 @@ private:
             case 'K': {
                 // Key down: K keycode
                 int keycode = atoi(args);
-                int mac_code = browser_to_mac_keycode(keycode);
+                int mac_code = keyboard_map::browser_to_mac_keycode(keycode);
                 if (mac_code >= 0) {
                     send_key_input(mac_code, true);
                     g_key_count++;
@@ -1657,7 +1899,7 @@ private:
             case 'k': {
                 // Key up: k keycode
                 int keycode = atoi(args);
-                int mac_code = browser_to_mac_keycode(keycode);
+                int mac_code = keyboard_map::browser_to_mac_keycode(keycode);
                 if (mac_code >= 0) {
                     send_key_input(mac_code, false);
                     g_key_count++;
@@ -1666,7 +1908,7 @@ private:
             }
             case 'P': {
                 // Ping: P sequence,timestamp
-                // NOTE: Ping responses are only sent in PNG/RAW codec mode via DataChannel metadata header.
+                // NOTE: Ping responses are only sent in PNG codec mode via DataChannel metadata header.
                 // H.264 uses RTP video track with no metadata support - ping echoes would be discarded.
                 uint32_t sequence = 0;
                 double ts = 0;
@@ -1691,407 +1933,175 @@ private:
     int port_ = 8090;
     std::unique_ptr<rtc::WebSocketServer> ws_server_;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
-    std::chrono::steady_clock::time_point audio_start_time_ = std::chrono::steady_clock::now();
 
     std::mutex peers_mutex_;
     std::map<std::string, std::shared_ptr<PeerConnection>> peers_;
     std::map<rtc::WebSocket*, std::string> ws_to_peer_id_;
+    std::map<rtc::WebSocket*, std::shared_ptr<rtc::WebSocket>> ws_connections_;  // Keep WebSocket alive
 
     uint32_t ssrc_ = 1;
 };
 
+// Stdin monitor removed - was debug feature for synchronized audio capture
+// Capture functionality can be triggered via API endpoint if needed in future
+
+// Track last disconnection time to prevent immediate reconnection
+static std::chrono::steady_clock::time_point g_last_disconnect_time;
+
 // Implementation of disconnect_from_emulator (needs WebRTCServer definition)
-static void disconnect_from_emulator(WebRTCServer* webrtc) {
-    (void)webrtc;  // Keep parameter for future use, suppress unused warning
-    disconnect_control_socket();
-    disconnect_video_shm();
+// NOTE: With new threading model, this is called from connection manager (main thread)
+// Worker threads (video/audio) check g_emulator_connected and go idle when false
+static void disconnect_from_emulator(WebRTCServer* webrtc, bool disconnect_peers) {
+    // Set disconnected flag - worker threads will see this and stop processing
+    g_emulator_connected = false;
     g_emulator_pid = -1;
 
-    // NOTE: We do NOT disconnect WebRTC peers here!
-    // The encoder auto-reinitializes when resolution changes,
-    // and the browser canvas auto-resizes. The video stream
-    // should continue seamlessly across emulator restarts.
+    // Record disconnection time for reconnection grace period
+    g_last_disconnect_time = std::chrono::steady_clock::now();
+
+    // Wait for worker threads to notice flag and go idle
+    // Audio loop: 20ms iterations, Video loop: blocks on epoll_wait with 5ms timeout
+    // 200ms ensures both threads have fully exited their processing loops
+    fprintf(stderr, "IPC: Waiting for worker threads to stop accessing shared memory...\n");
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Now safe to unmap - threads are idle waiting on g_emulator_connected check
+    g_ipc.disconnect();
+    fprintf(stderr, "IPC: Disconnected and unmapped shared memory\n");
+
+    // Disconnect WebRTC peers if requested (e.g., when codec changes)
+    // Otherwise, keep peers connected for seamless restarts (resolution changes)
+    if (disconnect_peers && webrtc) {
+        fprintf(stderr, "Video: Disconnecting all WebRTC peers for codec change\n");
+        webrtc->disconnect_all_peers();
+    }
 }
 
+// Implementation of HTTPServer::set_webrtc_server (needs WebRTCServer definition)
+void HTTPServer::set_webrtc_server(WebRTCServer* webrtc) {
+    if (webrtc) {
+        api_ctx_.notify_codec_change_fn = [webrtc](CodecType codec) {
+            webrtc->notify_codec_change(codec);
+        };
+    }
+}
 
 /*
- * Video Stream Implementations
- * (defined here after WebRTCServer to avoid circular dependencies)
+ * Connection management loop - runs in main thread
+ * Handles: scanning, connecting, disconnecting, process management, restarts
  */
 
-// H264Stream Implementation
-H264Stream::H264Stream(WebRTCServer* webrtc)
-    : webrtc_(webrtc)
-{
-}
+static void connection_manager_loop(WebRTCServer& webrtc,
+                                    std::thread* video_thread,
+                                    std::thread* audio_thread) {
+    auto last_scan_time = std::chrono::steady_clock::now();
+    auto last_emu_check = std::chrono::steady_clock::now();
 
-H264Stream::~H264Stream() {
-    cleanup();
-}
+    fprintf(stderr, "Connection: Starting connection manager\n");
 
-bool H264Stream::init(int width, int height, int fps) {
-    return encoder_.init(width, height, fps);
-}
+    while (g_running) {
+        auto now = std::chrono::steady_clock::now();
 
-void H264Stream::cleanup() {
-    encoder_.cleanup();
-    stats_ = StreamStats{};
-}
+        // Periodically scan for emulators if not connected
+        // BUT: Don't reconnect if user explicitly stopped the emulator
+        if (!g_emulator_connected && !g_user_stopped_emulator) {
+            auto scan_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_scan_time);
+            if (scan_elapsed.count() >= 500) {
+                last_scan_time = now;
 
-bool H264Stream::process_frame(
-    const uint8_t* bgra_data,
-    int width, int height, int stride,
-    const MacEmuIPCBuffer* shm,
-    uint64_t server_timestamp_us)
-{
-    (void)shm;  // H.264 doesn't use SHM metadata
-    (void)server_timestamp_us;  // RTP has its own timestamps
+                // Grace period after disconnect: wait for emulator to finish cleanup
+                // Emulator needs time to: join threads, munmap SHM, unlink socket
+                // 500ms should be sufficient for clean shutdown
+                auto disconnect_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_last_disconnect_time);
+                if (disconnect_elapsed.count() < 500) {
+                    continue;  // Still in grace period, skip connection attempts
+                }
 
-    if (!has_peers()) {
-        return false;
-    }
-
-    // Encode frame
-    last_encode_start_ = std::chrono::steady_clock::now();
-    EncodedFrame frame = encoder_.encode_bgra(bgra_data, width, height, stride);
-    last_encode_end_ = std::chrono::steady_clock::now();
-
-    if (frame.data.empty()) {
-        return false;
-    }
-
-    // Send via WebRTC RTP
-    webrtc_->send_h264_frame(frame.data, frame.is_keyframe);
-
-    // Update stats
-    stats_.frames_sent++;
-    stats_.bytes_sent += frame.data.size();
-
-    auto encode_duration = std::chrono::duration_cast<std::chrono::microseconds>(
-        last_encode_end_ - last_encode_start_);
-    stats_.avg_encode_ms = encode_duration.count() / 1000.0f;
-    stats_.avg_size_kb = frame.data.size() / 1024.0f;
-
-    return true;
-}
-
-void H264Stream::request_keyframe() {
-    encoder_.request_keyframe();
-}
-
-bool H264Stream::has_peers() const {
-    return webrtc_->has_codec_peer(CodecType::H264);
-}
-
-StreamStats H264Stream::get_stats() const {
-    StreamStats s = stats_;
-    s.peers = webrtc_->has_codec_peer(CodecType::H264) ? 1 : 0;
-    return s;
-}
-
-void H264Stream::reset_stats() {
-    stats_.frames_sent = 0;
-    stats_.bytes_sent = 0;
-    stats_.avg_encode_ms = 0.0f;
-    stats_.avg_size_kb = 0.0f;
-}
-
-// AV1Stream Implementation
-AV1Stream::AV1Stream(WebRTCServer* webrtc)
-    : webrtc_(webrtc)
-{
-}
-
-AV1Stream::~AV1Stream() {
-    cleanup();
-}
-
-bool AV1Stream::init(int width, int height, int fps) {
-    return encoder_.init(width, height, fps);
-}
-
-void AV1Stream::cleanup() {
-    encoder_.cleanup();
-    stats_ = StreamStats{};
-}
-
-bool AV1Stream::process_frame(
-    const uint8_t* bgra_data,
-    int width, int height, int stride,
-    const MacEmuIPCBuffer* shm,
-    uint64_t server_timestamp_us)
-{
-    (void)shm;  // AV1 doesn't use SHM metadata
-    (void)server_timestamp_us;  // RTP has its own timestamps
-
-    if (!has_peers()) {
-        return false;
-    }
-
-    // Encode frame
-    last_encode_start_ = std::chrono::steady_clock::now();
-    EncodedFrame frame = encoder_.encode_bgra(bgra_data, width, height, stride);
-    last_encode_end_ = std::chrono::steady_clock::now();
-
-    if (frame.data.empty()) {
-        return false;
-    }
-
-    // Send via WebRTC RTP
-    webrtc_->send_av1_frame(frame.data, frame.is_keyframe);
-
-    // Update stats
-    stats_.frames_sent++;
-    stats_.bytes_sent += frame.data.size();
-
-    auto encode_duration = std::chrono::duration_cast<std::chrono::microseconds>(
-        last_encode_end_ - last_encode_start_);
-    stats_.avg_encode_ms = encode_duration.count() / 1000.0f;
-    stats_.avg_size_kb = frame.data.size() / 1024.0f;
-
-    return true;
-}
-
-void AV1Stream::request_keyframe() {
-    encoder_.request_keyframe();
-}
-
-bool AV1Stream::has_peers() const {
-    return webrtc_->has_codec_peer(CodecType::AV1);
-}
-
-StreamStats AV1Stream::get_stats() const {
-    StreamStats s = stats_;
-    s.peers = webrtc_->has_codec_peer(CodecType::AV1) ? 1 : 0;
-    return s;
-}
-
-void AV1Stream::reset_stats() {
-    stats_.frames_sent = 0;
-    stats_.bytes_sent = 0;
-    stats_.avg_encode_ms = 0.0f;
-    stats_.avg_size_kb = 0.0f;
-}
-
-// PNGStream Implementation
-PNGStream::PNGStream(WebRTCServer* webrtc)
-    : webrtc_(webrtc)
-    , last_heartbeat_(std::chrono::steady_clock::now())
-{
-}
-
-PNGStream::~PNGStream() {
-    cleanup();
-}
-
-bool PNGStream::init(int width, int height, int fps) {
-    return encoder_.init(width, height, fps);
-}
-
-void PNGStream::cleanup() {
-    encoder_.cleanup();
-    stats_ = StreamStats{};
-}
-
-bool PNGStream::process_frame(
-    const uint8_t* bgra_data,
-    int width, int height, int stride,
-    const MacEmuIPCBuffer* shm,
-    uint64_t server_timestamp_us)
-{
-    if (!has_peers()) {
-        return false;
-    }
-
-    // Extract dirty rect from SHM
-    DirtyRect rect = extract_dirty_rect(shm, width, height);
-
-    // Force full frame if any PNG peer needs their first frame
-    // PNG peers need a full first frame to initialize the canvas
-    if (webrtc_->png_peer_needs_first_frame()) {
-        rect.x = 0;
-        rect.y = 0;
-        rect.w = width;
-        rect.h = height;
-    }
-
-    // Heartbeat mechanism: Send tiny frame to carry ping echoes even when screen is static
-    // This prevents ping responses from being delayed indefinitely on idle screens
-    auto now = std::chrono::steady_clock::now();
-    if (rect.is_empty()) {
-        if (has_pending_ping(shm)) {
-            if (should_send_heartbeat()) {
-                // Send a tiny 1x1 pixel frame just to carry the ping echo
-                rect.x = 0;
-                rect.y = 0;
-                rect.w = 1;
-                rect.h = 1;
-                last_heartbeat_ = now;
-                // Note: This encodes/sends 1 pixel which is ~100 bytes - negligible overhead
+                // Priority 1: If we started an emulator, ONLY try to connect to that one
+                // This prevents connecting to stray emulators from previous sessions
+                if (g_started_emulator_pid > 0) {
+                    if (try_connect_to_emulator(g_started_emulator_pid)) {
+                        fprintf(stderr, "Connection: Connected to our emulator PID %d\n", g_started_emulator_pid);
+                    }
+                }
+                // Priority 2: If target PID specified via command line, try that
+                else if (g_target_emulator_pid > 0) {
+                    if (try_connect_to_emulator(g_target_emulator_pid)) {
+                        fprintf(stderr, "Connection: Connected to target emulator PID %d\n", g_target_emulator_pid);
+                    }
+                }
+                // Priority 3: No specific emulator - scan for any running emulator
+                else {
+                    auto pids = scan_for_emulators();
+                    for (pid_t pid : pids) {
+                        if (try_connect_to_emulator(pid)) {
+                            fprintf(stderr, "Connection: Found and connected to emulator PID %d\n", pid);
+                            break;
+                        }
+                    }
+                }
             }
         }
-    } else {
-        // Screen is updating, reset heartbeat timer
-        last_heartbeat_ = now;
-    }
 
-    // Only encode if there are changes or heartbeat triggered
-    if (rect.is_empty()) {
-        return false;
-    }
+        // Check if we started an emulator and it exited
+        auto emu_check_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_emu_check);
+        if (emu_check_elapsed.count() >= 500) {
+            last_emu_check = now;
 
-    // Debug logging for dirty rects
-    if (g_debug_mode_switch) {
-        if (++dirty_log_counter_ % 30 == 0) {
-            fprintf(stderr, "PNG: Dirty rect from emulator: x=%u y=%u w=%u h=%u (frame: %dx%d)\n",
-                    rect.x, rect.y, rect.w, rect.h, width, height);
+            int exit_code = check_emulator_status();
+            if (exit_code > 0 && g_auto_start_emulator) {
+                // Emulator we started exited - check if restart requested (exit code 75)
+                if (exit_code == 75) {
+                    fprintf(stderr, "Connection: Auto-restarting emulator...\n");
+                    disconnect_from_emulator(&webrtc);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                    start_emulator();
+                    g_previous_codec = g_server_codec;
+                }
+            }
+
+            // Handle restart request from web UI
+            if (g_restart_emulator_requested.exchange(false)) {
+                fprintf(stderr, "Connection: Restart requested from web UI\n");
+
+                if (g_started_emulator_pid > 0) {
+                    stop_emulator();
+                } else {
+                    send_command(MACEMU_CMD_RESET);
+                }
+                disconnect_from_emulator(&webrtc, false);  // Don't disconnect peers
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                // Always restart when explicitly requested via web UI
+                start_emulator();
+            }
         }
-    }
 
-    // Encode the frame
-    last_encode_start_ = std::chrono::steady_clock::now();
-    EncodedFrame frame;
-
-    bool is_full_frame = rect.is_full_frame(width, height);
-
-    if (g_debug_mode_switch) {
-        if (++encode_log_counter_ % 30 == 0) {
-            fprintf(stderr, "PNG: Encoding %s (x=%u y=%u w=%u h=%u)\n",
-                    is_full_frame ? "FULL FRAME" : "dirty rect",
-                    rect.x, rect.y, rect.w, rect.h);
+        // Check if emulator disconnected (socket closed)
+        if (g_emulator_connected && g_control_socket >= 0) {
+            char buf;
+            ssize_t n = recv(g_control_socket, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
+            if (n == 0) {
+                // Connection closed
+                fprintf(stderr, "Connection: Emulator disconnected\n");
+                disconnect_from_emulator(&webrtc);
+            }
         }
+
+        // Sleep to avoid busy-looping
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    if (is_full_frame) {
-        frame = encoder_.encode_bgra(bgra_data, width, height, stride);
-    } else {
-        frame = encoder_.encode_bgra_rect(bgra_data, width, height, stride,
-                                          rect.x, rect.y, rect.w, rect.h);
-    }
-
-    last_encode_end_ = std::chrono::steady_clock::now();
-
-    if (frame.data.empty()) {
-        return false;
-    }
-
-    // Extract timestamps from SHM
-    uint64_t t1_frame_ready_ms = shm->timestamp_us / 1000;
-
-    // Send PNG with metadata via DataChannel
-    webrtc_->send_png_frame(frame.data, t1_frame_ready_ms,
-                            rect.x, rect.y, rect.w, rect.h,
-                            width, height);
-
-    // Update stats
-    stats_.frames_sent++;
-    stats_.bytes_sent += frame.data.size();
-
-    auto encode_duration = std::chrono::duration_cast<std::chrono::microseconds>(
-        last_encode_end_ - last_encode_start_);
-    stats_.avg_encode_ms = encode_duration.count() / 1000.0f;
-    stats_.avg_size_kb = frame.data.size() / 1024.0f;
-
-    return true;
+    fprintf(stderr, "Connection: Exiting connection manager\n");
 }
-
-void PNGStream::request_keyframe() {
-    // PNG frames are always keyframes (no inter-frame compression)
-    // WebRTC layer handles first frame via png_peer_needs_first_frame()
-}
-
-bool PNGStream::has_peers() const {
-    return webrtc_->has_codec_peer(CodecType::PNG);
-}
-
-StreamStats PNGStream::get_stats() const {
-    StreamStats s = stats_;
-    s.peers = webrtc_->has_codec_peer(CodecType::PNG) ? 1 : 0;
-    return s;
-}
-
-void PNGStream::reset_stats() {
-    stats_.frames_sent = 0;
-    stats_.bytes_sent = 0;
-    stats_.avg_encode_ms = 0.0f;
-    stats_.avg_size_kb = 0.0f;
-}
-
-// Helper: Extract dirty rect from SHM
-DirtyRect PNGStream::extract_dirty_rect(const MacEmuIPCBuffer* shm, int width, int height) {
-    DirtyRect rect;
-
-    // Read dirty rect from SHM (plain reads - synchronized by eventfd)
-    rect.x = shm->dirty_x;
-    rect.y = shm->dirty_y;
-    rect.w = shm->dirty_width;
-    rect.h = shm->dirty_height;
-
-    // Validate bounds
-    if (rect.x >= (uint32_t)width || rect.y >= (uint32_t)height) {
-        rect.w = 0;
-        rect.h = 0;
-    }
-
-    return rect;
-}
-
-// Helper: Extract ping echo from SHM
-PingEcho PNGStream::extract_ping_echo(const MacEmuIPCBuffer* shm) {
-    PingEcho ping;
-
-    // OPTIMIZED: Only ping_sequence is atomic - acts as "ready" flag
-    // Read-acquire on ping_sequence ensures all timestamp writes are visible
-    ping.sequence = ATOMIC_LOAD(shm->ping_sequence);
-
-    // If ping available, read timestamp struct (no atomics needed - seq acts as guard)
-    if (ping.sequence > 0) {
-        ping.t1_browser_ms = shm->ping_timestamps.t1_browser_ms;
-        ping.t2_server_us = shm->ping_timestamps.t2_server_us;
-        ping.t3_emulator_us = shm->ping_timestamps.t3_emulator_us;
-        ping.t4_frame_us = shm->ping_timestamps.t4_frame_us;
-
-        // t5 is calculated at send time in WebRTCServer::send_png_frame()
-        ping.t5_server_send_us = 0;
-    }
-
-    return ping;
-}
-
-// Helper: Check if there's a pending ping echo
-bool PNGStream::has_pending_ping(const MacEmuIPCBuffer* shm) {
-    uint32_t ping_seq = ATOMIC_LOAD(shm->ping_sequence);
-    return ping_seq > 0;
-}
-
-// Helper: Check if we should send a heartbeat
-bool PNGStream::should_send_heartbeat() {
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat_);
-
-    // Send heartbeat at most once per second to avoid spam
-    return elapsed.count() >= 1000;
-}
-
 
 /*
- * Main video processing loop
+ * Simplified video processing loop - ONLY processes frames
+ * Connection management has been moved to connection_manager_loop() in main thread
+ * This thread just waits for frames, encodes them, and sends to WebRTC
  */
 
-static void video_loop(WebRTCServer& webrtc) {
-    // Create video streams
-    H264Stream h264_stream(&webrtc);
-    AV1Stream av1_stream(&webrtc);
-    PNGStream png_stream(&webrtc);
-
-    // Initialize streams with default resolution (will reinit on resolution change)
-    h264_stream.init(800, 600);
-    av1_stream.init(800, 600);
-    png_stream.init(800, 600);
-
+static void video_loop(WebRTCServer& webrtc, H264Encoder& h264_encoder, AV1Encoder& av1_encoder, VP9Encoder& vp9_encoder, PNGEncoder& png_encoder, WebPEncoder& webp_encoder) {
     auto last_stats_time = std::chrono::steady_clock::now();
-    auto last_emu_check = std::chrono::steady_clock::now();
-    auto last_scan_time = std::chrono::steady_clock::now();
     int frames_encoded = 0;
 
     // Track input counts between stats intervals
@@ -2112,82 +2122,15 @@ static void video_loop(WebRTCServer& webrtc) {
     while (g_running) {
         auto now = std::chrono::steady_clock::now();
 
-        // Periodically scan for emulators if not connected
-        if (!g_emulator_connected) {
-            auto scan_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_scan_time);
-            if (scan_elapsed.count() >= 500) {
-                last_scan_time = now;
-
-                // If target PID specified, try that
-                if (g_target_emulator_pid > 0) {
-                    if (try_connect_to_emulator(g_target_emulator_pid)) {
-                        fprintf(stderr, "Video: Connected to emulator PID %d\n", g_target_emulator_pid);
-                    }
-                } else {
-                    // Scan for any running emulator
-                    auto pids = scan_for_emulators();
-                    for (pid_t pid : pids) {
-                        if (try_connect_to_emulator(pid)) {
-                            fprintf(stderr, "Video: Found and connected to emulator PID %d\n", pid);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check if we started an emulator and it exited
-        auto emu_check_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_emu_check);
-        if (emu_check_elapsed.count() >= 500) {
-            last_emu_check = now;
-
-            int exit_code = check_emulator_status();
-            if (exit_code > 0 && g_auto_start_emulator) {
-                // Emulator we started exited - check if restart requested (exit code 75)
-                if (exit_code == 75) {
-                    fprintf(stderr, "Video: Auto-restarting emulator...\n");
-                    disconnect_from_emulator(&webrtc);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                    start_emulator();
-                }
-            }
-
-            // Handle restart request from web UI
-            if (g_restart_emulator_requested.exchange(false)) {
-                fprintf(stderr, "Video: Restart requested from web UI\n");
-                if (g_started_emulator_pid > 0) {
-                    stop_emulator();
-                } else {
-                    send_command(MACEMU_CMD_RESET);
-                }
-                disconnect_from_emulator(&webrtc);
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                if (g_auto_start_emulator) {
-                    start_emulator();
-                }
-            }
-        }
-
-        // Check if emulator disconnected
-        if (g_emulator_connected && g_control_socket >= 0) {
-            char buf;
-            ssize_t n = recv(g_control_socket, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
-            if (n == 0) {
-                // Connection closed
-                fprintf(stderr, "Video: Emulator disconnected\n");
-                disconnect_from_emulator(&webrtc);
-            }
-        }
-
-        // Wait for frames
-        if (!g_video_shm) {
+        // Wait for emulator connection (managed by main thread)
+        if (!g_emulator_connected || !g_ipc_shm) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
-        // Register eventfd with epoll when emulator PID changes (new connection or restart)
+        // Register eventfd with epoll when emulator PID changes (new connection)
         // Kernel may reuse same fd number, so we check PID to detect new emulator
-        if (g_emulator_connected && current_emulator_pid != g_emulator_pid) {
+        if (current_emulator_pid != g_emulator_pid) {
             // Remove old eventfd from epoll if any
             if (current_eventfd >= 0) {
                 fprintf(stderr, "Video: Removing old eventfd %d from epoll (PID %d->%d)\n",
@@ -2210,10 +2153,8 @@ static void video_loop(WebRTCServer& webrtc) {
                     fprintf(stderr, "Video: Registered eventfd %d with epoll for PID %d\n",
                             current_eventfd, current_emulator_pid);
                 } else {
-                    fprintf(stderr, "Video: FATAL: Failed to add eventfd %d to epoll: %s\n",
+                    fprintf(stderr, "Video: ERROR: Failed to add eventfd %d to epoll: %s\n",
                             g_frame_ready_eventfd, strerror(errno));
-                    // This is fatal - can't proceed without eventfd
-                    disconnect_from_emulator(&webrtc);
                     continue;
                 }
             }
@@ -2244,18 +2185,35 @@ static void video_loop(WebRTCServer& webrtc) {
             continue;
         }
 
+        // Check emulator still connected (race with disconnect)
+        if (!g_emulator_connected || !g_ipc_shm) {
+            continue;
+        }
+
         // Latency measurement: time from emulator frame completion to now
         // Plain read - synchronized by eventfd read above
-        uint64_t frame_timestamp_us = g_video_shm->timestamp_us;
+        uint64_t frame_timestamp_us = g_ipc_shm->timestamp_us;
 
+        // T5: Server read timestamp - capture immediately after eventfd read
         // Use CLOCK_REALTIME to match the emulator's timestamp (both in same clock domain)
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
-        uint64_t server_now_us = (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+        uint64_t t5_server_read_us = (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+        uint64_t server_now_us = t5_server_read_us;  // Alias for existing latency code
 
         // Read frame dimensions (plain reads - synchronized by eventfd)
-        uint32_t width = g_video_shm->width;
-        uint32_t height = g_video_shm->height;
+        uint32_t width = g_ipc_shm->width;
+        uint32_t height = g_ipc_shm->height;
+
+        // Track resolution changes
+        static uint32_t last_width = 0;
+        static uint32_t last_height = 0;
+        if (g_debug_mode_switch && (width != last_width || height != last_height)) {
+            fprintf(stderr, "[MODE] Server detected resolution change: %dx%d -> %dx%d\n",
+                    last_width, last_height, width, height);
+            last_width = width;
+            last_height = height;
+        }
 
         if (width == 0 || height == 0 || width > MACEMU_MAX_WIDTH || height > MACEMU_MAX_HEIGHT) {
             continue;
@@ -2263,33 +2221,186 @@ static void video_loop(WebRTCServer& webrtc) {
 
         // Get BGRA frame from ready buffer
         // Emulator always outputs BGRA (B,G,R,A bytes), which is libyuv "ARGB"
-        uint8_t* frame_data = macemu_get_ready_bgra(g_video_shm);
+        uint8_t* frame_data = macemu_get_ready_bgra(g_ipc_shm);
         int stride = macemu_get_bgra_stride();
 
         // Check if keyframe requested (new peer connected)
         bool keyframe_requested = g_request_keyframe.exchange(false);
         if (keyframe_requested) {
-            h264_stream.request_keyframe();
-            av1_stream.request_keyframe();
-            png_stream.request_keyframe();
+            h264_encoder.request_keyframe();
+            av1_encoder.request_keyframe();
         }
 
-        // Process frame through all streams (each decides if it has peers)
+        // Encode and send to H.264 peers
         auto encode_start = std::chrono::steady_clock::now();
-        int frames_sent = 0;
-        if (h264_stream.process_frame(frame_data, width, height, stride, g_video_shm, server_now_us)) {
-            frames_sent++;
+        if (webrtc.has_codec_peer(CodecType::H264)) {
+            EncodedFrame frame = h264_encoder.encode_bgra(frame_data, width, height, stride);
+
+            // T6: Capture encode done timestamp
+            struct timespec ts_enc;
+            clock_gettime(CLOCK_REALTIME, &ts_enc);
+            uint64_t t6_encode_done_us = (uint64_t)ts_enc.tv_sec * 1000000 + ts_enc.tv_nsec / 1000;
+
+            if (!frame.data.empty()) {
+                webrtc.populate_frame_metadata(frame, t5_server_read_us, t6_encode_done_us);
+                webrtc.send_h264_frame(frame);
+                frames_encoded++;
+            }
         }
-        if (av1_stream.process_frame(frame_data, width, height, stride, g_video_shm, server_now_us)) {
-            frames_sent++;
+
+        // Encode and send to AV1 peers
+        if (webrtc.has_codec_peer(CodecType::AV1)) {
+            EncodedFrame frame = av1_encoder.encode_bgra(frame_data, width, height, stride);
+
+            // T6: Capture encode done timestamp
+            struct timespec ts_enc;
+            clock_gettime(CLOCK_REALTIME, &ts_enc);
+            uint64_t t6_encode_done_us = (uint64_t)ts_enc.tv_sec * 1000000 + ts_enc.tv_nsec / 1000;
+
+            if (!frame.data.empty()) {
+                webrtc.populate_frame_metadata(frame, t5_server_read_us, t6_encode_done_us);
+                webrtc.send_av1_frame(frame);
+                frames_encoded++;
+            }
         }
-        if (png_stream.process_frame(frame_data, width, height, stride, g_video_shm, server_now_us)) {
-            frames_sent++;
+
+        // Encode and send to VP9 peers
+        if (webrtc.has_codec_peer(CodecType::VP9)) {
+            EncodedFrame frame = vp9_encoder.encode_bgra(frame_data, width, height, stride);
+
+            // T6: Capture encode done timestamp
+            struct timespec ts_enc;
+            clock_gettime(CLOCK_REALTIME, &ts_enc);
+            uint64_t t6_encode_done_us = (uint64_t)ts_enc.tv_sec * 1000000 + ts_enc.tv_nsec / 1000;
+
+            if (!frame.data.empty()) {
+                webrtc.populate_frame_metadata(frame, t5_server_read_us, t6_encode_done_us);
+                webrtc.send_vp9_frame(frame);
+                frames_encoded++;
+            }
+        }
+
+        // Encode and send to still-image codec peers (PNG/WebP) using dirty rects from emulator
+        // Both PNG and WebP use the same dirty rect logic, differ only in encoding
+        bool has_stillimage_peer = webrtc.has_codec_peer(CodecType::PNG) || webrtc.has_codec_peer(CodecType::WEBP);
+        if (has_stillimage_peer) {
+            // Read dirty rect from SHM (plain reads - synchronized by eventfd)
+            uint32_t dirty_x = g_ipc_shm->dirty_x;
+            uint32_t dirty_y = g_ipc_shm->dirty_y;
+            uint32_t dirty_width = g_ipc_shm->dirty_width;
+            uint32_t dirty_height = g_ipc_shm->dirty_height;
+
+            // Debug logging for dirty rects (only if MACEMU_DEBUG_PNG is set)
+            if (g_debug_png) {
+                static int dirty_log_counter = 0;
+                if (++dirty_log_counter % 30 == 0) {
+                    fprintf(stderr, "StillImage: Dirty rect from emulator: x=%u y=%u w=%u h=%u (frame: %ux%u)\n",
+                            dirty_x, dirty_y, dirty_width, dirty_height, width, height);
+                }
+            }
+
+            // Force full frame if any still-image peer needs their first frame
+            // Still-image peers need a full first frame to initialize the canvas
+            bool needs_first = webrtc.png_peer_needs_first_frame();
+            if (needs_first) {
+                dirty_x = 0;
+                dirty_y = 0;
+                dirty_width = width;
+                dirty_height = height;
+            }
+
+            // Heartbeat mechanism: Send tiny frame to carry ping echoes even when screen is static
+            // This prevents ping responses from being delayed indefinitely on idle screens
+            static auto last_heartbeat = std::chrono::steady_clock::now();
+            if (dirty_width == 0 || dirty_height == 0) {
+                // Check if there's a pending ping echo
+                uint32_t ping_seq = ATOMIC_LOAD(g_ipc_shm->ping_sequence);
+                if (ping_seq > 0) {
+                    auto heartbeat_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat);
+                    // Send heartbeat at most once per second to avoid spam
+                    if (heartbeat_elapsed.count() >= 1000) {
+                        // Send a tiny 1x1 pixel frame just to carry the ping echo
+                        dirty_x = 0;
+                        dirty_y = 0;
+                        dirty_width = 1;
+                        dirty_height = 1;
+                        last_heartbeat = now;
+                        // Note: This encodes/sends 1 pixel which is ~100 bytes - negligible overhead
+                    }
+                }
+            } else {
+                // Screen is updating, reset heartbeat timer
+                last_heartbeat = now;
+            }
+
+            // Only encode if there are changes (dirty_width > 0) or heartbeat triggered
+            // Ping echoes are carried in the frame metadata header of any frame being sent
+            if (dirty_width > 0 && dirty_height > 0) {
+                // Check if this is a full frame or dirty rect
+                bool is_full_frame = (dirty_x == 0 && dirty_y == 0 && dirty_width == width && dirty_height == height);
+
+                if (g_debug_png) {
+                    static int encode_log_counter = 0;
+                    if (++encode_log_counter % 30 == 0) {
+                        fprintf(stderr, "StillImage: Encoding %s (x=%u y=%u w=%u h=%u)\n",
+                                is_full_frame ? "FULL FRAME" : "dirty rect",
+                                dirty_x, dirty_y, dirty_width, dirty_height);
+                    }
+                }
+
+                // Encode with PNG encoder if we have PNG peers
+                if (webrtc.has_codec_peer(CodecType::PNG)) {
+                    EncodedFrame frame;
+                    if (is_full_frame) {
+                        frame = png_encoder.encode_bgra(frame_data, width, height, stride);
+                    } else {
+                        frame = png_encoder.encode_bgra_rect(frame_data, width, height, stride,
+                                                             dirty_x, dirty_y, dirty_width, dirty_height);
+                    }
+
+                    // T6: Capture encode done timestamp
+                    struct timespec ts_enc;
+                    clock_gettime(CLOCK_REALTIME, &ts_enc);
+                    uint64_t t6_encode_done_us = (uint64_t)ts_enc.tv_sec * 1000000 + ts_enc.tv_nsec / 1000;
+
+                    if (!frame.data.empty()) {
+                        webrtc.populate_frame_metadata(frame, t5_server_read_us, t6_encode_done_us);
+                        uint64_t t1_frame_ready_ms = frame_timestamp_us / 1000;
+                        webrtc.send_png_frame(frame, t1_frame_ready_ms,
+                                              dirty_x, dirty_y, dirty_width, dirty_height,
+                                              width, height);
+                        frames_encoded++;
+                    }
+                }
+
+                // Encode with WebP encoder if we have WebP peers
+                if (webrtc.has_codec_peer(CodecType::WEBP)) {
+                    EncodedFrame frame;
+                    if (is_full_frame) {
+                        frame = webp_encoder.encode_bgra(frame_data, width, height, stride);
+                    } else {
+                        frame = webp_encoder.encode_bgra_rect(frame_data, width, height, stride,
+                                                              dirty_x, dirty_y, dirty_width, dirty_height);
+                    }
+
+                    // T6: Capture encode done timestamp
+                    struct timespec ts_enc;
+                    clock_gettime(CLOCK_REALTIME, &ts_enc);
+                    uint64_t t6_encode_done_us = (uint64_t)ts_enc.tv_sec * 1000000 + ts_enc.tv_nsec / 1000;
+
+                    if (!frame.data.empty()) {
+                        webrtc.populate_frame_metadata(frame, t5_server_read_us, t6_encode_done_us);
+                        uint64_t t1_frame_ready_ms = frame_timestamp_us / 1000;
+                        webrtc.send_png_frame(frame, t1_frame_ready_ms,
+                                              dirty_x, dirty_y, dirty_width, dirty_height,
+                                              width, height);
+                        frames_encoded++;
+                    }
+                }
+            }
+            // else: no changes (dirty_width == 0), skip encoding
         }
         auto encode_end = std::chrono::steady_clock::now();
-
-        // Update frames_encoded counter for stats
-        frames_encoded += frames_sent;
 
         // Track latency stats
         static uint64_t total_shm_latency_us = 0;
@@ -2305,6 +2416,9 @@ static void video_loop(WebRTCServer& webrtc) {
             total_encode_latency_us += encode_latency;
             latency_samples++;
         }
+
+        // Cursor updates are now sent with every frame (in frame metadata)
+        // No separate cursor update broadcast needed
 
         // Print stats every 3 seconds
         auto stats_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_stats_time);
@@ -2378,136 +2492,243 @@ static void video_loop(WebRTCServer& webrtc) {
 
 
 /*
- * Main audio processing loop
+ * Audio processing loop - PULL MODEL (server-driven, like SDL)
+ *
+ * Server requests audio at fixed Opus frame intervals (20ms @ 48kHz = 960 samples).
+ * This matches SDL's callback architecture for perfect timing synchronization.
  */
 
-static void audio_loop(WebRTCServer& webrtc) {
-    // Create epoll instance for low-latency event notification
-    int epoll_fd = epoll_create1(0);
-    if (epoll_fd < 0) {
-        fprintf(stderr, "Audio: FATAL: Failed to create epoll: %s\n", strerror(errno));
-        return;
-    }
-    int current_eventfd = -1;  // Track which eventfd is registered
+static void audio_loop_mac_ipc(WebRTCServer& webrtc) {
+    uint64_t frames_consumed = 0;
+    uint64_t frames_underrun = 0;
+
+    // Fixed 20ms timing for Opus
+    // Server controls timing, Mac responds to requests
+    const auto frame_duration = std::chrono::milliseconds(20);
 
     if (g_debug_audio) {
-        fprintf(stderr, "Audio: Starting audio processing loop\n");
+        fprintf(stderr, "Audio: Starting frame-based audio loop (PULL MODEL - server controls timing)\n");
     }
 
     while (g_running) {
-        // Check if we need to update epoll registration
-        if (g_audio_ready_eventfd >= 0 && g_audio_ready_eventfd != current_eventfd) {
-            // Unregister old eventfd if any
-            if (current_eventfd >= 0) {
-                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, current_eventfd, nullptr);
-            }
+        auto frame_start = std::chrono::steady_clock::now();
 
-            // Register new eventfd
-            struct epoll_event ev;
-            ev.events = EPOLLIN;
-            ev.data.fd = g_audio_ready_eventfd;
-            if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, g_audio_ready_eventfd, &ev) == 0) {
+        // Check connection status
+        if (!g_ipc_shm || !g_emulator_connected) {
+            std::this_thread::sleep_for(frame_duration);
+            continue;
+        }
+
+        // PULL MODEL: Request audio from Mac before reading
+        // This wakes up Mac's audio thread to produce a frame
+        if (g_control_socket >= 0) {
+            MacEmuAudioRequestInput audio_req;
+            audio_req.hdr.type = MACEMU_INPUT_AUDIO_REQUEST;
+            audio_req.hdr.flags = 0;
+            audio_req.hdr._reserved = 0;
+            audio_req.requested_samples = 960;  // Opus frame size @ 48kHz
+
+            ssize_t sent = send(g_control_socket, &audio_req, sizeof(audio_req), MSG_NOSIGNAL);
+            if (sent != sizeof(audio_req)) {
                 if (g_debug_audio) {
-                    fprintf(stderr, "Audio: Registered audio eventfd %d with epoll\n", g_audio_ready_eventfd);
+                    static int err_count = 0;
+                    if (++err_count <= 10) {
+                        fprintf(stderr, "Audio: Failed to send request to Mac (count=%d)\n", err_count);
+                    }
                 }
-                current_eventfd = g_audio_ready_eventfd;
+            }
+        }
+
+        // Give Mac time to respond to interrupt and produce frame
+        // Mac needs to: wake thread, trigger interrupt, execute 68k audio code, write frame
+        // During startup, Mac audio init can be slow, so give extra margin
+        // 8ms is conservative but still leaves 12ms for resampling/encoding in 20ms budget
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+
+        // Read frame ring buffer indices
+        // Note: Use g_ipc_shm directly (don't cache) - it can change when reconnecting to new emulator
+        // The 200ms grace period in disconnect_from_emulator() ensures old SHM stays valid during disconnect
+        if (!g_ipc_shm || !g_emulator_connected) {
+            continue;
+        }
+        uint32_t read_idx = ATOMIC_LOAD(g_ipc_shm->audio_frame_read_idx);
+        uint32_t write_idx = ATOMIC_LOAD(g_ipc_shm->audio_frame_write_idx);
+
+        // Select frame to consume
+        const MacEmuAudioFrame* frame;
+        bool is_silence = false;
+
+        if (read_idx == write_idx) {
+            // Ring buffer empty - underrun! Use silence frame
+            frame = &g_ipc_shm->audio_silence_frame;
+            is_silence = true;
+            frames_underrun++;
+
+            if (g_debug_audio && frames_underrun <= 10) {
+                fprintf(stderr, "Audio: Underrun - no frames available, using silence (count=%lu)\n",
+                        frames_underrun);
+            }
+        } else {
+            // Normal case - consume frame from ring buffer
+            frame = &g_ipc_shm->audio_frame_ring[read_idx];
+            is_silence = false;
+        }
+
+        // Prepare buffer for resampling/byte-swapping (max 960 samples stereo S16)
+        int16_t opus_buffer[960 * 2];
+        const int16_t* samples_to_encode = nullptr;
+
+        // Process frame: Byte-swap from Mac's big-endian to Opus's little-endian
+        // Mac produces S16MSB (big-endian), Opus expects native int16_t (little-endian on x86_64)
+        // We force 48kHz in audio_ipc.cpp, so no resampling needed
+        const uint8_t* src_bytes = reinterpret_cast<const uint8_t*>(frame->data);
+        uint32_t total_samples = std::min(frame->samples, (uint32_t)960) * frame->channels;
+
+        // Detect if this is 8-bit audio masquerading as 16-bit (duplicated bytes)
+        // This happens when Mac apps produce 8-bit audio stored as duplicated 16-bit samples
+        bool is_8bit_duplicated = true;
+        for (uint32_t i = 0; i < std::min((uint32_t)20, total_samples) && is_8bit_duplicated; i++) {
+            if (src_bytes[i * 2] != src_bytes[i * 2 + 1]) {
+                is_8bit_duplicated = false;
+            }
+        }
+
+        // Log detection (once per session)
+        static bool logged_format = false;
+        if (!logged_format && !is_silence) {
+            if (is_8bit_duplicated) {
+                fprintf(stderr, "Audio: Detected 8-bit audio (duplicated bytes), converting to 16-bit\n");
             } else {
-                fprintf(stderr, "Audio: WARNING: Failed to register eventfd with epoll: %s\n", strerror(errno));
+                fprintf(stderr, "Audio: Detected true 16-bit audio, byte-swapping\n");
+            }
+            logged_format = true;
+        }
+
+        if (is_8bit_duplicated) {
+            // Convert 8-bit to proper 16-bit: read high byte as signed 8-bit, scale to full 16-bit range
+            // Example: 0x19 0x19 -> read 0x19 as int8 (25) -> scale: 25 * 256 = 6400
+            for (uint32_t i = 0; i < total_samples; i++) {
+                int8_t sample_8bit = static_cast<int8_t>(src_bytes[i * 2]);  // High byte
+                opus_buffer[i] = static_cast<int16_t>(sample_8bit) << 8;  // Scale to 16-bit range
+            }
+        } else {
+            // True 16-bit: byte-swap from big-endian to little-endian
+            const int16_t* src = reinterpret_cast<const int16_t*>(frame->data);
+            for (uint32_t i = 0; i < total_samples; i++) {
+                uint16_t val = static_cast<uint16_t>(src[i]);
+                opus_buffer[i] = static_cast<int16_t>((val >> 8) | (val << 8));
             }
         }
 
-        // Wait for audio ready event (100ms timeout)
-        struct epoll_event events[1];
-        int nfds = epoll_wait(epoll_fd, events, 1, 100);
-
-        if (nfds < 0) {
-            if (errno == EINTR) continue;
-            fprintf(stderr, "Audio: epoll_wait error: %s\n", strerror(errno));
-            break;
+        // Pad if needed
+        if (frame->samples < 960) {
+            memset(&opus_buffer[frame->samples * frame->channels], 0,
+                   (960 - frame->samples) * frame->channels * sizeof(int16_t));
         }
 
-        if (nfds == 0) {
-            // Timeout - check if emulator disconnected
-            if (current_eventfd >= 0 && g_audio_ready_eventfd < 0) {
-                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, current_eventfd, nullptr);
-                current_eventfd = -1;
-                if (g_debug_audio) {
-                    fprintf(stderr, "Audio: Emulator disconnected\n");
+        samples_to_encode = opus_buffer;
+
+        // AUDIO DEBUG: Capture byte-swapped audio (what goes to Opus encoder)
+        // Only capture non-silent frames (skip silence between sounds)
+        {
+            static FILE* capture_file = nullptr;
+            static int frames_captured = 0;
+            static int silent_frames = 0;
+            static bool capture_started = false;
+
+            // Debug capture removed - was triggered via stdin monitor
+            // Can be re-enabled via API endpoint if needed
+            if (false && capture_started && frames_captured < AUDIO_MAX_CAPTURE_FRAMES) {
+                // Calculate energy to detect non-silence
+                uint64_t energy = 0;
+                for (uint32_t i = 0; i < total_samples; i++) {
+                    int16_t val = opus_buffer[i];
+                    energy += (val < 0) ? -val : val;
+                }
+
+                // Only capture non-silent frames
+                if (energy > AUDIO_ENERGY_THRESHOLD) {
+                    if (!capture_file) {
+                        capture_file = fopen("/tmp/ipc_server_capture.raw", "wb");
+                        fprintf(stderr, "IPC (server): Starting audio capture to /tmp/ipc_server_capture.raw\n");
+                        fprintf(stderr, "IPC (server): Format: 16-bit S16LE (little-endian), %u channels, 48000 Hz\n",
+                                frame->channels);
+                        fprintf(stderr, "IPC (server): Capturing only non-silent frames (max %d frames)\n", AUDIO_MAX_CAPTURE_FRAMES);
+                    }
+
+                    // Write full Opus frame (960 samples * 2 channels = 1920 samples = 3840 bytes)
+                    fwrite(opus_buffer, sizeof(int16_t), 960 * frame->channels, capture_file);
+                    frames_captured++;
+                    silent_frames = 0;
+
+                    // Log every 50 frames
+                    if (frames_captured % 50 == 0) {
+                        fprintf(stderr, "IPC (server): Captured %d non-silent frames\n", frames_captured);
+                    }
+
+                    // Stop after max frames
+                    if (frames_captured >= AUDIO_MAX_CAPTURE_FRAMES) {
+                        fclose(capture_file);
+                        fprintf(stderr, "IPC (server): Audio capture complete (%d frames)\n", frames_captured);
+                    }
+                } else {
+                    silent_frames++;
+                    // Log long silences
+                    if (silent_frames == 50) {
+                        fprintf(stderr, "IPC (server): Skipping silence (captured %d frames so far)\n", frames_captured);
+                    }
                 }
             }
-            continue;
         }
 
-        // Audio ready event received
-        uint64_t event_count;
-        if (read(g_audio_ready_eventfd, &event_count, sizeof(event_count)) != sizeof(event_count)) {
-            if (g_debug_audio) {
-                fprintf(stderr, "Audio: Failed to read eventfd: %s\n", strerror(errno));
-            }
-            continue;
-        }
-
-        if (!g_video_shm) continue;
-
-        // Read audio buffer index (plain field, synchronized by eventfd)
-        int ready_index = g_video_shm->audio_ready_index;
-        if (ready_index < 0 || ready_index >= MACEMU_AUDIO_NUM_BUFFERS) continue;
-
-        // Get audio format (dynamic per-frame like video width/height)
-        int audio_format = g_video_shm->audio_format;
-        if (audio_format == MACEMU_AUDIO_FORMAT_NONE) continue;
-
-        // Read audio metadata (all synchronized by eventfd read above)
-        int sample_rate = g_video_shm->audio_sample_rate;
-        int channels = g_video_shm->audio_channels;
-        int samples = g_video_shm->audio_samples_in_frame;
-
-        if (samples <= 0 || samples > MACEMU_AUDIO_MAX_SAMPLES_PER_FRAME) {
-            continue;
-        }
-
-        // Get pointer to ready audio frame
-        const uint8_t* audio_data = macemu_get_ready_audio(g_video_shm);
-
-        // Calculate input size in bytes (16-bit PCM)
-        int bytes_per_sample = 2 * channels;  // S16 = 2 bytes per sample
-        int input_size = samples * bytes_per_sample;
-
-        if (input_size > MACEMU_AUDIO_MAX_FRAME_SIZE) {
-            input_size = MACEMU_AUDIO_MAX_FRAME_SIZE;
-        }
-
-        // Encode to Opus (handles dynamic sample rate/channel changes)
+        // Encode to Opus (always 960 samples @ 48kHz stereo)
         if (g_audio_encoder) {
-            if (g_debug_audio) {
-                fprintf(stderr, "Audio: Processing frame: %d samples @ %dHz, %dch, %d bytes PCM\n",
-                        samples, sample_rate, channels, input_size);
-            }
-
-            std::vector<uint8_t> opus_data = g_audio_encoder->encode_dynamic(
-                reinterpret_cast<const int16_t*>(audio_data),
-                samples,
-                sample_rate,
-                channels
+            std::vector<uint8_t> opus_data = g_audio_encoder->encode(
+                samples_to_encode,
+                960  // Opus frame size
             );
 
+            // Send to peers with frame-based timing
             if (!opus_data.empty()) {
-                if (g_debug_audio) {
-                    fprintf(stderr, "Audio: Encoded to Opus: %zu bytes\n", opus_data.size());
-                }
-                webrtc.send_audio_to_all_peers(opus_data);
+                webrtc.send_audio_to_all_peers(opus_data, frames_consumed);
             }
         }
-    }
 
-    // Clean up epoll
-    if (epoll_fd >= 0) {
-        close(epoll_fd);
+        // Advance read index (only if we didn't use silence frame)
+        if (!is_silence && g_ipc_shm) {
+            uint32_t next_read_idx = (read_idx + 1) % MACEMU_AUDIO_FRAME_RING_SIZE;
+            ATOMIC_STORE(g_ipc_shm->audio_frame_read_idx, next_read_idx);
+            frames_consumed++;
+        }
+
+        // Periodic stats
+        if (g_debug_audio && frames_consumed > 0 && frames_consumed % 100 == 0) {
+            fprintf(stderr, "Audio: Stats - consumed=%lu underruns=%lu\n",
+                    frames_consumed, frames_underrun);
+        }
+
+        // Maintain 20ms frame timing
+        auto elapsed = std::chrono::steady_clock::now() - frame_start;
+        auto remaining = frame_duration - elapsed;
+        if (remaining > std::chrono::milliseconds(0)) {
+            std::this_thread::sleep_for(remaining);
+        }
     }
 
     if (g_debug_audio) {
-        fprintf(stderr, "Audio: Exiting audio processing loop\n");
+        fprintf(stderr, "Audio: Exiting frame-based audio loop (consumed=%lu, underruns=%lu)\n",
+                frames_consumed, frames_underrun);
     }
+}
+
+
+/*
+ * Main audio processing loop - dispatches to tone or Mac IPC mode
+ */
+
+static void audio_loop(WebRTCServer& webrtc) {
+    // Use Mac IPC audio (tone generator available via audio_loop_tone_only if needed)
+    audio_loop_mac_ipc(webrtc);
 }
 
 
@@ -2515,37 +2736,7 @@ static void audio_loop(WebRTCServer& webrtc) {
  * Print usage
  */
 
-static void print_usage(const char* program) {
-    fprintf(stderr, "Usage: %s [options]\n", program);
-    fprintf(stderr, "\nOptions:\n");
-    fprintf(stderr, "  -h, --help              Show this help\n");
-    fprintf(stderr, "  -p, --http-port PORT    HTTP server port (default: 8000)\n");
-    fprintf(stderr, "  -s, --signaling PORT    WebSocket signaling port (default: 8090)\n");
-    fprintf(stderr, "  -e, --emulator PATH     Path to BasiliskII/SheepShaver executable\n");
-    fprintf(stderr, "  -P, --prefs FILE        Emulator prefs file (default: basilisk_ii.prefs)\n");
-    fprintf(stderr, "  -n, --no-auto-start     Don't auto-start emulator (wait for external)\n");
-    fprintf(stderr, "  --pid PID               Connect to specific emulator PID\n");
-    fprintf(stderr, "  --roms PATH             ROMs directory (default: storage/roms)\n");
-    fprintf(stderr, "  --images PATH           Disk images directory (default: storage/images)\n");
-    fprintf(stderr, "\nNetwork Options:\n");
-    fprintf(stderr, "  --stun                  Enable STUN for NAT traversal (default: off)\n");
-    fprintf(stderr, "  --stun-server URL       STUN server URL (default: stun:stun.l.google.com:19302)\n");
-    fprintf(stderr, "\nDebug Options:\n");
-    fprintf(stderr, "  --debug-connection      Show WebRTC/ICE/signaling logs\n");
-    fprintf(stderr, "  --debug-mode-switch     Show mode/resolution/color depth changes\n");
-    fprintf(stderr, "  --debug-perf            Show performance stats and ping logs\n");
-    fprintf(stderr, "  --debug-frames          Save frame dumps to disk (.ppm files)\n");
-    fprintf(stderr, "  --debug-audio           Show audio processing logs (server + emulator)\n");
-    fprintf(stderr, "\nArchitecture:\n");
-    fprintf(stderr, "  - Emulator creates SHM at /macemu-video-{PID}\n");
-    fprintf(stderr, "  - Emulator creates socket at /tmp/macemu-{PID}.sock\n");
-    fprintf(stderr, "  - Server connects to emulator resources by PID\n");
-    fprintf(stderr, "  - Use --pid to connect to a specific running emulator\n");
-    fprintf(stderr, "\nEmulator Discovery:\n");
-    fprintf(stderr, "  Server looks for ./bin/BasiliskII or ./bin/SheepShaver.\n");
-    fprintf(stderr, "  Create a symlink if needed:\n");
-    fprintf(stderr, "    mkdir -p bin && ln -s ../../BasiliskII/src/Unix/BasiliskII ./bin/BasiliskII\n");
-}
+// print_usage() moved to config/server_config.cpp
 
 
 /*
@@ -2553,88 +2744,26 @@ static void print_usage(const char* program) {
  */
 
 int main(int argc, char* argv[]) {
-    // Parse command line
-    static struct option long_options[] = {
-        {"help",             no_argument,       0, 'h'},
-        {"http-port",        required_argument, 0, 'p'},
-        {"signaling",        required_argument, 0, 's'},
-        {"roms",             required_argument, 0, 'r'},
-        {"images",           required_argument, 0, 'i'},
-        {"emulator",         required_argument, 0, 'e'},
-        {"prefs",            required_argument, 0, 'P'},
-        {"no-auto-start",    no_argument,       0, 'n'},
-        {"pid",              required_argument, 0, 1000},
-        {"debug-connection", no_argument,       0, 1001},
-        {"debug-mode-switch", no_argument,      0, 1002},
-        {"debug-perf",       no_argument,       0, 1003},
-        {"debug-frames",     no_argument,       0, 1004},
-        {"debug-audio",      no_argument,       0, 1007},
-        {"stun",             no_argument,       0, 1005},
-        {"stun-server",      required_argument, 0, 1006},
-        {0, 0, 0, 0}
-    };
+    // Parse configuration from command line and environment
+    g_config.parse_command_line(argc, argv);
+    g_config.load_from_env();
 
-    int opt;
-    while ((opt = getopt_long(argc, argv, "hp:s:e:nP:", long_options, nullptr)) != -1) {
-        switch (opt) {
-            case 'h':
-                print_usage(argv[0]);
-                return 0;
-            case 'p':
-                g_http_port = atoi(optarg);
-                break;
-            case 's':
-                g_signaling_port = atoi(optarg);
-                break;
-            case 'r':
-                g_roms_path = optarg;
-                break;
-            case 'i':
-                g_images_path = optarg;
-                break;
-            case 'e':
-                g_emulator_path = optarg;
-                break;
-            case 'P':
-                g_prefs_path = optarg;
-                break;
-            case 'n':
-                g_auto_start_emulator = false;
-                break;
-            case 1000:
-                g_target_emulator_pid = atoi(optarg);
-                break;
-            case 1001:
-                g_debug_connection = true;
-                break;
-            case 1002:
-                g_debug_mode_switch = true;
-                break;
-            case 1003:
-                g_debug_perf = true;
-                break;
-            case 1004:
-                g_debug_frames = true;
-                break;
-            case 1007:
-                g_debug_audio = true;
-                break;
-            case 1005:
-                g_enable_stun = true;
-                break;
-            case 1006:
-                g_enable_stun = true;
-                g_stun_server = optarg;
-                break;
-            default:
-                print_usage(argv[0]);
-                return 1;
-        }
+    // Expand $HOME in paths
+    g_config.roms_path = expand_path(g_config.roms_path);
+    g_config.images_path = expand_path(g_config.images_path);
+
+    // Ensure ~/.macemu directory exists
+    const char* home = getenv("HOME");
+    if (!home) {
+        struct passwd* pw = getpwuid(getuid());
+        home = pw ? pw->pw_dir : "/tmp";
     }
+    std::string macemu_dir = std::string(home) + "/.macemu";
+    mkdir(macemu_dir.c_str(), 0755);
 
-    // Check environment variables
-    if (const char* env = getenv("BASILISK_ROMS")) g_roms_path = env;
-    if (const char* env = getenv("BASILISK_IMAGES")) g_images_path = env;
+    // Sync debug flags (needed by encoders)
+    g_debug_mode_switch = g_config.debug_mode_switch;
+    g_debug_png = g_config.debug_png;
 
     // Set MACEMU_DEBUG_AUDIO environment variable if --debug-audio enabled
     // This will be inherited by the emulator process
@@ -2642,31 +2771,50 @@ int main(int argc, char* argv[]) {
         setenv("MACEMU_DEBUG_AUDIO", "1", 1);
     }
 
-    // Set up signal handlers
+    // Set up signal handlers for graceful shutdown
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     signal(SIGPIPE, SIG_IGN);
 
+    // Set up crash handlers with full context
+    struct sigaction sa_crash;
+    memset(&sa_crash, 0, sizeof(sa_crash));
+    sa_crash.sa_sigaction = crash_handler;
+    sa_crash.sa_flags = SA_SIGINFO | SA_RESETHAND;  // Get siginfo_t, reset after first call
+    sigemptyset(&sa_crash.sa_mask);
+
+    sigaction(SIGSEGV, &sa_crash, NULL);  // Segmentation fault
+    sigaction(SIGBUS, &sa_crash, NULL);   // Bus error
+    sigaction(SIGABRT, &sa_crash, NULL);  // Abort
+    sigaction(SIGILL, &sa_crash, NULL);   // Illegal instruction
+    sigaction(SIGFPE, &sa_crash, NULL);   // Floating point exception
+
     // Create minimal prefs file if it doesn't exist (for cold boot)
     create_minimal_prefs_if_needed();
 
-    // Read codec preference from prefs file
-    read_webcodec_pref();
-
-    fprintf(stderr, "=== macemu WebRTC Server (v3 - emulator-owned resources) ===\n");
-    fprintf(stderr, "HTTP port:      %d\n", g_http_port);
-    fprintf(stderr, "Signaling port: %d\n", g_signaling_port);
-    fprintf(stderr, "Prefs file:     %s\n", g_prefs_path.c_str());
-    const char* codec_str = (g_server_codec == CodecType::H264) ? "H.264" :
-                            (g_server_codec == CodecType::AV1) ? "AV1" :
-                            (g_server_codec == CodecType::PNG) ? "PNG" : "RAW";
-    fprintf(stderr, "Video codec:    %s\n", codec_str);
-    fprintf(stderr, "ROMs path:      %s\n", g_roms_path.c_str());
-    fprintf(stderr, "Images path:    %s\n", g_images_path.c_str());
-    if (g_target_emulator_pid > 0) {
-        fprintf(stderr, "Target PID:     %d\n", g_target_emulator_pid);
+    // Load codec from JSON config at startup
+    // This ensures browser connections use the correct codec from the start
+    std::string config_path = macemu_dir + "/macemu-config.json";
+    try {
+        config::MacemuConfig cfg = config::load_config(config_path);
+        if (cfg.web.codec == "h264") {
+            g_config.server_codec = CodecType::H264;
+        } else if (cfg.web.codec == "av1") {
+            g_config.server_codec = CodecType::AV1;
+        } else if (cfg.web.codec == "vp9") {
+            g_config.server_codec = CodecType::VP9;
+        } else if (cfg.web.codec == "webp") {
+            g_config.server_codec = CodecType::WEBP;
+        } else {
+            g_config.server_codec = CodecType::PNG;
+        }
+    } catch (...) {
+        // If config load fails, keep default PNG codec
+        fprintf(stderr, "WARNING: Failed to load codec from %s, using PNG\n", config_path.c_str());
     }
-    fprintf(stderr, "\n");
+
+    // Print configuration summary
+    g_config.print_summary();
 
     // Start HTTP server
     HTTPServer http_server;
@@ -2683,10 +2831,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Connect HTTP server to WebRTC server for codec change notifications
+    http_server.set_webrtc_server(&webrtc);
+
     fprintf(stderr, "\nOpen http://localhost:%d in your browser\n", g_http_port);
 
-    // Create audio encoder (video encoders are now created inside video_loop as part of stream objects)
+    // Create encoders
+    H264Encoder h264_encoder;
+    AV1Encoder av1_encoder;
+    VP9Encoder vp9_encoder;
+    PNGEncoder png_encoder;
+    WebPEncoder webp_encoder;
     g_audio_encoder = std::make_unique<OpusAudioEncoder>();
+
+    // Initialize audio encoder using centralized audio_config.h constants
+    // Settings match the WebRTC Opus profile for consistency
+    if (!g_audio_encoder->init(AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, OPUS_BITRATE)) {
+        fprintf(stderr, "WARNING: Failed to initialize Opus audio encoder\n");
+    }
 
     // Auto-start emulator if enabled
     if (g_auto_start_emulator && g_target_emulator_pid == 0) {
@@ -2695,6 +2857,7 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "Found emulator: %s\n", emu.c_str());
             if (start_emulator()) {
                 fprintf(stderr, "Emulator started, waiting for IPC resources...\n\n");
+                g_previous_codec = g_server_codec;  // Initialize codec tracking
             }
         } else {
             fprintf(stderr, "\n");
@@ -2718,20 +2881,27 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Auto-start disabled, scanning for running emulators...\n\n");
     }
 
-    // Launch audio thread
+    // Launch worker threads
     std::thread audio_thread(audio_loop, std::ref(webrtc));
+    std::thread video_thread(video_loop, std::ref(webrtc), std::ref(h264_encoder), std::ref(av1_encoder), std::ref(vp9_encoder), std::ref(png_encoder), std::ref(webp_encoder));
 
-    // Run video loop in main thread (video streams created inside loop)
-    video_loop(webrtc);
+    // Run connection manager in main thread
+    // This handles scanning, connecting, disconnecting, process management, restarts
+    connection_manager_loop(webrtc, &video_thread, &audio_thread);
 
-    // Wait for audio thread to finish
+    // Signal shutdown happened - wait for worker threads to exit cleanly
+    fprintf(stderr, "Server: Waiting for worker threads to exit...\n");
+    video_thread.join();
     audio_thread.join();
+    fprintf(stderr, "Server: All worker threads exited\n");
 
     // Stop emulator if we started it
     stop_emulator();
 
-    // Disconnect from emulator
-    disconnect_from_emulator();
+    // Disconnect from emulator (if not already disconnected)
+    if (g_emulator_connected) {
+        disconnect_from_emulator();
+    }
 
     // Cleanup
     webrtc.shutdown();

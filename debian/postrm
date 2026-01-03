@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    purge)
+        # Note: User data in ~/.macemu/ is NOT automatically removed
+        # Users can manually delete it if desired
+        echo ""
+        echo "macemu-webrtc has been purged."
+        echo ""
+        echo "User data in ~/.macemu/ has NOT been removed."
+        echo "To remove your data, run: rm -rf ~/.macemu"
+        echo ""
+        ;;
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

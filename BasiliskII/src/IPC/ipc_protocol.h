@@ -130,18 +130,42 @@ extern "C" {
  * 5. Server converts BGRA to I420 (H.264) or RGB (PNG) based on codec
  */
 /*
+ * Audio frame structure - individual frame with metadata
+ * Used in frame-based ring buffer for lock-free audio transfer
+ */
+typedef struct {
+    // Metadata (written atomically with frame data)
+    uint32_t sample_rate;      // Mac's native rate (11025/22050/44100/48000)
+    uint32_t channels;         // 1 (mono) or 2 (stereo)
+    uint32_t samples;          // Actual samples in this frame (variable!)
+    uint32_t format;           // MACEMU_AUDIO_FORMAT_* (PCM_S16)
+    uint64_t timestamp_us;     // CLOCK_REALTIME when frame completed
+    uint32_t _padding[2];      // Align to 32 bytes
+
+    // Audio data (max 48kHz * 2ch * 2bytes * 20ms = 3840 bytes)
+    // Mac provides S16MSB (big-endian), server byte-swaps to S16LE for Opus
+    uint8_t data[MACEMU_AUDIO_MAX_FRAME_SIZE];
+} MacEmuAudioFrame;
+
+// Ring buffer size (number of frames, not bytes)
+// Small SHM buffer - just for producer/consumer handoff
+// Server maintains its own jitter buffer for smooth playback
+// 3 frames @ 20ms/frame = 60ms (enough for IPC latency variation)
+#define MACEMU_AUDIO_FRAME_RING_SIZE 3
+
+/*
  * MacEmuIPCBuffer - Shared memory for video, audio, and metadata
  *
  * This structure contains:
  * - Video frames (BGRA, up to 1920x1080, triple-buffered)
- * - Audio frames (S16LE PCM, up to 48kHz stereo, double-buffered)
+ * - Audio frames (frame-based ring buffer, variable sample rate)
  * - Mouse input latency stats
  * - Ping/pong RTT measurements
  * - Frame metadata (dimensions, pixel format, dirty rects, timestamps)
  *
  * Synchronization:
  * - Video: frame_ready_eventfd signals new video frames
- * - Audio: audio_ready_eventfd signals new audio frames
+ * - Audio: Lock-free frame ring buffer with atomic indices
  * - Separate eventfds allow independent video/audio processing
  */
 typedef struct {
@@ -163,6 +187,13 @@ typedef struct {
     uint32_t dirty_y;            // Y coordinate of dirty rect
     uint32_t dirty_width;        // Width of dirty rect (0 = no changes, same as width = full frame)
     uint32_t dirty_height;       // Height of dirty rect
+
+    // Cursor position (for rendering cursor overlay in browser)
+    // Updated each frame, read by server for sending to browser
+    uint16_t cursor_x;           // Current cursor X position (0 to width-1)
+    uint16_t cursor_y;           // Current cursor Y position (0 to height-1)
+    uint8_t cursor_visible;      // 1 if cursor should be shown, 0 if hidden
+    uint8_t _cursor_reserved[3]; // Padding for alignment
 
     // Triple buffer synchronization
     // Plain fields - synchronized by eventfd (kernel provides memory barriers)
@@ -210,12 +241,25 @@ typedef struct {
     uint64_t audio_timestamp_us;     // Timestamp of last audio frame
 
     int32_t audio_ready_eventfd;     // Separate eventfd for audio frames (-1 if not supported)
-    uint32_t _audio_padding[3];      // Future expansion, alignment
 
-    // Audio buffers (fixed size for max format: 48kHz stereo)
-    // Actual usage varies: 11025 Hz mono uses ~440 bytes, 48000 Hz stereo uses ~3840 bytes
-    // Total: 3840 × 2 = 7680 bytes (~7.5 KB, 0.03% of total SHM)
-    uint8_t audio_frames[MACEMU_AUDIO_NUM_BUFFERS][MACEMU_AUDIO_MAX_FRAME_SIZE];
+    // Frame-based audio ring buffer (NEW ARCHITECTURE)
+    // Mac produces frames at native sample rate (44.1k, 48k, etc) every ~20ms
+    // Server consumes frames at 20ms intervals, resamples to 48kHz for Opus
+    // Ring buffer absorbs timing jitter and clock drift
+
+    // Frame ring buffer indices (atomic for lock-free operation)
+    ATOMIC_UINT32 audio_frame_write_idx;  // 0 to (MACEMU_AUDIO_FRAME_RING_SIZE-1)
+    ATOMIC_UINT32 audio_frame_read_idx;   // 0 to (MACEMU_AUDIO_FRAME_RING_SIZE-1)
+
+    // Ring buffer of audio frames (see MacEmuAudioFrame typedef above)
+    MacEmuAudioFrame audio_frame_ring[MACEMU_AUDIO_FRAME_RING_SIZE];
+
+    // Pre-zeroed silence frame (used during underruns, not in ring buffer)
+    MacEmuAudioFrame audio_silence_frame;
+
+    // Audio capture trigger (set by server when user presses 'C')
+    // 0 = no capture, 1 = trigger capture on all layers
+    ATOMIC_UINT32 capture_trigger;
 
     // BGRA frame buffers - fixed size for max resolution
     // Each frame: width * height * 4 bytes (B, G, R, A per pixel)
@@ -234,6 +278,8 @@ typedef struct {
 #define MACEMU_INPUT_MOUSE     2   // Mouse move/button
 #define MACEMU_INPUT_COMMAND   3   // Emulator command (start/stop/reset)
 #define MACEMU_INPUT_PING      4   // Latency measurement ping (echoed in frame metadata)
+#define MACEMU_INPUT_AUDIO_REQUEST  5   // Server requests audio data (pull model)
+#define MACEMU_INPUT_MOUSE_MODE     6   // Mouse mode change (absolute/relative)
 
 // Key event flags
 #define MACEMU_KEY_DOWN        0x01
@@ -243,6 +289,9 @@ typedef struct {
 #define MACEMU_MOUSE_LEFT      0x01
 #define MACEMU_MOUSE_RIGHT     0x02
 #define MACEMU_MOUSE_MIDDLE    0x04
+
+// Mouse mode flags (in MacEmuMouseInput.hdr.flags)
+#define MACEMU_MOUSE_ABSOLUTE  0x10  // If set, x/y are absolute coordinates; else relative deltas
 
 // Command types
 #define MACEMU_CMD_START       1
@@ -294,6 +343,21 @@ typedef struct {
     uint64_t t3_emulator_recv_us;    // Emulator receive time (CLOCK_REALTIME microseconds)
 } MacEmuPingInput;
 
+// Audio request input (server pull model - 8 bytes total)
+// Server sends this when Opus encoder needs more audio data
+typedef struct {
+    MacEmuInputHeader hdr;       // type = MACEMU_INPUT_AUDIO_REQUEST
+    uint32_t requested_samples;  // Number of samples requested (usually 960 for 20ms @ 48kHz)
+} MacEmuAudioRequestInput;
+
+// Mouse mode change input (8 bytes total)
+// Browser sends this to switch between absolute and relative mouse modes
+typedef struct {
+    MacEmuInputHeader hdr;       // type = MACEMU_INPUT_MOUSE_MODE
+    uint8_t mode;                // 0 = absolute, 1 = relative
+    uint8_t _reserved[3];
+} MacEmuMouseModeInput;
+
 // Union for receiving any input type
 typedef union {
     MacEmuInputHeader hdr;
@@ -301,6 +365,8 @@ typedef union {
     MacEmuMouseInput mouse;
     MacEmuCommandInput cmd;
     MacEmuPingInput ping;
+    MacEmuAudioRequestInput audio_req;
+    MacEmuMouseModeInput mouse_mode;
 } MacEmuInput;
 
 /*
@@ -394,7 +460,7 @@ static inline void macemu_init_ipc_buffer(MacEmuIPCBuffer* buf, uint32_t pid,
         // Caller must check for -1 and handle error
     }
 
-    // Initialize audio subsystem (disabled by default until emulator enables it)
+    // Initialize audio subsystem (frame-based architecture)
     buf->audio_sample_rate = 0;
     buf->audio_channels = 0;
     buf->audio_format = MACEMU_AUDIO_FORMAT_NONE;
@@ -404,14 +470,25 @@ static inline void macemu_init_ipc_buffer(MacEmuIPCBuffer* buf, uint32_t pid,
     buf->audio_frame_count = 0;
     buf->audio_timestamp_us = 0;
 
-    // Create separate eventfd for audio
+    // Create separate eventfd for audio (not used with frame ring buffer, but kept for compatibility)
     buf->audio_ready_eventfd = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE);
     if (buf->audio_ready_eventfd < 0) {
         fprintf(stderr, "IPC: WARNING: Failed to create audio eventfd: %s (audio disabled)\n", strerror(errno));
     }
 
-    // Zero audio buffers
-    memset(buf->audio_frames, 0, sizeof(buf->audio_frames));
+    // Initialize frame-based ring buffer
+    ATOMIC_STORE(buf->audio_frame_write_idx, 0);
+    ATOMIC_STORE(buf->audio_frame_read_idx, 0);
+
+    // Zero all frames in ring buffer
+    memset(buf->audio_frame_ring, 0, sizeof(buf->audio_frame_ring));
+
+    // Initialize silence frame (pre-zeroed, all samples = 0)
+    memset(&buf->audio_silence_frame, 0, sizeof(buf->audio_silence_frame));
+    buf->audio_silence_frame.sample_rate = 48000;
+    buf->audio_silence_frame.channels = 2;
+    buf->audio_silence_frame.samples = 960;  // 20ms @ 48kHz
+    buf->audio_silence_frame.format = MACEMU_AUDIO_FORMAT_PCM_S16;
 }
 
 // Validate video buffer (called by server on connect)
@@ -428,55 +505,8 @@ static inline size_t macemu_actual_bgra_size(uint32_t width, uint32_t height) {
     return (size_t)width * height * 4;
 }
 
-// Audio helper functions
-
-// Get pointer to audio frame buffer
-static inline uint8_t* macemu_get_audio_frame_ptr(MacEmuIPCBuffer* buf, uint32_t index) {
-    return buf->audio_frames[index];
-}
-
-// Get pointer to ready audio frame (for server to read)
-static inline const uint8_t* macemu_get_ready_audio(const MacEmuIPCBuffer* buf) {
-    return buf->audio_frames[buf->audio_ready_index];
-}
-
-// Get pointer to write audio frame (for emulator to write)
-static inline uint8_t* macemu_get_write_audio(MacEmuIPCBuffer* buf) {
-    return buf->audio_frames[buf->audio_write_index];
-}
-
-// Called by emulator after audio frame is complete - publishes audio via eventfd
-// Parameters match the audio metadata fields for atomic publication
-static inline void macemu_audio_frame_complete(MacEmuIPCBuffer* buf,
-                                                uint32_t sample_rate,
-                                                uint32_t channels,
-                                                uint32_t samples,
-                                                uint64_t timestamp_us) {
-    uint32_t current = buf->audio_write_index;
-    uint32_t next = (current + 1) % MACEMU_AUDIO_NUM_BUFFERS;
-
-    // Write all metadata (plain writes - eventfd provides memory barrier)
-    buf->audio_sample_rate = sample_rate;
-    buf->audio_channels = channels;
-    buf->audio_format = MACEMU_AUDIO_FORMAT_PCM_S16;
-    buf->audio_samples_in_frame = samples;
-    buf->audio_timestamp_us = timestamp_us;
-    buf->audio_ready_index = current;
-    buf->audio_write_index = next;
-    buf->audio_frame_count++;
-
-    // Signal eventfd to wake up server (kernel write() provides memory barrier)
-    // All writes above are guaranteed visible after server's read(eventfd)
-    if (buf->audio_ready_eventfd >= 0) {
-        uint64_t val = 1;
-        (void)write(buf->audio_ready_eventfd, &val, sizeof(val));
-    }
-}
-
-// Calculate actual audio frame size based on current format
-static inline size_t macemu_actual_audio_size(const MacEmuIPCBuffer* buf) {
-    return (size_t)buf->audio_samples_in_frame * buf->audio_channels * 2;  // 2 bytes per S16 sample
-}
+// Audio helper functions (frame-based ring buffer)
+// Note: Frames are accessed directly via atomic indices, no helpers needed
 
 #ifdef __cplusplus
 }

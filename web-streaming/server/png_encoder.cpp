@@ -13,6 +13,7 @@
 
 // Debug flags (from server.cpp)
 extern bool g_debug_mode_switch;
+extern bool g_debug_png;
 
 // Initialize fpng once
 static bool g_fpng_initialized = false;
@@ -24,8 +25,10 @@ bool PNGEncoder::init(int width, int height, int fps) {
     if (!g_fpng_initialized) {
         fpng::fpng_init();
         g_fpng_initialized = true;
-        fprintf(stderr, "PNG: fpng initialized (SSE4.1: %s)\n",
-                fpng::fpng_cpu_supports_sse41() ? "yes" : "no");
+        if (g_debug_png) {
+            fprintf(stderr, "PNG: fpng initialized (SSE4.1: %s)\n",
+                    fpng::fpng_cpu_supports_sse41() ? "yes" : "no");
+        }
     }
 
     width_ = width;
@@ -35,7 +38,7 @@ bool PNGEncoder::init(int width, int height, int fps) {
     // Pre-allocate RGB buffer
     rgb_buffer_.resize(width * height * 3);  // RGB24
 
-    if (g_debug_mode_switch) {
+    if (g_debug_png) {
         fprintf(stderr, "PNG: Encoder initialized %dx%d (using fpng)\n", width, height);
     }
     return true;
@@ -79,7 +82,9 @@ bool PNGEncoder::encode_rgb_to_png(int width, int height) {
     );
 
     if (!success) {
-        fprintf(stderr, "PNG: fpng encode failed\n");
+        if (g_debug_png) {
+            fprintf(stderr, "PNG: fpng encode failed\n");
+        }
         return false;
     }
 
@@ -116,8 +121,8 @@ EncodedFrame PNGEncoder::encode_i420(const uint8_t* y, const uint8_t* u, const u
     frame_count_++;
     total_size_ += result.data.size();
 
-    // Log every 30 frames
-    if (frame_count_ % 30 == 0) {
+    // Log every 30 frames (only if debug enabled)
+    if (g_debug_png && frame_count_ % 30 == 0) {
         float avg_size = static_cast<float>(total_size_) / frame_count_;
         fprintf(stderr, "PNG: frame=%d size=%zu bytes (avg %.1f KB)\n",
                 frame_count_, result.data.size(), avg_size / 1024.0f);
@@ -244,7 +249,9 @@ EncodedFrame PNGEncoder::encode_bgra_rect(const uint8_t* bgra, int frame_width, 
     );
 
     if (!success) {
-        fprintf(stderr, "PNG: fpng encode_rect failed\n");
+        if (g_debug_png) {
+            fprintf(stderr, "PNG: fpng encode_rect failed\n");
+        }
         return result;
     }
 

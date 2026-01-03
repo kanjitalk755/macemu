@@ -3,40 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Basilisk II - WebRTC (libdatachannel)</title>
+    <title>MacEmu Web - WebRTC Streaming</title>
     <link rel="stylesheet" href="styles.css">
+
+    <!-- Server-injected configuration (eliminates race conditions) -->
+    <script id="server-config" type="application/json">
+{{CONFIG_JSON}}
+    </script>
 </head>
 <body>
     <header>
         <div class="logo">
-            <span style="font-size: 1.5em;">&#128421;</span>
-            <h1>Basilisk II Web</h1>
-            <span class="badge" id="codec-badge">Loading...</span>
+            <img src="Apple.svg" alt="Apple" style="height: 2em; margin-right: 0.5em;">
+            <img id="processor-logo" src="Motorola.svg" alt="Processor" style="height: 2em; margin-right: 0.5em;">
+            <h1 id="emulator-title">Macintosh</h1>
         </div>
 
         <div class="status-bar">
             <div class="status-item">
-                <span class="status-dot" id="status-dot"></span>
-                <span id="connection-status">Disconnected</span>
+                <span id="connection-icon">🔌</span>
             </div>
-            <div class="status-item" id="emulator-status-display">
-                <span class="status-dot" id="emulator-status-dot" style="background: #666;"></span>
-                <span>Emulator: <strong id="emulator-status-text">OFF</strong></span>
+            <div class="status-item">
+                <span id="emulator-icon">💻</span>
             </div>
             <div class="status-item" id="fps-display">
-                FPS: --
+                <span>🎬</span>
+                <span>--</span>
             </div>
             <div class="status-item" id="bitrate-display">
-                -- kbps
+                <span>📊</span>
+                <span>-- kbps</span>
             </div>
         </div>
 
         <div class="controls">
-            <button class="btn" id="config-btn" onclick="openConfig()">Settings</button>
-            <button class="btn success" id="start-btn" onclick="startEmulator()">Start</button>
-            <button class="btn danger" id="stop-btn" onclick="stopEmulator()">Stop</button>
-            <button class="btn" id="debug-toggle" onclick="toggleDebugPanel()">Debug</button>
-            <button class="btn" onclick="toggleFullscreen()">Fullscreen</button>
+            <div class="status-item">
+                <span style="font-size: 1.1em;">📐</span>
+                <span id="header-resolution">-- x --</span>
+            </div>
+            <div class="codec-selector">
+                <label for="codec-select">Codec:</label>
+                <select id="codec-select" disabled>
+                    <option value="png" {{SELECTED_PNG}}>PNG</option>
+                    <option value="webp" {{SELECTED_WEBP}}>WebP</option>
+                    <option value="h264" {{SELECTED_H264}}>H.264</option>
+                    <option value="av1" {{SELECTED_AV1}}>AV1</option>
+                    <option value="vp9" {{SELECTED_VP9}}>VP9</option>
+                </select>
+            </div>
+            <div class="codec-selector">
+                <label for="mouse-mode-select">Mouse:</label>
+                <select id="mouse-mode-select">
+                    <option value="relative" {{SELECTED_RELATIVE}}>Relative</option>
+                    <option value="absolute" {{SELECTED_ABSOLUTE}}>Absolute</option>
+                </select>
+            </div>
+            <button class="btn" id="config-btn">Settings</button>
+            <button class="btn success" id="start-btn">Start</button>
+            <button class="btn danger" id="stop-btn">Stop</button>
+            <button class="btn" id="debug-toggle">Debug</button>
+            <button class="btn" id="fullscreen-btn">Fullscreen</button>
         </div>
     </header>
 
@@ -45,6 +71,7 @@
             <div id="display-container">
                 <video id="display" autoplay playsinline muted></video>
                 <canvas id="display-canvas" style="display: none;"></canvas>
+                <canvas id="cursor-overlay" style="position: absolute; top: 0; left: 0; pointer-events: none; display: none;"></canvas>
                 <div class="overlay" id="overlay">
                     <div class="overlay-content">
                         <div class="spinner" id="spinner"></div>
@@ -81,12 +108,12 @@
         <div id="debug-panel">
             <div class="debug-header">
                 <h3>Debug Console</h3>
-                <button class="clear-btn" onclick="clearLog()">Clear</button>
+                <button class="clear-btn" id="clear-log-btn">Clear</button>
             </div>
             <div class="debug-tabs">
-                <div class="debug-tab active" onclick="showDebugTab('log')">Log</div>
-                <div class="debug-tab" onclick="showDebugTab('stats')">Stats</div>
-                <div class="debug-tab" onclick="showDebugTab('webrtc')">WebRTC</div>
+                <div class="debug-tab active" data-tab="log">Log</div>
+                <div class="debug-tab" data-tab="stats">Stats</div>
+                <div class="debug-tab" data-tab="webrtc">WebRTC</div>
             </div>
             <div class="debug-content">
                 <div class="debug-pane active" id="log-pane">
@@ -131,10 +158,14 @@
                             <div class="value" id="stat-rtt">-- ms</div>
                         </div>
                     </div>
-                    <!-- Ping Breakdown Section (PNG/RAW codec only) -->
+                    <!-- Ping Breakdown Section -->
                     <div id="ping-breakdown-section">
-                        <h4 style="margin-top: 15px; margin-bottom: 10px; color: #888;">Ping Latency Breakdown</h4>
+                        <h4 style="margin-top: 15px; margin-bottom: 10px; color: #888;">Ping Latency Breakdown (8-stage)</h4>
                         <div class="stats-grid">
+                            <div class="stat-card">
+                                <div class="label">Total RTT</div>
+                                <div class="value" id="stat-ping-total">-- ms</div>
+                            </div>
                             <div class="stat-card">
                                 <div class="label">Network</div>
                                 <div class="value" id="stat-ping-network">-- ms</div>
@@ -144,12 +175,20 @@
                                 <div class="value" id="stat-ping-ipc">-- ms</div>
                             </div>
                             <div class="stat-card">
-                                <div class="label">Frame Wait</div>
-                                <div class="value" id="stat-ping-wait">-- ms</div>
+                                <div class="label">Emulator</div>
+                                <div class="value" id="stat-ping-emulator">-- ms</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="label">Wake</div>
+                                <div class="value" id="stat-ping-wake">-- ms</div>
                             </div>
                             <div class="stat-card">
                                 <div class="label">Encode</div>
                                 <div class="value" id="stat-ping-encode">-- ms</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="label">Send Prep</div>
+                                <div class="value" id="stat-ping-send">-- ms</div>
                             </div>
                         </div>
                     </div>
@@ -247,12 +286,21 @@
         <div class="modal">
             <div class="modal-header">
                 <h2>Emulator Settings</h2>
-                <button class="modal-close" onclick="closeConfig()">&times;</button>
+                <button class="modal-close" id="modal-close-btn">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
+                    <label>Emulator Type</label>
+                    <select id="cfg-emulator">
+                        <option value="basilisk">68k (Mac OS 7.x)</option>
+                        <option value="sheepshaver">PPC (Mac OS 8/9)</option>
+                    </select>
+                    <small class="help-text">Requires restart to change emulator</small>
+                </div>
+
+                <div class="form-group">
                     <label>ROM File</label>
-                    <select id="cfg-rom" onchange="onRomChange()">
+                    <select id="cfg-rom">
                         <option value="">Loading...</option>
                     </select>
                 </div>
@@ -291,51 +339,109 @@
                     </select>
                 </div>
 
-                <div class="form-group">
-                    <label>Video Codec</label>
-                    <select id="cfg-webcodec">
-                        <option value="png" selected>PNG (good for dithered, uses dirty rects)</option>
-                        <option value="av1">AV1 (best for dithered, modern browsers)</option>
-                        <option value="h264">H.264 (avoid for dithered content)</option>
-                    </select>
-                </div>
+                <!-- Video Codec and Mouse Mode are on the main page, not in config -->
 
-                <div class="advanced-toggle" onclick="toggleAdvanced()">
+                <div class="advanced-toggle" id="advanced-toggle">
                     <span class="arrow">&#9654;</span>
                     <span>Advanced Settings</span>
                 </div>
                 <div class="advanced-content" id="advanced-settings">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>CPU Type</label>
-                            <select id="cfg-cpu">
-                                <option value="2">68020</option>
-                                <option value="3">68030</option>
-                                <option value="4" selected>68040</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Mac Model</label>
-                            <select id="cfg-model">
-                                <option value="5">Mac II</option>
-                                <option value="14" selected>Quadra 900</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <div class="checkbox-group">
-                                <input type="checkbox" id="cfg-fpu" checked>
-                                <label for="cfg-fpu">Enable FPU (68881)</label>
+                    <!-- Basilisk II specific settings -->
+                    <div id="basilisk-settings">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>CPU Type</label>
+                                <select id="cfg-cpu">
+                                    <option value="2">68020</option>
+                                    <option value="3">68030</option>
+                                    <option value="4" selected>68040</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Mac Model</label>
+                                <select id="cfg-model">
+                                    <option value="5">Mac II</option>
+                                    <option value="14" selected>Quadra 900</option>
+                                </select>
                             </div>
                         </div>
-                        <div class="form-group">
-                            <div class="checkbox-group">
-                                <input type="checkbox" id="cfg-jit" checked>
-                                <label for="cfg-jit">Enable JIT Compiler</label>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-fpu" checked>
+                                    <label for="cfg-fpu">Enable FPU (68881)</label>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-jit" checked>
+                                    <label for="cfg-jit">Enable JIT Compiler</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-idlewait-b2" checked>
+                                    <label for="cfg-idlewait-b2">Don't Use CPU When Idle</label>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-ignoresegv" checked>
+                                    <label for="cfg-ignoresegv">Ignore Illegal Memory Access</label>
+                                </div>
                             </div>
                         </div>
                     </div>
+
+                    <!-- SheepShaver specific settings -->
+                    <div id="sheepshaver-settings" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-fpu-ss" checked>
+                                    <label for="cfg-fpu-ss">Enable FPU</label>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-jit-ss" checked>
+                                    <label for="cfg-jit-ss">Enable PPC JIT Compiler</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-jit68k" checked>
+                                    <label for="cfg-jit68k">Enable 68k JIT (DR Emulator)</label>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-idlewait" checked>
+                                    <label for="cfg-idlewait">Don't Use CPU When Idle</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-ignoresegv-ss" checked>
+                                    <label for="cfg-ignoresegv-ss">Ignore SIGSEGV</label>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="cfg-ignoreillegal" checked>
+                                    <label for="cfg-ignoreillegal">Ignore Illegal Instructions</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Common settings -->
                     <div class="form-group">
                         <div class="checkbox-group">
                             <input type="checkbox" id="cfg-sound" checked>
@@ -349,8 +455,8 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn" onclick="closeConfig()">Cancel</button>
-                <button class="btn success" onclick="saveConfig()">Save &amp; Restart</button>
+                <button class="btn" id="cancel-config-btn">Cancel</button>
+                <button class="btn success" id="save-config-btn">Save</button>
             </div>
         </div>
     </div>
