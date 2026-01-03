@@ -19,6 +19,11 @@ null_driver_sources = [
   'platform/platform_null.cpp',  # Host platform stubs
 ]
 
+# Platform infrastructure
+platform_sources = [
+  '../platform/timer_interrupt.cpp',
+]
+
 # Keep some dummy drivers that aren't adapted yet
 remaining_dummy_sources = [
   'dummy/clip_dummy.cpp',
@@ -28,7 +33,7 @@ remaining_dummy_sources = [
   'dummy/xpram_dummy.cpp',
 ]
 
-driver_sources = adapter_sources + null_driver_sources + remaining_dummy_sources
+driver_sources = adapter_sources + null_driver_sources + remaining_dummy_sources + platform_sources
 
 driver_inc = include_directories(
   '.',
@@ -37,6 +42,7 @@ driver_inc = include_directories(
   '../core',
   '../cpu',
   '../cpu/uae_cpu',
+  '../platform',
 )
 
 driver_lib = static_library('drivers',

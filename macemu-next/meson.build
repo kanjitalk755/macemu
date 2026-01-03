@@ -54,6 +54,7 @@ macemu_next = executable('macemu-next',
     include_directories('src/cpu'),
     include_directories('src/cpu/uae_cpu'),
     include_directories('src/drivers'),
+    include_directories('src/platform'),
   ]
 )
 
