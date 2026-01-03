@@ -55,18 +55,60 @@ Track what's done and what's next.
 
 ---
 
-## Phase 2: Boot to Desktop 🎯 CURRENT FOCUS
+## Phase 2: WebRTC Integration 🎯 CURRENT FOCUS
 
-### Interrupt Timing
-- ✅ Understand divergence root cause (wall-clock vs instruction-count)
-- ✅ Document in InterruptTimingAnalysis.md
-- ⏳ **Decision**: Accept non-determinism or add deterministic mode?
-- ⏳ Functional testing approach (not just trace comparison)
+### Planning Phase ✅ COMPLETE
+- ✅ Merge master branch (WebRTC streaming code)
+- ✅ Architecture design (7-thread model)
+- ✅ File migration mapping (180 files mapped)
+- ✅ Threading model documented
+- ✅ Create comprehensive integration plan
 
-### Execution Length
-- ⏳ Investigate why Unicorn stops at ~200k (vs UAE 250k+)
-- ⏳ Memory state comparison at key points
-- ⏳ Analyze cumulative effects of interrupt timing
+### Platform API (In-Process Buffers)
+- ⏳ Design video_output.h / audio_output.h APIs
+- ⏳ Implement triple buffer (lock-free, atomic operations)
+- ⏳ Implement audio ring buffer (mutex-protected)
+- ⏳ Unit tests for buffers
+- ⏳ Integration with emulator core
+
+### WebRTC Server Integration
+- ⏳ Copy encoders (H.264, VP9, WebP, Opus) - 13 files
+- ⏳ Adapt HTTP server (remove IPC calls)
+- ⏳ Create webrtc_server.cpp (coordinator)
+- ⏳ Create video_encoder_thread.cpp
+- ⏳ Create audio_encoder_thread.cpp
+- ⏳ Wire encoders to in-process buffers
+
+### Configuration System
+- ⏳ Copy JSON config system (nlohmann/json)
+- ⏳ Migrate prefs conversion logic
+- ⏳ Update all code to use JsonConfig
+- ⏳ Test config load/save/hot-reload
+
+### Main Entry Point
+- ⏳ Create unified main.cpp
+- ⏳ Launch all 7 threads
+- ⏳ Implement clean shutdown
+- ⏳ Signal handling (SIGINT/SIGTERM)
+
+### Build System
+- ⏳ Update meson.build (add WebRTC dependencies)
+- ⏳ Add all new source files
+- ⏳ Test build on clean system
+- ⏳ Update documentation
+
+### Client Migration
+- ⏳ Copy browser client (HTML/JS/CSS)
+- ⏳ Test end-to-end (browser → WebRTC → emulator)
+
+### Legacy Code Removal
+- ⏳ Delete IPC layer (~3,000 lines)
+- ⏳ Delete legacy drivers (~10,000 lines)
+- ⏳ Clean up build artifacts
+
+---
+
+## Phase 3: Boot to Desktop ⏳ FUTURE (After WebRTC Integration)
 
 ### Hardware Emulation (Basic)
 - ⏳ VIA timer chip basics
@@ -80,7 +122,7 @@ Track what's done and what's next.
 
 ---
 
-## Phase 3: Application Support ⏳ FUTURE
+## Phase 4: Application Support ⏳ FUTURE
 
 ### Full Hardware Emulation
 - ⏳ VIA (Versatile Interface Adapter) complete
@@ -107,7 +149,7 @@ Track what's done and what's next.
 
 ---
 
-## Phase 4: Performance & Polish ⏳ FUTURE
+## Phase 5: Performance & Polish ⏳ FUTURE
 
 ### Performance Optimization
 - ⏳ Profile Unicorn backend
@@ -127,7 +169,7 @@ Track what's done and what's next.
 
 ---
 
-## Phase 5: PowerPC Support ⏳ FAR FUTURE
+## Phase 6: PowerPC Support ⏳ FAR FUTURE
 
 ### SheepShaver Integration
 - ⏳ PowerPC CPU backend
@@ -201,16 +243,16 @@ Track what's done and what's next.
 ## Recent Commits (Dec 2025 - Jan 2026)
 
 ```
+a3712b98 - WebRTC integration planning (initial documents)
+309d4fab - Merge master branch with WebRTC improvements
+66f5d428 - Resolve "200k execution limit" investigation
+1ddf847d - Claude instructions with Michael's preferences
+30d604ee - JIT block size measurement and analysis
+74347217 - Add interrupt timing divergence analysis and reorganize documentation
+449d34bf - Document interrupt timing divergence root cause analysis
 d90208dc - Implement Unicorn-native 68k trap execution to eliminate UAE dependency
 ebd3d1b2 - Remove legacy per-CPU hook API and UC_HOOK_CODE implementation
 1305d3b2 - WIP: Interrupt support implementation (needs optimization)
-50947779 - Add sequential trace comparison mode to find exact divergence points
-74fbd578 - Fix Unicorn CPU type selection to match UAE cpu_level calculation
-006cc0f8 - Fix VBR corruption in Unicorn M68K backend by adding missing register API support
-543ef3c8 - Add 16MB dummy region to standalone Unicorn backend for UAE compatibility
-155497f0 - Progress checkpoint: DualCPU validation now reaches 514k instructions
-fecf542b - Add platform API for CPU type configuration and remove hardcoded defaults
-ba7d6487 - Fix host pointer leak in ROM patching causing non-deterministic behavior
 ```
 
 ---
@@ -218,34 +260,53 @@ ba7d6487 - Fix host pointer leak in ROM patching causing non-deterministic behav
 ## Next Actions
 
 ### Immediate (This Week)
-1. ✅ Review interrupt timing analysis - DONE (JIT_Block_Size_Analysis.md)
-2. ✅ Decide on deterministic mode vs acceptance - DONE (Accept non-determinism)
-3. ⏳ Set up functional testing infrastructure
+1. ✅ WebRTC integration planning - DONE (Complete plan created)
+2. ✅ Threading architecture design - DONE (7-thread model documented)
+3. ✅ File migration mapping - DONE (180 files mapped)
+4. ⏳ Begin Phase 2 implementation (Platform API)
 
-### Short-Term (This Month)
-1. ✅ Investigate 200k execution limit - DONE (Not an issue anymore)
-2. ⏳ Memory state comparison tool (for functional testing)
-3. ⏳ Basic VIA timer emulation
+### Short-Term (Next 2 Weeks)
+1. ⏳ Implement video_output.cpp (triple buffer)
+2. ⏳ Implement audio_output.cpp (ring buffer)
+3. ⏳ Copy WebRTC encoders
+4. ⏳ Create webrtc_server.cpp
+5. ⏳ Create unified main.cpp
 
-### Medium-Term (This Quarter)
-1. ⏳ Boot to desktop attempt
+### Medium-Term (This Month)
+1. ⏳ Complete WebRTC integration
+2. ⏳ Migrate JSON config system
+3. ⏳ Remove IPC layer
+4. ⏳ Remove legacy drivers
+5. ⏳ End-to-end testing (browser → emulator)
+
+### Long-Term (Next Quarter)
+1. ⏳ Boot to desktop (after WebRTC integration)
 2. ⏳ Full hardware emulation (VIA, SCSI basics)
 3. ⏳ Application testing framework
 
-### **Current Focus**: Phase 2 - Boot to Desktop
-**Blockers Removed**:
-- ✅ Interrupt support working
-- ✅ Native trap execution stable
-- ✅ Timing characteristics understood
+### **Current Focus**: Phase 2 - WebRTC Integration
+**Planning Complete**:
+- ✅ Architecture design (7 threads)
+- ✅ File migration plan (180 files mapped)
+- ✅ Threading model documented
+- ✅ Integration strategy defined
 
 **Next Steps**:
-1. Basic hardware emulation (VIA timer chip)
-2. SCSI stubs for boot
-3. Video framebuffer basics
-4. Functional testing approach
+1. Create src/platform/ directory
+2. Implement VideoOutput class (triple buffer)
+3. Implement AudioOutput class (ring buffer)
+4. Unit test buffers
+5. Copy WebRTC encoders
 
 ---
 
 **Last Updated**: January 3, 2026
-**Current Phase**: Phase 2 (Boot to Desktop)
-**Focus**: Understanding interrupt timing, investigating execution length
+**Current Phase**: Phase 2 (WebRTC Integration)
+**Branch**: phoenix-mac-planning
+**Focus**: Implementing in-process video/audio buffers, integrating WebRTC server
+
+**Major Milestone**: Planning phase complete - comprehensive integration plan created with:
+- 7-thread architecture design
+- File-by-file migration mapping (180 files)
+- Clear implementation phases (10-14 days estimated)
+- Success criteria and testing strategy
