@@ -273,12 +273,39 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
             /* Log interrupt being taken */
             cpu_trace_log_interrupt_taken(intr_level, handler_addr);
 
-            /* Invalidate cache at current PC and update to handler */
-            uc_ctl_remove_cache(uc, pc, pc + 4);
+            /* Update PC to handler address
+             *
+             * CRITICAL: We do NOT call uc_emu_stop() here!
+             *
+             * Calling uc_emu_stop() mid-block causes instruction skipping because:
+             * 1. Current translation block (TB) execution is aborted mid-stream
+             * 2. Some instructions may have already executed from this block
+             * 3. PC might not align with instruction boundaries when resuming
+             * 4. Next uc_emu_start() may resume at wrong offset within the block
+             *
+             * QEMU's approach (from our analysis of Quadra 800 code):
+             * - Interrupts are checked BETWEEN translation blocks, not during
+             * - cpu_handle_interrupt() runs after each TB completes
+             * - When interrupt accepted, PC is updated and execution continues naturally
+             * - No forced stop, no TB abortion, no instruction skipping
+             *
+             * Our solution:
+             * - Update PC register to handler address (done above)
+             * - Let this hook return normally
+             * - Current block will complete (or Unicorn will abort it naturally)
+             * - Next block fetch will use the new PC (handler address)
+             * - No instruction skipping, clean transition
+             *
+             * Evidence: Traces showed divergence at instruction #3832 where Unicorn
+             * executed PC=0x02081138 instead of correct 0x0208113A (off by 2 bytes)
+             * due to uc_emu_stop() aborting mid-block.
+             */
             uc_reg_write(uc, UC_M68K_REG_PC, &handler_addr);
 
-            /* Stop emulation to apply register changes */
-            uc_emu_stop(uc);
+            /* Invalidate any cached translations at the new PC to force fresh decode */
+            uc_ctl_remove_cache(uc, handler_addr, handler_addr + 4);
+
+            /* Let execution continue naturally - Unicorn will execute handler */
             return;
         }
     }
