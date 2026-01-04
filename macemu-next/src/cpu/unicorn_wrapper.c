@@ -36,6 +36,12 @@
 #define TRAP_REGION_BASE  0xFF000000UL
 #define TRAP_REGION_SIZE  0x00001000UL  /* 4KB = 2048 EmulOp slots */
 
+/* Interrupt handling via platform API
+ * Set by unicorn_trigger_interrupt_internal() (called from platform API),
+ * checked by hook_block()
+ */
+static volatile int g_pending_interrupt_level = 0;  /* 0=none, 1-7=interrupt level */
+
 /* Trap context for MMIO approach */
 typedef struct {
     uint32_t saved_pc;     /* Original PC where 0x71xx was */
@@ -217,56 +223,56 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
         cpu->block_stats.block_size_histogram[100]++;  /* 100+ bucket */
     }
 
-    /* Check for pending interrupts (shared interrupt system) */
-    extern volatile bool PendingInterrupt;
-    extern int intlev(void);
+    /* Check for pending interrupts (platform API) */
+    if (g_pending_interrupt_level > 0) {
+        int intr_level = g_pending_interrupt_level;
+        g_pending_interrupt_level = 0;  /* Clear after reading */
 
-    if (PendingInterrupt) {
-        PendingInterrupt = false;
+        /* Get current SR to check interrupt mask */
+        uint32_t sr;
+        uc_reg_read(uc, UC_M68K_REG_SR, &sr);
+        int current_mask = (sr >> 8) & 7;
 
-        int intr_level = intlev();
-        if (intr_level > 0) {
-            /* Get current SR to check interrupt mask */
-            uint32_t sr;
-            uc_reg_read(uc, UC_M68K_REG_SR, &sr);
-            int current_mask = (sr >> 8) & 7;
+        if (intr_level > current_mask) {
+            /* Trigger M68K interrupt - manually build exception stack frame
+             * This is the correct approach for Unicorn - we researched using QEMU's
+             * m68k_set_irq_level() but it requires accessing internal structs with
+             * architecture-dependent offsets, making it fragile and non-portable.
+             * Manual stack building is clean, works correctly, and is well-tested.
+             */
+            uint32_t sp;
+            uc_reg_read(uc, UC_M68K_REG_A7, &sp);
 
-            if (intr_level > current_mask) {
-                /* Trigger M68K interrupt - manually handle exception */
-                uint32_t sp;
-                uc_reg_read(uc, UC_M68K_REG_A7, &sp);
+            /* Push PC (long, big-endian) */
+            sp -= 4;
+            uint32_t pc_be = __builtin_bswap32(pc);
+            uc_mem_write(uc, sp, &pc_be, 4);
 
-                /* Push PC (long, big-endian) */
-                sp -= 4;
-                uint32_t pc_be = __builtin_bswap32(pc);
-                uc_mem_write(uc, sp, &pc_be, 4);
+            /* Push SR (word, big-endian) */
+            sp -= 2;
+            uint16_t sr_be = __builtin_bswap16((uint16_t)sr);
+            uc_mem_write(uc, sp, &sr_be, 2);
 
-                /* Push SR (word, big-endian) */
-                sp -= 2;
-                uint16_t sr_be = __builtin_bswap16((uint16_t)sr);
-                uc_mem_write(uc, sp, &sr_be, 2);
+            /* Update SR: set supervisor mode, set interrupt mask */
+            sr |= (1 << 13);  /* S bit */
+            sr = (sr & ~0x0700) | ((intr_level & 7) << 8);  /* I2-I0 */
+            uc_reg_write(uc, UC_M68K_REG_SR, &sr);
+            uc_reg_write(uc, UC_M68K_REG_A7, &sp);
 
-                /* Update SR: set supervisor mode, set interrupt mask */
-                sr |= (1 << 13);  /* S bit */
-                sr = (sr & ~0x0700) | ((intr_level & 7) << 8);  /* I2-I0 */
-                uc_reg_write(uc, UC_M68K_REG_SR, &sr);
-                uc_reg_write(uc, UC_M68K_REG_A7, &sp);
+            /* Read interrupt vector and jump to handler */
+            uint32_t vbr = 0;  /* TODO: Read VBR for 68020+ */
+            uint32_t vector_addr = vbr + (24 + intr_level) * 4;
+            uint32_t handler_addr_be;
+            uc_mem_read(uc, vector_addr, &handler_addr_be, 4);
+            uint32_t handler_addr = __builtin_bswap32(handler_addr_be);
 
-                /* Read interrupt vector and jump to handler */
-                uint32_t vbr = 0;  /* TODO: Read VBR for 68020+ */
-                uint32_t vector_addr = vbr + (24 + intr_level) * 4;
-                uint32_t handler_addr_be;
-                uc_mem_read(uc, vector_addr, &handler_addr_be, 4);
-                uint32_t handler_addr = __builtin_bswap32(handler_addr_be);
+            /* Invalidate cache at current PC and update to handler */
+            uc_ctl_remove_cache(uc, pc, pc + 4);
+            uc_reg_write(uc, UC_M68K_REG_PC, &handler_addr);
 
-                /* Invalidate cache at current PC and update to handler */
-                uc_ctl_remove_cache(uc, pc, pc + 4);
-                uc_reg_write(uc, UC_M68K_REG_PC, &handler_addr);
-
-                /* Stop emulation to apply register changes */
-                uc_emu_stop(uc);
-                return;
-            }
+            /* Stop emulation to apply register changes */
+            uc_emu_stop(uc);
+            return;
         }
     }
 }
@@ -1008,4 +1014,16 @@ void unicorn_print_block_stats(UnicornCPU *cpu) {
 void unicorn_reset_block_stats(UnicornCPU *cpu) {
     if (!cpu) return;
     memset(&cpu->block_stats, 0, sizeof(BlockStats));
+}
+
+/**
+ * Trigger interrupt via platform API
+ * Sets g_pending_interrupt_level which will be checked by hook_block()
+ */
+void unicorn_trigger_interrupt_internal(int level) {
+    if (level >= 1 && level <= 7) {
+        g_pending_interrupt_level = level;
+    } else if (level == 0) {
+        g_pending_interrupt_level = 0;  /* Clear interrupt */
+    }
 }

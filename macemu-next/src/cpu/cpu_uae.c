@@ -6,7 +6,9 @@
  */
 
 #include "platform.h"
+#include "sysdeps.h"  // For UAE types (uae_u32, etc.)
 #include "uae_wrapper.h"
+#include "uae_cpu/spcflags.h"  // For SPCFLAG_INT
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -115,8 +117,18 @@ static void uae_backend_mem_write(uint32_t addr, const void *data, uint32_t size
 
 // Interrupts
 static void uae_backend_trigger_interrupt(int level) {
-	// TODO: Implement interrupt triggering
-	(void)level;
+	/* Set interrupt flag - UAE's do_specialties() will check this
+	 * and call Interrupt(level) which handles everything natively:
+	 * - Builds M68K exception stack frame (SR, PC, Format/Vector for 68020+)
+	 * - Sets supervisor mode
+	 * - Updates interrupt mask
+	 * - Reads vector table
+	 * - Jumps to interrupt handler
+	 * RTE is handled natively by UAE interpreter
+	 */
+	if (level > 0 && level <= 7) {
+		SPCFLAGS_SET(SPCFLAG_INT);
+	}
 }
 
 /**

@@ -393,9 +393,30 @@ static int unicorn_backend_execute_one(void) {
 	if (!unicorn_execute_one(unicorn_cpu)) {
 		uint32_t pc = unicorn_get_pc(unicorn_cpu);
 		uint32_t a7 = unicorn_get_areg(unicorn_cpu, 7);
+		const char *err_str = unicorn_get_error(unicorn_cpu);
+
+		/* Try to read the opcode at PC */
+		uint16_t opcode_be = 0;
+		uc_engine *uc = (uc_engine*)unicorn_get_uc(unicorn_cpu);
+		uc_mem_read(uc, pc, &opcode_be, 2);
+		uint16_t opcode = __builtin_bswap16(opcode_be);
+
 		fprintf(stderr, "Unicorn execution failed: %s (unicorn_cpu=%p)\n",
-			unicorn_get_error(unicorn_cpu), (void*)unicorn_cpu);
-		fprintf(stderr, "PC=0x%08X A7=0x%08X A7-4=0x%08X\n", pc, a7, a7-4);
+			err_str, (void*)unicorn_cpu);
+		fprintf(stderr, "PC=0x%08X opcode=0x%04X A7=0x%08X\n", pc, opcode, a7);
+
+		/* If it's RTE, dump the stack frame for debugging */
+		if (opcode == 0x4E73) {
+			uint16_t sr_be, fv_be;
+			uint32_t ret_pc_be;
+			uc_mem_read(uc, a7, &sr_be, 2);
+			uc_mem_read(uc, a7+2, &ret_pc_be, 4);
+			uc_mem_read(uc, a7+6, &fv_be, 2);
+
+			fprintf(stderr, "[RTE FAIL] Stack: SR=0x%04X PC=0x%08X FV=0x%04X\n",
+				__builtin_bswap16(sr_be), __builtin_bswap32(ret_pc_be), __builtin_bswap16(fv_be));
+		}
+
 		return 3;  // CPU_EXEC_EXCEPTION
 	}
 
@@ -469,8 +490,18 @@ static void unicorn_backend_mem_write(uint32_t addr, const void *data, uint32_t 
 
 // Interrupts
 static void unicorn_backend_trigger_interrupt(int level) {
-	// TODO: Implement interrupt triggering for Unicorn
-	(void)level;
+	/* Trigger interrupt via internal wrapper function
+	 * This sets g_pending_interrupt_level which will be checked
+	 * by hook_block() on the next basic block execution.
+	 *
+	 * Unicorn uses manual interrupt handling:
+	 * - hook_block() checks g_pending_interrupt_level
+	 * - Manually builds M68K exception stack frame (SR, PC)
+	 * - Sets supervisor mode, updates interrupt mask
+	 * - Reads vector table and jumps to handler
+	 * - RTE is handled by Unicorn's QEMU M68K implementation
+	 */
+	unicorn_trigger_interrupt_internal(level);
 }
 
 // 68k Trap Execution - Unicorn native implementation

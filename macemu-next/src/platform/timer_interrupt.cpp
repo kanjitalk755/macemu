@@ -7,13 +7,11 @@
 
 #include "sysdeps.h"
 #include "main.h"
+#include "platform.h"
+#include "uae_wrapper.h"  // For intlev()
 #include <signal.h>
 #include <sys/time.h>
 #include <stdio.h>
-
-// External interrupt flag from UAE wrapper (for CPU-level interrupts)
-// Note: This is volatile bool, not atomic - safe for signal handler
-extern volatile bool PendingInterrupt;
 
 // Local variables
 static bool timer_installed = false;
@@ -31,9 +29,17 @@ static void timer_signal_handler(int signum)
 	// This will be checked in emul_op.cpp's EmulOp() handler
 	SetInterruptFlag(INTFLAG_60HZ);
 
-	// Set CPU-level interrupt flag for Unicorn/UAE block check
-	// This allows CPU backends to check for interrupts at block boundaries
-	PendingInterrupt = true;
+	// Trigger CPU-level interrupt via platform API
+	// This works for both UAE and Unicorn backends:
+	// - UAE: Sets SPCFLAG_INT, will be processed by do_specialties()
+	// - Unicorn: Sets g_pending_interrupt_level, will be checked by hook_block()
+	extern Platform g_platform;
+	if (g_platform.cpu_trigger_interrupt) {
+		int level = intlev();
+		if (level > 0) {
+			g_platform.cpu_trigger_interrupt(level);
+		}
+	}
 
 	// Increment counter (for statistics)
 	interrupt_count++;

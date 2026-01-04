@@ -115,6 +115,9 @@ const char* unicorn_get_error(UnicornCPU *cpu);
 void unicorn_print_block_stats(UnicornCPU *cpu);
 void unicorn_reset_block_stats(UnicornCPU *cpu);
 
+/* Interrupt triggering (for platform API) */
+void unicorn_trigger_interrupt_internal(int level);
+
 #ifdef __cplusplus
 }
 #endif
