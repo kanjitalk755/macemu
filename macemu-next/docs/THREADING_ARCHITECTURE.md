@@ -29,7 +29,7 @@
 │  ├─ Unicorn M68K JIT                                           │
 │  ├─ Execute instructions (~12M insns/sec)                      │
 │  ├─ EmulOps, traps, interrupts                                 │
-│  ├─ Timer interrupts (60 Hz, integrated in main loop)          │
+│  ├─ Timer interrupts (60 Hz, polling-based)                    │
 │  ├─ VIA chip emulation                                         │
 │  ├─ WRITES → VideoOutput (triple buffer)                       │
 │  └─ WRITES → AudioOutput (ring buffer)                         │
@@ -102,12 +102,14 @@ int main(int argc, char** argv) {
     g_platform.cpu_init();
     g_platform.cpu_reset();
 
-    // 7. Set up timer for interrupts (60 Hz)
-    setup_timer_interrupt(16667);  // 16.667ms = 60 Hz
+    // 7. Set up timer for interrupts (60 Hz polling-based)
+    setup_timer_interrupt();  // No parameters needed
 
     // 8. Main CPU execution loop (RUNS ON MAIN THREAD)
     while (!shutdown_requested) {
         int result = g_platform.cpu_execute_one();  // Execute 1 basic block
+
+        // Timer is polled internally in cpu_execute_one() - no separate thread needed
 
         // Handle results (STOP, EXCEPTION, etc.)
         if (result != CPU_EXEC_OK) {
@@ -143,31 +145,48 @@ int main(int argc, char** argv) {
 - **Interrupt flags**: Checked at basic block boundaries (UC_HOOK_BLOCK)
 - **Config**: Read-only after startup (safe to read from multiple threads)
 
-**Timer Integration** (runs on main thread):
+**Timer Integration** (runs on main thread - polling-based, no signals):
 ```cpp
-// Set up periodic timer using platform API (e.g., setitimer, timerfd, etc.)
-void setup_timer_interrupt(int interval_us) {
-    struct itimerval timer;
-    timer.it_value.tv_sec = 0;
-    timer.it_value.tv_usec = interval_us;
-    timer.it_interval.tv_sec = 0;
-    timer.it_interval.tv_usec = interval_us;
-
-    signal(SIGALRM, timer_signal_handler);
-    setitimer(ITIMER_REAL, &timer, NULL);
+// Set up timer state (simple initialization)
+void setup_timer_interrupt(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    last_timer_ns = now.tv_sec * 1000000000ULL + now.tv_nsec;
+    timer_initialized = true;
 }
 
-// Signal handler (sets interrupt flag)
-void timer_signal_handler(int signum) {
-    PendingInterrupt.store(true, std::memory_order_release);
+// Poll timer - called from CPU execution loops (UAE and Unicorn)
+uint64_t poll_timer_interrupt(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    uint64_t now_ns = now.tv_sec * 1000000000ULL + now.tv_nsec;
+
+    // Check if 16.667ms have passed (60 Hz)
+    if (now_ns - last_timer_ns >= 16667000ULL) {
+        last_timer_ns = now_ns;
+        SetInterruptFlag(INTFLAG_60HZ);
+        g_platform.cpu_trigger_interrupt(intlev());
+        return 1;
+    }
+    return 0;
 }
 
-// Unicorn block hook checks flag
+// UAE wrapper polls every 100 instructions
+void uae_cpu_execute_one(void) {
+    static int poll_counter = 0;
+    if (++poll_counter >= 100) {
+        poll_counter = 0;
+        poll_timer_interrupt();
+    }
+    // ... execute instruction ...
+}
+
+// Unicorn block hook polls before each block
 static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
-    if (PendingInterrupt.load(std::memory_order_acquire)) {
-        PendingInterrupt.store(false, std::memory_order_relaxed);
+    poll_timer_interrupt();  // Check timer
+
+    if (g_pending_interrupt_level > 0) {
         process_interrupt(uc);  // Handle interrupt
-        update_via_timers();    // Update VIA chip state
     }
 }
 ```
@@ -177,7 +196,8 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
 - ~6M blocks/sec (avg 2 insns/block)
 - JIT compiled (Unicorn → x86-64 native)
 - Interrupt checks: every ~2 instructions (block boundary)
-- Timer runs via SIGALRM (no extra thread needed)
+- Timer polling: ~20-50ns overhead per check (vDSO-accelerated)
+- No signals, no threads, no file descriptors needed for timer
 
 ---
 
@@ -488,34 +508,41 @@ public:
 
 ---
 
-### 3. Interrupt Flags (Timer → CPU) - SAME THREAD
+### 3. Timer Polling (CPU Thread Only)
 
-**Design**: Simple atomic bool (set by signal handler, checked by CPU loop)
+**Design**: Direct time check in execution loop (no signals, no atomics needed)
 
 ```cpp
-// Global (accessed by signal handler and CPU main loop)
-std::atomic<bool> PendingInterrupt{false};
+// Timer state (simple static variables)
+static uint64_t last_timer_ns = 0;
+static bool timer_initialized = false;
 
-// Signal handler (SIGALRM) sets it
-void timer_signal_handler(int signum) {
-    PendingInterrupt.store(true, std::memory_order_release);
-    update_via_timers();  // Update VIA chip state
-}
+// Poll function called from CPU execution loops
+uint64_t poll_timer_interrupt(void) {
+    if (!timer_initialized) return 0;
 
-// CPU main loop checks it (in UC_HOOK_BLOCK)
-static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
-    if (PendingInterrupt.load(std::memory_order_acquire)) {
-        PendingInterrupt.store(false, std::memory_order_relaxed);
-        process_interrupt(uc);
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    uint64_t now_ns = now.tv_sec * 1000000000ULL + now.tv_nsec;
+
+    if (now_ns - last_timer_ns >= 16667000ULL) {  // 60 Hz
+        last_timer_ns = now_ns;
+        SetInterruptFlag(INTFLAG_60HZ);
+        g_platform.cpu_trigger_interrupt(intlev());
+        return 1;
     }
+    return 0;
 }
+
+// Called from UAE (every 100 instructions) and Unicorn (every block)
 ```
 
 **Properties**:
-- Lock-free
-- Very fast (single atomic load in hot path)
-- No inter-thread communication (signal handler on same thread)
-- No context switching overhead
+- No atomics needed (single-threaded)
+- Very fast (~20-50ns per check via vDSO)
+- No signal handlers, no async-signal-safe constraints
+- No inter-thread communication
+- Simple, debuggable synchronous code
 
 ---
 

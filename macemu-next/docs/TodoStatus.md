@@ -56,7 +56,7 @@ Track what's done and what's next.
 
 ---
 
-## Phase 1.5: CPU Divergence Investigation ⚠️ CRITICAL BUG FOUND
+## Phase 1.5: CPU Divergence Investigation ✅ RESOLVED
 
 ### Issue Discovery
 - ✅ UAE executes 250k+ instructions successfully
@@ -70,29 +70,32 @@ Track what's done and what's next.
 - ✅ Event extraction (interrupts triggered/taken, EmulOps)
 - ✅ Automated trace runner (run_traces.sh)
 
-### Root Cause Analysis ⚠️ CRITICAL
-**Bug**: Unicorn's interrupt handling in `hook_block()` calls `uc_emu_stop()` which causes instruction skipping.
+### Root Cause Analysis ✅ FIXED
+**Bug**: Unicorn's interrupt handling in `hook_block()` called `uc_emu_stop()` which caused instruction skipping.
 
 **Evidence**:
 - At instruction #3831: Unicorn receives interrupt trigger
-- At instruction #3832:
+- At instruction #3832 (BEFORE FIX):
   - UAE executes PC=0x0208113A (correct)
   - Unicorn executes PC=0x02081138 (PREVIOUS instruction - skipped ahead!)
-- This causes D0 register divergence (0x05 vs 0x00)
-- Cascade effect leads to crash at PC 0x02009B88
+- This caused D0 register divergence (0x05 vs 0x00)
 
-**Theory**:
-When `hook_block()` detects pending interrupt and calls `uc_emu_stop()`:
-1. Basic block has already started executing
-2. Some instructions may have been executed before hook fires
-3. When emulation resumes, we've lost sync with instruction stream
-4. Net effect: instructions get skipped
+**Fix Applied**: Removed `uc_emu_stop()` call, let execution continue naturally after updating PC to interrupt handler.
 
-**Fix Strategy**: Handle interrupts inline without `uc_emu_stop()` - all needed information is available in the hook (PC, SR, registers).
+**Result**: ✅ Perfect synchronization between UAE and Unicorn - all registers match exactly at instruction #3832 and beyond.
 
-**Status**: Fix pending - need to modify `unicorn_wrapper.c:226-278`
+### Timer Implementation ✅ COMPLETE
+**Original approach**: SIGALRM signal-based timer (126 lines)
+- ❌ Failed: Blocked by signal masking (~0.2 Hz instead of 60 Hz)
 
-**Documentation**: See [DIVERGENCE_ROOT_CAUSE.md](../../DIVERGENCE_ROOT_CAUSE.md)
+**Final approach**: Polling-based timer using `clock_gettime(CLOCK_MONOTONIC)` (~60 lines)
+- ✅ Simple, fast (~20-50ns overhead)
+- ✅ Reliable (can't be blocked)
+- ✅ Portable (POSIX)
+- ✅ Works for both UAE and Unicorn
+- ✅ Verified at 60.0 Hz
+
+**Documentation**: See [TIMER_IMPLEMENTATION_FINAL.md](TIMER_IMPLEMENTATION_FINAL.md), [TIMER_IMPLEMENTATION_COMPARISON.md](TIMER_IMPLEMENTATION_COMPARISON.md)
 
 ---
 

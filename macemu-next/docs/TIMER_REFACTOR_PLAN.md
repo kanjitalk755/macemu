@@ -1,6 +1,12 @@
 # Timer Refactor Plan: Unified Approach for UAE and Unicorn
 
-## Current Architecture (SIGALRM-based)
+**Status**: ✅ **IMPLEMENTED** (January 2026)
+
+This document described the plan to migrate from SIGALRM to polling-based timers. The implementation is now complete. See [TIMER_IMPLEMENTATION_FINAL.md](TIMER_IMPLEMENTATION_FINAL.md) for the final implementation.
+
+---
+
+## Original Architecture (SIGALRM-based) - DEPRECATED
 
 ```
 SIGALRM Signal Handler (timer_interrupt.cpp)

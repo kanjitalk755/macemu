@@ -1,4 +1,8 @@
-# Timer Investigation Results
+# Timer Investigation Results (ARCHIVED)
+
+**Note**: This document describes investigations from an earlier phase of development. The final implementation uses **polling-based timers**, not timerfd or SIGALRM. See [TIMER_IMPLEMENTATION_FINAL.md](TIMER_IMPLEMENTATION_FINAL.md) for the current approach.
+
+---
 
 ## Summary
 
@@ -131,7 +135,7 @@ The immediate value loaded by `MOVE.L #imm,D0` is different, suggesting:
 - `src/drivers/meson.build` - Added platform sources
 - `meson.build` - Added platform include directory
 
-## Conclusions
+## Conclusions (Historical)
 
 ### What Works:
 1. ✅ timerfd-based timer fires accurately at 60 Hz
@@ -157,37 +161,27 @@ The immediate value loaded by `MOVE.L #imm,D0` is different, suggesting:
 - Timing affects execution path
 - Different backends process interrupts differently
 
-## Recommendations
+## Resolution (January 2026)
 
-### Option 1: Defer Timer Implementation
-- Keep UAE working as stable reference
-- Fix Unicorn execution issues first
-- Add timer later when execution is stable
-- **This is the current choice**
+**FINAL SOLUTION**: Polling-based timer using `clock_gettime(CLOCK_MONOTONIC)`
 
-### Option 2: Make Timer Optional
-- Add `ENABLE_TIMER` environment variable
-- Disable for debugging/tracing
-- Enable only when needed for Mac OS boot
+After investigation:
+1. ❌ SIGALRM failed - blocked by signal masking (~0.2 Hz instead of 60 Hz)
+2. ❌ timerfd considered - too complex, Linux-specific
+3. ✅ **Polling approach** - Simple, fast, reliable, POSIX-portable
 
-### Option 3: Synchronize Timer Across Backends
-- Make timer fire at specific instruction counts (not time-based)
-- Ensures deterministic interrupt delivery
-- More complex implementation
+**Key insight** (from user): "Do we even need sigalarm or threads for this? We could just check time in between blocks..."
 
-### Option 4: Fix Root Cause
-- Investigate why timer causes divergence
-- May be ROM code expects no interrupts during init
-- May need to defer timer until Mac OS is booted
+**Implementation**:
+- `poll_timer_interrupt()` checks wall-clock time directly
+- Called from UAE execution loop (every 100 instructions)
+- Called from Unicorn block hook (every basic block)
+- No signals, no threads, no file descriptors
+- ~60 lines of code vs 126 lines for SIGALRM
 
-## Current Status
+**Result**: ✅ 60.0 Hz verified, works perfectly for both UAE and Unicorn
 
-**REVERTED** - Timer implementation removed to restore stable UAE execution.
-
-**Reason:** Need deterministic execution for debugging. Timer will be re-added after:
-1. Unicorn execution stabilized
-2. UAE vs Unicorn traces match
-3. Understanding of ROM timing requirements
+See [TIMER_IMPLEMENTATION_FINAL.md](TIMER_IMPLEMENTATION_FINAL.md) for current implementation details.
 
 ## Technical Details Preserved
 

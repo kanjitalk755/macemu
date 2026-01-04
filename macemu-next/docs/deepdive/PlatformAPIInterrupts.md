@@ -8,6 +8,8 @@
 
 This document describes the platform API abstraction for interrupt handling, which replaced the old shared global state (`PendingInterrupt`) with backend-specific implementations that leverage each CPU's native interrupt mechanisms.
 
+**Note on Timer**: The examples below reference the timer implementation. The current timer uses a **polling-based approach** (not SIGALRM). See [TIMER_IMPLEMENTATION_FINAL.md](../TIMER_IMPLEMENTATION_FINAL.md) for details. The platform API abstraction remains the same regardless of timer implementation.
+
 ## Problem Statement
 
 ### Original Design Issues
@@ -90,21 +92,28 @@ typedef struct Platform {
 #include "platform.h"
 #include "uae_wrapper.h"  // For intlev()
 
-static void timer_signal_handler(int signum)
+// Polling-based timer (called from CPU execution loops)
+uint64_t poll_timer_interrupt(void)
 {
-    // Set Mac interrupt flag for video/audio callbacks
-    SetInterruptFlag(INTFLAG_60HZ);
+    // ... check if 16.667ms have passed ...
 
-    // Trigger CPU-level interrupt via platform API
-    extern Platform g_platform;
-    if (g_platform.cpu_trigger_interrupt) {
-        int level = intlev();  // Get interrupt level from Mac hardware
-        if (level > 0) {
-            g_platform.cpu_trigger_interrupt(level);  // Backend-agnostic!
+    if (elapsed >= 16667000ULL) {  // 60 Hz
+        // Set Mac interrupt flag for video/audio callbacks
+        SetInterruptFlag(INTFLAG_60HZ);
+
+        // Trigger CPU-level interrupt via platform API
+        extern Platform g_platform;
+        if (g_platform.cpu_trigger_interrupt) {
+            int level = intlev();  // Get interrupt level from Mac hardware
+            if (level > 0) {
+                g_platform.cpu_trigger_interrupt(level);  // Backend-agnostic!
+            }
         }
-    }
 
-    interrupt_count++;
+        interrupt_count++;
+        return 1;
+    }
+    return 0;
 }
 ```
 
@@ -113,6 +122,7 @@ static void timer_signal_handler(int signum)
 - Calls platform API uniformly
 - Interrupt level determined by Mac hardware state (`intlev()`)
 - No direct backend dependencies
+- Polling-based (no signals)
 
 ## UAE Backend Implementation
 

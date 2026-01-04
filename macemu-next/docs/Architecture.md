@@ -353,8 +353,11 @@ Unicorn uses **manual M68K exception stack frame building** rather than QEMU's `
 
 ### Interrupt Flow
 
-1. **Timer fires** (POSIX SIGALRM at 60Hz)
-2. **Signal handler** calls `g_platform.cpu_trigger_interrupt(level)`
+1. **Timer polling** (checked in CPU execution loops at 60Hz)
+   - `poll_timer_interrupt()` checks wall-clock time using `clock_gettime(CLOCK_MONOTONIC)`
+   - Called from UAE (every 100 instructions) and Unicorn (every block)
+2. **Timer fires** (when 16.667ms elapsed)
+   - Calls `g_platform.cpu_trigger_interrupt(level)`
 3. **Backend-specific**:
    - **UAE**: Sets `SPCFLAG_INT`, processed by `do_specialties()`
    - **Unicorn**: Sets `g_pending_interrupt_level`, checked by `hook_block()`
@@ -366,7 +369,7 @@ Unicorn uses **manual M68K exception stack frame building** rather than QEMU's `
    - Jump to interrupt handler
 5. **RTE instruction** restores PC and SR from stack, returns from interrupt
 
-See [deepdive/InterruptTimingAnalysis.md](deepdive/InterruptTimingAnalysis.md) for timing issues.
+See [TIMER_IMPLEMENTATION_FINAL.md](TIMER_IMPLEMENTATION_FINAL.md) for timer details.
 
 ---
 

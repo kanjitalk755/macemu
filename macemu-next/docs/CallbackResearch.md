@@ -74,13 +74,17 @@ void VideoVBL(void)
 4. When `INTFLAG_60HZ` is set, EmulOp handler calls `VideoInterrupt()`
 5. `VideoInterrupt()` should call `VideoRefresh()`
 
-**Implementation Strategy**:
+**Implementation Strategy** (current polling-based approach):
 ```cpp
-// Timer signal handler (called by SIGALRM)
-void timer_signal_handler(int signum) {
-    // Set both flags
-    SetInterruptFlag(INTFLAG_60HZ);  // For VideoInterrupt
-    PendingInterrupt.store(true);     // For Unicorn block hook
+// Timer polling (called from CPU execution loops)
+uint64_t poll_timer_interrupt(void) {
+    // ... check if 16.667ms elapsed ...
+    if (timer_fired) {
+        SetInterruptFlag(INTFLAG_60HZ);  // For VideoInterrupt
+        g_platform.cpu_trigger_interrupt(intlev());  // For CPU backends
+        return 1;
+    }
+    return 0;
 }
 
 // In VideoInterrupt() implementation
@@ -88,6 +92,8 @@ void VideoInterrupt() {
     VideoRefresh();  // Call the refresh function
 }
 ```
+
+**Note**: Current implementation uses polling instead of SIGALRM. See [TIMER_IMPLEMENTATION_FINAL.md](TIMER_IMPLEMENTATION_FINAL.md).
 
 ---
 
