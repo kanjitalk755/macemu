@@ -6,10 +6,12 @@
  * Always available, no compile-time dependencies.
  */
 
+#include "sysdeps.h"            // For uae_u32 types
 #include "platform.h"
 #include "uae_wrapper.h"
 #include "unicorn_wrapper.h"
 #include "unicorn_validation.h"
+#include "uae_cpu/spcflags.h"   // For SPCFLAG_INT
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -151,10 +153,21 @@ static void dualcpu_backend_mem_write(uint32_t addr, const void *data, uint32_t 
 	uae_mem_write(addr, data, size);
 }
 
-// Interrupts - delegates to UAE
+// Interrupts - delegates to UAE internals
 static void dualcpu_backend_trigger_interrupt(int level) {
-	// TODO: Implement interrupt triggering
-	(void)level;
+	// Set UAE's interrupt flag directly (same as UAE backend does)
+	if (level > 0 && level <= 7) {
+		SPCFLAGS_SET(SPCFLAG_INT);
+	}
+	// Unicorn will be synced via validation module
+}
+
+// 68k Trap execution - delegates to UAE implementation
+static void dualcpu_backend_execute_68k_trap(uint16_t trap, struct M68kRegisters *r) {
+	// Call UAE's native trap execution
+	extern void Execute68kTrap(uint16_t trap, struct M68kRegisters *r);
+	Execute68kTrap(trap, r);
+	// Unicorn will be synced via validation module on next step
 }
 
 /**
@@ -194,6 +207,9 @@ void cpu_dualcpu_install(Platform *p) {
 
 	// Interrupts
 	p->cpu_trigger_interrupt = dualcpu_backend_trigger_interrupt;
+
+	// 68k Trap execution
+	p->cpu_execute_68k_trap = dualcpu_backend_execute_68k_trap;
 
 	// EmulOp/Trap handlers - unified handlers that check DUALCPU_MASTER env var
 	// to determine which CPU is primary (UAE or Unicorn)
