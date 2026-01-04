@@ -52,6 +52,7 @@ Track what's done and what's next.
 - ✅ Runtime backend selection (CPU_BACKEND env var)
 - ✅ Trap handlers (emulop_handler, trap_handler)
 - ✅ **68k trap execution API** (cpu_execute_68k_trap)
+- ✅ **Interrupt abstraction** (cpu_trigger_interrupt, commit c388b229)
 
 ---
 
@@ -198,6 +199,13 @@ Track what's done and what's next.
   - Fix: UC_HOOK_BLOCK for interrupts, shared PendingInterrupt flag
   - Impact: Both backends process timer/ADB interrupts
 
+- ✅ **Platform API interrupt abstraction** (Global state elimination, commit c388b229)
+  - Replaced: PendingInterrupt global flag with platform API
+  - UAE: Uses native SPCFLAG_INT mechanism
+  - Unicorn: Manual M68K exception stack frame building
+  - Impact: Backend-agnostic interrupt triggering, cleaner architecture
+  - See: docs/deepdive/PlatformAPIInterrupts.md
+
 - ✅ **Hybrid execution crash** (UAE dependency, commit d90208dc)
   - Symptom: Unicorn crashed at 175k when EmulOps called Execute68kTrap
   - Fix: Unicorn-native 68k trap execution
@@ -232,6 +240,7 @@ Track what's done and what's next.
 - ✅ Commands.md - Build, test, trace commands
 - ✅ completed/ folder - Archived historical docs
 - ✅ deepdive/ folder - Detailed technical docs
+  - ✅ PlatformAPIInterrupts.md - Interrupt abstraction design & implementation
 
 ### Needed ⏳
 - ⏳ Testing guide (functional testing approach)
@@ -243,6 +252,7 @@ Track what's done and what's next.
 ## Recent Commits (Dec 2025 - Jan 2026)
 
 ```
+c388b229 - Platform API interrupt abstraction (Jan 4, 2026)
 a3712b98 - WebRTC integration planning (initial documents)
 309d4fab - Merge master branch with WebRTC improvements
 66f5d428 - Resolve "200k execution limit" investigation

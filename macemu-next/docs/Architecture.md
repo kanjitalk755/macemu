@@ -267,55 +267,104 @@ g_platform.cpu_execute_68k_trap(trap_number, &registers);
 
 ## Interrupt System
 
-### Shared Infrastructure
+### Platform API Abstraction (c388b229)
 
-**Location**: [src/cpu/uae_wrapper.cpp](../src/cpu/uae_wrapper.cpp)
+**Interrupts are triggered through the Platform API**, eliminating backend-specific global state.
 
+**Timer/Device Code** ([src/platform/timer_interrupt.cpp](../src/platform/timer_interrupt.cpp)):
 ```c
-volatile bool PendingInterrupt = false;  // Backend-agnostic flag
-uint32_t InterruptFlags = 0;            // Which interrupt (INTFLAG_TIMER, etc.)
-
-void TriggerInterrupt(void) {
-    idle_resume();
-    PendingInterrupt = true;  // Signal to ALL backends
-}
-
-int intlev(void) {
-    return InterruptFlags ? 1 : 0;  // Interrupt level
+extern Platform g_platform;
+int level = intlev();  // Get interrupt level from Mac hardware state
+if (level > 0) {
+    g_platform.cpu_trigger_interrupt(level);  // Backend-agnostic
 }
 ```
 
-### Backend-Specific Handling
-
-**UAE** ([src/cpu/uae_cpu/newcpu.cpp](../src/cpu/uae_cpu/newcpu.cpp)):
+**Platform API** ([src/common/include/platform.h](../src/common/include/platform.h)):
 ```c
-// Check every instruction
-if (PendingInterrupt) {
-    PendingInterrupt = false;
-    SPCFLAGS_SET(SPCFLAG_INT);  // UAE internal flag
+typedef struct Platform {
+    // ... other function pointers ...
+    void (*cpu_trigger_interrupt)(int level);  // Trigger M68K interrupt
+} Platform;
+```
+
+### Backend Implementations
+
+**UAE Backend** ([src/cpu/cpu_uae.c](../src/cpu/cpu_uae.c)):
+```c
+static void uae_backend_trigger_interrupt(int level) {
+    // Set UAE's native interrupt flag
+    if (level > 0 && level <= 7) {
+        SPCFLAGS_SET(SPCFLAG_INT);  // UAE checks this in do_specialties()
+    }
+    // UAE's Interrupt() function handles:
+    // - Building M68K exception stack frame (SR, PC, Format/Vector)
+    // - Setting supervisor mode
+    // - Updating interrupt mask
+    // - Reading vector table
+    // - Jumping to handler
 }
 ```
 
-**Unicorn** ([src/cpu/unicorn_wrapper.c](../src/cpu/unicorn_wrapper.c)):
+**Unicorn Backend** ([src/cpu/unicorn_wrapper.c](../src/cpu/unicorn_wrapper.c)):
 ```c
-// UC_HOOK_BLOCK - check at basic block boundaries (efficient!)
-static void hook_block(...) {
-    if (PendingInterrupt) {
-        PendingInterrupt = false;
-        int level = intlev();
-        if (level > current_sr_mask) {
-            // Manually execute M68K interrupt sequence:
-            // 1. Push PC and SR to stack
-            // 2. Update SR (supervisor mode, interrupt mask)
-            // 3. Read vector from VBR + (24 + level) * 4
-            // 4. Jump to handler
-            uc_emu_stop(uc);  // Apply changes
-        }
+static volatile int g_pending_interrupt_level = 0;  // 0=none, 1-7=level
+
+void unicorn_trigger_interrupt_internal(int level) {
+    if (level >= 1 && level <= 7) {
+        g_pending_interrupt_level = level;
+    }
+}
+
+// In hook_block() - checked at every basic block boundary
+if (g_pending_interrupt_level > 0) {
+    int intr_level = g_pending_interrupt_level;
+    g_pending_interrupt_level = 0;
+
+    // Check interrupt mask in SR
+    if (intr_level > current_mask) {
+        // Manually execute M68K interrupt sequence:
+        // 1. Push PC (4 bytes, big-endian) to stack
+        // 2. Push SR (2 bytes, big-endian) to stack
+        // 3. Update SR: set supervisor bit, update interrupt mask
+        // 4. Read vector from (VBR + (24 + level) * 4)
+        // 5. Update PC to vector address
+        uc_emu_stop(uc);  // Stop to apply register changes
     }
 }
 ```
 
-**Key Difference**: Unicorn must manually implement M68K interrupt sequence (UAE does it natively)
+### Design Decision: Manual vs QEMU Interrupt Handling
+
+Unicorn uses **manual M68K exception stack frame building** rather than QEMU's `m68k_set_irq_level()`.
+
+**Why not QEMU's function?**
+- Requires accessing internal structs: `uc_engine` → `uc_struct` → `CPUState` → `M68kCPU`
+- Struct field offsets vary by architecture, compiler, QEMU version
+- Including QEMU headers creates complex build dependencies
+- Hardcoded offsets are fragile (0x140 caused segfault, actual offset unknown)
+
+**Why manual approach is better:**
+- Uses only public Unicorn API (`uc_reg_read`, `uc_mem_write`, etc.)
+- Portable across architectures, compilers, Unicorn versions
+- Explicit and debuggable - exact M68K interrupt sequence visible
+- Matches QEMU's `do_interrupt_m68k_hardirq()` behavior
+- Tested and validated with 60Hz timer interrupts
+
+### Interrupt Flow
+
+1. **Timer fires** (POSIX SIGALRM at 60Hz)
+2. **Signal handler** calls `g_platform.cpu_trigger_interrupt(level)`
+3. **Backend-specific**:
+   - **UAE**: Sets `SPCFLAG_INT`, processed by `do_specialties()`
+   - **Unicorn**: Sets `g_pending_interrupt_level`, checked by `hook_block()`
+4. **M68K interrupt**:
+   - Check interrupt mask in SR (level must exceed mask)
+   - Build exception stack frame (PC, SR)
+   - Update SR (supervisor mode, interrupt mask)
+   - Read autovector from vector table (vectors 25-31 for interrupts 1-7)
+   - Jump to interrupt handler
+5. **RTE instruction** restores PC and SR from stack, returns from interrupt
 
 See [deepdive/InterruptTimingAnalysis.md](deepdive/InterruptTimingAnalysis.md) for timing issues.
 

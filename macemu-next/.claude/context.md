@@ -109,24 +109,39 @@ Three types of traps:
 
 ### Interrupt System
 
-**Shared Infrastructure**:
+**Platform API Abstraction** (c388b229):
 ```c
-volatile bool PendingInterrupt = false;  // Backend-agnostic
-uint32_t InterruptFlags = 0;            // Which interrupt (INTFLAG_TIMER, etc.)
+// Platform API function pointer
+void (*cpu_trigger_interrupt)(int level);
 
-void TriggerInterrupt(void) {
-    PendingInterrupt = true;  // Signal to ALL backends
-}
+// Backends implement this differently:
+// - UAE: Sets SPCFLAG_INT, processed by do_specialties()
+// - Unicorn: Sets g_pending_interrupt_level, checked by hook_block()
 ```
 
-**UAE**: Checks every instruction, sets `SPCFLAG_INT`
-**Unicorn**: Checks in `UC_HOOK_BLOCK`, manually triggers M68K interrupt
+**Timer/Device Code**:
+```c
+extern Platform g_platform;
+int level = intlev();  // Get interrupt level from Mac hardware state
+g_platform.cpu_trigger_interrupt(level);  // Backend-agnostic call
+```
+
+**UAE Backend**: Sets `SPCFLAG_INT`, UAE's native interrupt mechanism handles the rest
+
+**Unicorn Backend**: Manual M68K exception handling
+- Sets `g_pending_interrupt_level` (volatile int)
+- `hook_block()` checks at basic block boundaries
+- Manually builds exception stack frame (PC, SR)
+- Updates SR (supervisor mode, interrupt mask)
+- Reads vector table, jumps to handler
+- Manual approach chosen over QEMU's `m68k_set_irq_level()` (requires fragile struct offsets)
 
 ---
 
 ## Key Technical Points
 
 ### Recent Achievements (with commit hashes)
+- **Platform API interrupts** (c388b229): Backend-agnostic interrupt triggering, eliminated global state
 - **VBR fix** (006cc0f8): Added missing Unicorn register API (+330% execution)
 - **CPU type fix** (74fbd578): Fixed 68030 vs 68020 selection (enum/array mismatch)
 - **Interrupt support** (1305d3b2): UC_HOOK_BLOCK for efficiency
@@ -331,6 +346,6 @@ diff uae.log uni.log | head -50
 
 ---
 
-**Last Updated**: January 3, 2026
+**Last Updated**: January 4, 2026
 **Project Phase**: Phase 2 - Boot to Desktop
-**Current Focus**: Timer interrupt timing analysis, functional testing approach
+**Current Focus**: Platform API architecture, interrupt handling implementation
