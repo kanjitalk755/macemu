@@ -1,32 +1,67 @@
 /*
- *  timer_interrupt.cpp - 60Hz timer interrupt implementation
+ *  timer_interrupt.cpp - 60Hz timer via polling
  *
- *  Uses POSIX setitimer() with SIGALRM to generate periodic interrupts
- *  for Mac VBL (Vertical Blank) timing.
+ *  Checks wall-clock time to generate periodic interrupts.
+ *  Called from CPU backend execution loops (UAE and Unicorn).
+ *
+ *  This replaces the previous SIGALRM-based approach which had issues
+ *  with signal masking and async-signal-safe constraints.
  */
 
 #include "sysdeps.h"
 #include "main.h"
 #include "platform.h"
+#include "timer_interrupt.h"
 #include "uae_wrapper.h"  // For intlev()
-#include <signal.h>
-#include <sys/time.h>
+#include <time.h>
 #include <stdio.h>
 
-// Local variables
-static bool timer_installed = false;
+// Timer state
+static uint64_t last_timer_ns = 0;
 static uint64_t interrupt_count = 0;
+static bool timer_initialized = false;
+
+extern "C" {
 
 /*
- *  Timer signal handler
- *
- *  Called by kernel when SIGALRM fires (every 16.667ms for 60Hz).
- *  This handler must be async-signal-safe!
+ *  Initialize timer system
  */
-static void timer_signal_handler(int signum)
+void setup_timer_interrupt(void)
 {
-	// Set Mac interrupt flag for video/audio callbacks
-	// This will be checked in emul_op.cpp's EmulOp() handler
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	last_timer_ns = now.tv_sec * 1000000000ULL + now.tv_nsec;
+	interrupt_count = 0;
+	timer_initialized = true;
+
+	printf("Timer: Initialized 60 Hz timer (polling-based)\n");
+}
+
+/*
+ *  Poll timer - call from CPU execution loop
+ *  Returns number of timer expirations (usually 0 or 1)
+ */
+uint64_t poll_timer_interrupt(void)
+{
+	if (!timer_initialized) {
+		return 0;
+	}
+
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	uint64_t now_ns = now.tv_sec * 1000000000ULL + now.tv_nsec;
+
+	// Check if 16.667ms have passed (60 Hz)
+	uint64_t elapsed = now_ns - last_timer_ns;
+	if (elapsed < 16667000ULL) {
+		return 0;  // Not time yet
+	}
+
+	// Timer fired! Update last fire time
+	last_timer_ns = now_ns;
+	interrupt_count++;
+
+	// Set Mac-level interrupt flag (for video/audio callbacks)
 	SetInterruptFlag(INTFLAG_60HZ);
 
 	// Trigger CPU-level interrupt via platform API
@@ -41,85 +76,29 @@ static void timer_signal_handler(int signum)
 		}
 	}
 
-	// Increment counter (for statistics)
-	interrupt_count++;
+	return 1;  // One expiration
 }
 
 /*
- *  Setup timer interrupt
- *
- *  interval_us: Interrupt interval in microseconds (16667 for 60Hz)
- */
-bool setup_timer_interrupt(int interval_us)
-{
-	if (timer_installed) {
-		fprintf(stderr, "Timer: Already installed\n");
-		return false;
-	}
-
-	// Register signal handler
-	struct sigaction sa;
-	sa.sa_handler = timer_signal_handler;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = SA_RESTART;  // Restart interrupted syscalls
-
-	if (sigaction(SIGALRM, &sa, NULL) < 0) {
-		perror("Timer: sigaction failed");
-		return false;
-	}
-
-	// Set up periodic timer using setitimer
-	struct itimerval timer;
-	timer.it_value.tv_sec = 0;
-	timer.it_value.tv_usec = interval_us;     // Initial delay
-	timer.it_interval.tv_sec = 0;
-	timer.it_interval.tv_usec = interval_us;  // Periodic interval
-
-	if (setitimer(ITIMER_REAL, &timer, NULL) < 0) {
-		perror("Timer: setitimer failed");
-		return false;
-	}
-
-	timer_installed = true;
-	interrupt_count = 0;
-
-	printf("Timer: Installed %d Hz interrupt (%d microseconds)\n",
-	       1000000 / interval_us, interval_us);
-
-	return true;
-}
-
-/*
- *  Stop timer interrupt
+ *  Stop timer
  */
 void stop_timer_interrupt(void)
 {
-	if (!timer_installed) {
+	if (!timer_initialized) {
 		return;
 	}
 
-	// Disable timer
-	struct itimerval timer;
-	timer.it_value.tv_sec = 0;
-	timer.it_value.tv_usec = 0;
-	timer.it_interval.tv_sec = 0;
-	timer.it_interval.tv_usec = 0;
-
-	setitimer(ITIMER_REAL, &timer, NULL);
-
-	// Restore default SIGALRM handler
-	signal(SIGALRM, SIG_DFL);
-
-	timer_installed = false;
-
+	timer_initialized = false;
 	printf("Timer: Stopped after %llu interrupts\n",
 	       (unsigned long long)interrupt_count);
 }
 
 /*
- *  Get timer statistics
+ *  Get statistics
  */
 uint64_t get_timer_interrupt_count(void)
 {
 	return interrupt_count;
 }
+
+}  // extern "C"

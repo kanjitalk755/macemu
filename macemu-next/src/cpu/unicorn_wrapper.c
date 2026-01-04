@@ -27,6 +27,7 @@
 #include "unicorn_wrapper.h"
 #include "platform.h"
 #include "cpu_trace.h"
+#include "timer_interrupt.h"
 #include <unicorn/unicorn.h>
 #include <stdlib.h>
 #include <string.h>
@@ -222,6 +223,9 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
     } else {
         cpu->block_stats.block_size_histogram[100]++;  /* 100+ bucket */
     }
+
+    /* Poll timer - may trigger interrupt */
+    poll_timer_interrupt();
 
     /* Check for pending interrupts (platform API) */
     if (g_pending_interrupt_level > 0) {

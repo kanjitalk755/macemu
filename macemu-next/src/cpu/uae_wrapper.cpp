@@ -4,6 +4,7 @@
 
 #include "uae_wrapper.h"
 #include "cpu_trace.h"
+#include "timer_interrupt.h"
 
 // UAE CPU headers
 extern "C" {
@@ -242,6 +243,13 @@ void uae_cpu_execute_one(void) {
     if (!trace_initialized) {
         cpu_trace_init();
         trace_initialized = true;
+    }
+
+    /* Poll timer every 100 instructions */
+    static int poll_counter = 0;
+    if (++poll_counter >= 100) {
+        poll_counter = 0;
+        poll_timer_interrupt();  /* May set SPCFLAG_INT */
     }
 
     /* Execute one instruction */

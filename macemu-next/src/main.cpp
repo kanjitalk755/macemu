@@ -416,12 +416,9 @@ int main(int argc, char **argv)
 	g_platform.cpu_reset();
 	printf("CPU reset to PC=0x%08x\n", g_platform.cpu_get_pc());
 
-	// Set up 60Hz timer interrupt (16667 microseconds = 60.006 Hz)
+	// Set up 60Hz timer (polling-based)
 	printf("\n=== Setting up Timer Interrupt ===\n");
-	if (!setup_timer_interrupt(16667)) {
-		fprintf(stderr, "Failed to setup timer interrupt\n");
-		return 1;
-	}
+	setup_timer_interrupt();
 
 	// Optional auto-exit timer (set EMULATOR_TIMEOUT=2 for 2 seconds)
 	const char *timeout_env = getenv("EMULATOR_TIMEOUT");

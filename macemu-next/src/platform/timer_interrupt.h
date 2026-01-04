@@ -1,32 +1,39 @@
 /*
- *  timer_interrupt.h - 60Hz timer interrupt interface
+ *  timer_interrupt.h - 60Hz timer interface (polling-based)
  */
 
 #ifndef TIMER_INTERRUPT_H
 #define TIMER_INTERRUPT_H
 
 #include <stdint.h>
-#include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
- *  Setup periodic timer interrupt
- *
- *  interval_us: Interrupt interval in microseconds
- *               Use 16667 for 60Hz (Mac VBL rate)
- *
- *  Returns: true on success, false on failure
+ *  Initialize timer system
  */
-bool setup_timer_interrupt(int interval_us);
+void setup_timer_interrupt(void);
 
 /*
- *  Stop timer interrupt
+ *  Poll timer - call from CPU execution loop
+ *  Returns number of timer expirations (0 if not ready, 1 if fired)
+ */
+uint64_t poll_timer_interrupt(void);
+
+/*
+ *  Stop timer
  */
 void stop_timer_interrupt(void);
 
 /*
- *  Get number of timer interrupts fired
- *  (Useful for debugging/statistics)
+ *  Get statistics
  */
 uint64_t get_timer_interrupt_count(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // TIMER_INTERRUPT_H
