@@ -1,0 +1,15 @@
+# Debug and validation logs
+*.log
+cpu_validation.log
+scripts/cpu_validation.log
+
+# Build artifacts (if not using build/ subdirectory)
+*.o
+*.a
+
+# Test outputs
+tests/*.log
+tests/*.out
+
+# XPRAM (runtime state - should not be committed)
+BasiliskII_XPRAM
