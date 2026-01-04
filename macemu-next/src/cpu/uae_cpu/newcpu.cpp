@@ -31,6 +31,7 @@
 #include "emul_op.h"
 #include "platform.h"
 #include "../uae_wrapper.h"	// For intlev(), PendingInterrupt
+#include "../cpu_trace.h"	// For interrupt logging
 
 #include "m68k.h"
 #include "memory.h"
@@ -848,6 +849,11 @@ static void Interrupt(int nr)
 	assert(nr < 8 && nr >= 0);
 	lastint_regs = regs;
 	lastint_no = nr;
+
+	/* Log interrupt being taken */
+	uint32_t handler_addr = get_long(regs.vbr + 4 * (24 + nr));
+	cpu_trace_log_interrupt_taken(nr, handler_addr);
+
 	Exception(nr+24, 0);
 
 	regs.intmask = nr;
@@ -1429,6 +1435,10 @@ int m68k_do_specialties (void)
 	if (PendingInterrupt) {
 		PendingInterrupt = false;
 		SPCFLAGS_SET( SPCFLAG_INT );
+		int level = intlev();
+		if (level != -1) {
+			cpu_trace_log_interrupt_trigger(level);
+		}
 	}
 
 	if (SPCFLAGS_TEST( SPCFLAG_INT )) {

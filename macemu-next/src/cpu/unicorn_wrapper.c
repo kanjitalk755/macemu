@@ -266,6 +266,9 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
             uc_mem_read(uc, vector_addr, &handler_addr_be, 4);
             uint32_t handler_addr = __builtin_bswap32(handler_addr_be);
 
+            /* Log interrupt being taken */
+            cpu_trace_log_interrupt_taken(intr_level, handler_addr);
+
             /* Invalidate cache at current PC and update to handler */
             uc_ctl_remove_cache(uc, pc, pc + 4);
             uc_reg_write(uc, UC_M68K_REG_PC, &handler_addr);
@@ -1023,6 +1026,7 @@ void unicorn_reset_block_stats(UnicornCPU *cpu) {
 void unicorn_trigger_interrupt_internal(int level) {
     if (level >= 1 && level <= 7) {
         g_pending_interrupt_level = level;
+        cpu_trace_log_interrupt_trigger(level);
     } else if (level == 0) {
         g_pending_interrupt_level = 0;  /* Clear interrupt */
     }

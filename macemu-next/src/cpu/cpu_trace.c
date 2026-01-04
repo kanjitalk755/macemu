@@ -121,3 +121,27 @@ void cpu_trace_log_mem_read(uint32_t addr, uint32_t value, int size) {
 bool cpu_trace_memory_enabled(void) {
 	return g_trace.trace_memory && cpu_trace_should_log();
 }
+
+void cpu_trace_log_interrupt_trigger(int level) {
+	if (!g_trace.enabled) return;  /* Zero cost if disabled */
+	/* Format: [count] @@INTR_TRIG level */
+	fprintf(stdout, "[%05lu] @@INTR_TRIG %d\n",
+	        g_trace.current_count, level);
+	fflush(stdout);
+}
+
+void cpu_trace_log_interrupt_taken(int level, uint32_t handler_addr) {
+	if (!cpu_trace_should_log()) return;  /* Zero cost if disabled or outside range */
+	/* Format: [count] @@INTR_TAKE level handler_addr */
+	fprintf(stdout, "[%05lu] @@INTR_TAKE %d %08X\n",
+	        g_trace.current_count, level, handler_addr);
+	fflush(stdout);
+}
+
+void cpu_trace_log_emulop(uint16_t opcode) {
+	if (!cpu_trace_should_log()) return;  /* Zero cost if disabled or outside range */
+	/* Format: [count] @@EMULOP opcode */
+	fprintf(stdout, "[%05lu] @@EMULOP %04X\n",
+	        g_trace.current_count, opcode);
+	fflush(stdout);
+}

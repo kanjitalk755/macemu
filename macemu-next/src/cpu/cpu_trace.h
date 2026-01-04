@@ -63,6 +63,15 @@ void cpu_trace_log_mem_read(uint32_t addr, uint32_t value, int size);
 /* Check if memory tracing is enabled */
 bool cpu_trace_memory_enabled(void);
 
+/* Log an interrupt being triggered (zero cost if tracing disabled) */
+void cpu_trace_log_interrupt_trigger(int level);
+
+/* Log an interrupt being taken/processed (zero cost if tracing disabled) */
+void cpu_trace_log_interrupt_taken(int level, uint32_t handler_addr);
+
+/* Log an EmulOp being executed (zero cost if tracing disabled) */
+void cpu_trace_log_emulop(uint16_t opcode);
+
 #ifdef __cplusplus
 }
 #endif

@@ -56,7 +56,47 @@ Track what's done and what's next.
 
 ---
 
-## Phase 2: WebRTC Integration 🎯 CURRENT FOCUS
+## Phase 1.5: CPU Divergence Investigation ⚠️ CRITICAL BUG FOUND
+
+### Issue Discovery
+- ✅ UAE executes 250k+ instructions successfully
+- ✅ Unicorn crashes at ~145k instructions
+- ✅ DualCPU shows divergence starting at instruction #3832
+- ✅ Root cause identified: **Unicorn skips instructions when interrupt triggered**
+
+### Diagnostic Tools Created
+- ✅ Enhanced trace logging with interrupt/EmulOp markers
+- ✅ Side-by-side trace analyzer with disassembly (trace_analyzer_v2.py)
+- ✅ Event extraction (interrupts triggered/taken, EmulOps)
+- ✅ Automated trace runner (run_traces.sh)
+
+### Root Cause Analysis ⚠️ CRITICAL
+**Bug**: Unicorn's interrupt handling in `hook_block()` calls `uc_emu_stop()` which causes instruction skipping.
+
+**Evidence**:
+- At instruction #3831: Unicorn receives interrupt trigger
+- At instruction #3832:
+  - UAE executes PC=0x0208113A (correct)
+  - Unicorn executes PC=0x02081138 (PREVIOUS instruction - skipped ahead!)
+- This causes D0 register divergence (0x05 vs 0x00)
+- Cascade effect leads to crash at PC 0x02009B88
+
+**Theory**:
+When `hook_block()` detects pending interrupt and calls `uc_emu_stop()`:
+1. Basic block has already started executing
+2. Some instructions may have been executed before hook fires
+3. When emulation resumes, we've lost sync with instruction stream
+4. Net effect: instructions get skipped
+
+**Fix Strategy**: Handle interrupts inline without `uc_emu_stop()` - all needed information is available in the hook (PC, SR, registers).
+
+**Status**: Fix pending - need to modify `unicorn_wrapper.c:226-278`
+
+**Documentation**: See [DIVERGENCE_ROOT_CAUSE.md](../../DIVERGENCE_ROOT_CAUSE.md)
+
+---
+
+## Phase 2: WebRTC Integration 🔜 BLOCKED BY PHASE 1.5
 
 ### Planning Phase ✅ COMPLETE
 - ✅ Merge master branch (WebRTC streaming code)
