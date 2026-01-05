@@ -42,11 +42,12 @@ message('  Build SheepShaver: ' + build_sheepshaver.to_string())
 subdir('src/cpu')
 subdir('src/core')
 subdir('src/drivers')
+subdir('src/platform')
 
 # Main executable
 macemu_next = executable('macemu-next',
   'src/main.cpp',
-  link_with: [core_lib, driver_lib, cpu_lib],
+  link_with: [core_lib, driver_lib, cpu_lib, platform_lib],
   dependencies: [unicorn_dep, threads_dep, m_dep],
   include_directories: [
     include_directories('src/common/include'),
