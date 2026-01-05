@@ -10,7 +10,8 @@ config_inc = include_directories(
   '.',
   '../common/include',
   '../../external/json/include',  # nlohmann/json
-  '../webrtc/encoders',           # For codec.h (used by prefs_manager)
+  '../drivers/video/encoders',           # For codec.h (used by prefs_manager)
+  '../drivers/audio/encoders',  # For audio_config.h
 )
 
 config_lib = static_library('config',

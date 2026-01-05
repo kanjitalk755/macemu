@@ -1,43 +1,46 @@
-# Platform drivers - adapters + null implementations
+# Platform drivers - now includes encoders and null implementations
 
-adapter_sources = [
-  'adapter/scsi_adapter.cpp',
-  'adapter/video_adapter.cpp',
-  'adapter/audio_adapter.cpp',
-  'adapter/disk_adapter.cpp',
-  'adapter/serial_adapter.cpp',
-  'adapter/ether_adapter.cpp',
-]
-
-null_driver_sources = [
-  'scsi/scsi_null.cpp',
+# Video drivers
+video_driver_sources = [
   'video/video_null.cpp',
+  'video/video_adapter.cpp',
+  'video/video_output.cpp',
+  'video/video_encoder_thread.cpp',
+]
+
+# Audio drivers
+audio_driver_sources = [
   'audio/audio_null.cpp',
+  'audio/audio_adapter.cpp',
+  'audio/audio_output.cpp',
+  'audio/audio_encoder_thread.cpp',
+]
+
+# Other drivers
+other_driver_sources = [
   'disk/disk_null.cpp',
+  'disk/disk_adapter.cpp',
+  'scsi/scsi_null.cpp',
+  'scsi/scsi_adapter.cpp',
   'serial/serial_null.cpp',
+  'serial/serial_adapter.cpp',
   'ether/ether_null.cpp',
-  'platform/platform_null.cpp',  # Host platform stubs
+  'ether/ether_adapter.cpp',
+  'platform/platform_null.cpp',
+  'platform/timer_interrupt.cpp',
 ]
 
-# Platform infrastructure
-platform_sources = [
-  '../platform/timer_interrupt.cpp',
+# Consolidated null drivers (was dummy/)
+null_driver_sources = [
+  'null_drivers.cpp',
 ]
 
-# Keep some dummy drivers that aren't adapted yet
-remaining_dummy_sources = [
-  'dummy/clip_dummy.cpp',
-  'dummy/prefs_dummy.cpp',
-  'dummy/prefs_editor_dummy.cpp',
-  'dummy/user_strings_dummy.cpp',
-  'dummy/xpram_dummy.cpp',
-]
-
-driver_sources = adapter_sources + null_driver_sources + remaining_dummy_sources + platform_sources
+driver_sources = video_driver_sources + audio_driver_sources + other_driver_sources + null_driver_sources
 
 driver_inc = include_directories(
   '.',
-  'adapter',
+  'video',
+  'audio',
   '../common/include',
   '../core',
   '../cpu',

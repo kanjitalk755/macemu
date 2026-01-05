@@ -1,15 +1,28 @@
 # Unicorn Batch Execution RTE Bug
 
-**Date**: January 4, 2026
-**Status**: ❌ BLOCKED - Cannot use batch execution
-**Impact**: 50-200% performance loss vs optimal batching
-**Priority**: HIGH
+**Date**: January 4, 2026 (Problem discovered)
+**Fixed**: January 5, 2026 (Solution implemented - commit `da1383a7`)
+**Status**: ✅ RESOLVED - Batch execution working with 1.93x performance boost
+**Solution**: Patched Unicorn's cpu-exec.c to handle EXCP_RTE before clearing exception_index
 
 ---
 
-## Problem Summary
+## ⚠️ HISTORICAL DOCUMENT - ISSUE RESOLVED
 
-Batch execution (`unicorn_execute_n(cpu, 10000)`) causes an **infinite RTE (Return from Exception) loop** in Unicorn Engine. We must use single-step execution (`unicorn_execute_one(cpu)`, which internally uses `count=1`) despite significant performance cost.
+This document describes a bug that has been **successfully fixed**. It is preserved for:
+- Understanding the problem-solving process
+- Technical reference for similar issues
+- Documentation of Unicorn Engine internals
+
+**For current implementation**, see commit `da1383a7` and the patch in `external/unicorn/`.
+
+---
+
+## Problem Summary (RESOLVED)
+
+Batch execution (`unicorn_execute_n(cpu, 10000)`) **previously caused** an infinite RTE (Return from Exception) loop in Unicorn Engine. This required single-step execution (`count=1`) with significant performance cost.
+
+**This issue is now FIXED** - batch execution works correctly with count=10000.
 
 ---
 

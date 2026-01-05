@@ -9,7 +9,7 @@
 #define PREFS_MANAGER_H
 
 #include <string>
-#include "../webrtc/encoders/codec.h"
+#include "../drivers/video/encoders/codec.h"
 
 namespace storage {
 

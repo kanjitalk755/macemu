@@ -10,7 +10,7 @@
  */
 
 #include "audio_encoder_thread.h"
-#include "../platform/audio_output.h"
+#include "audio_output.h"
 #include "encoders/opus_encoder.h"
 #include "encoders/audio_config.h"
 #include <thread>
@@ -21,7 +21,7 @@
 #include <cstring>
 #include <vector>
 
-namespace webrtc {
+namespace audio {
 
 // External globals (to be replaced with proper dependency injection later)
 extern std::atomic<bool> g_running;
@@ -137,4 +137,4 @@ void audio_encoder_main(AudioOutput* audio_output) {
     fprintf(stderr, "[AudioEncoder] Thread exiting\n");
 }
 
-} // namespace webrtc
+} // namespace audio

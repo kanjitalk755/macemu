@@ -5,9 +5,9 @@
 #ifndef AUDIO_ENCODER_THREAD_H
 #define AUDIO_ENCODER_THREAD_H
 
-#include "../platform/audio_output.h"
+#include "audio_output.h"
 
-namespace webrtc {
+namespace audio {
 
 /**
  * Audio encoder thread entry point
@@ -19,6 +19,6 @@ namespace webrtc {
  */
 void audio_encoder_main(AudioOutput* audio_output);
 
-} // namespace webrtc
+} // namespace audio
 
 #endif // AUDIO_ENCODER_THREAD_H

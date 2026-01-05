@@ -11,8 +11,8 @@
  */
 
 #include "video_encoder_thread.h"
-#include "../platform/video_output.h"
-#include "../config/config_manager.h"
+#include "video_output.h"
+#include "../../config/config_manager.h"
 #include "encoders/h264_encoder.h"
 #include "encoders/vp9_encoder.h"
 #include "encoders/webp_encoder.h"
@@ -24,7 +24,7 @@
 #include <cstdio>
 #include <ctime>
 
-namespace webrtc {
+namespace video {
 
 // External globals (to be replaced with proper dependency injection later)
 extern std::atomic<bool> g_running;
@@ -205,4 +205,4 @@ void video_encoder_main(VideoOutput* video_output, config::MacemuConfig* config)
     fprintf(stderr, "[VideoEncoder] Thread exiting\n");
 }
 
-} // namespace webrtc
+} // namespace video

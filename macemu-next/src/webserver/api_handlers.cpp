@@ -5,10 +5,10 @@
  */
 
 #include "api_handlers.h"
-#include "../../config/config_manager.h"
-#include "../storage/file_scanner.h"
-#include "../../config/prefs_manager.h"
-#include "../../config/json_utils.h"
+#include "../config/config_manager.h"
+#include "file_scanner.h"
+#include "../config/prefs_manager.h"
+#include "../config/json_utils.h"
 #include <sstream>
 #include <iomanip>
 #include <cstdio>

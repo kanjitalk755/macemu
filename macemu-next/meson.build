@@ -88,17 +88,18 @@ message('  Build SheepShaver: ' + build_sheepshaver.to_string())
 subdir('src/cpu')
 subdir('src/core')
 subdir('src/drivers')
-subdir('src/platform')
 
 # Optional WebRTC streaming
 if enable_webrtc
   subdir('src/config')
-  subdir('src/webrtc')
+  subdir('src/webserver')
+  subdir('src/drivers/video/encoders')
+  subdir('src/drivers/audio/encoders')
 endif
 
 # Main executable
 macemu_next_sources = ['src/main.cpp']
-macemu_next_link_with = [core_lib, driver_lib, cpu_lib, platform_lib]
+macemu_next_link_with = [core_lib, driver_lib, cpu_lib]
 macemu_next_deps = [unicorn_dep, threads_dep, m_dep]
 macemu_next_inc = [
   include_directories('src/common/include'),
@@ -113,7 +114,7 @@ macemu_next_cpp_args = []
 # Add WebRTC support if enabled
 if enable_webrtc
   macemu_next_cpp_args += ['-DENABLE_WEBRTC']
-  macemu_next_link_with += [config_lib, webrtc_lib, encoder_lib, http_lib, storage_lib, utils_lib]
+  macemu_next_link_with += [config_lib, webserver_lib, video_encoder_lib, audio_encoder_lib]
   macemu_next_deps += [nlohmann_json_dep]
 
   # Add codec dependencies if found
@@ -135,7 +136,9 @@ if enable_webrtc
 
   macemu_next_inc += [
     include_directories('src/config'),
-    include_directories('src/webrtc'),
+    include_directories('src/webserver'),
+    include_directories('src/drivers/video'),
+    include_directories('src/drivers/audio'),
   ]
 endif
 

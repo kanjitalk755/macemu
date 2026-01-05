@@ -19,7 +19,7 @@ cpu_deps = [unicorn_dep, uae_dep]
 cpu_lib = static_library('cpu',
   cpu_sources,
   dependencies: cpu_deps,
-  include_directories: [include_directories('.'), include_directories('../common/include'), include_directories('../platform')]
+  include_directories: [include_directories('.'), include_directories('../common/include'), include_directories('../platform'), include_directories('../drivers/platform')]
 )
 
 cpu_dep = declare_dependency(

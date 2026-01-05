@@ -8,8 +8,8 @@
 #define API_HANDLERS_H
 
 #include "http_server.h"
-#include "../../config/config_manager.h"
-#include "../encoders/codec.h"  // For CodecType
+#include "../config/config_manager.h"
+#include "../drivers/video/encoders/codec.h"  // For CodecType
 #include <string>
 #include <functional>
 

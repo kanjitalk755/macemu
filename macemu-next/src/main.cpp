@@ -39,17 +39,37 @@
 #include "user_strings.h"
 #include "platform.h"
 #include "extfs.h"
-#include "timer_interrupt.h"
+#include "drivers/platform/timer_interrupt.h"
 
 // WebRTC streaming (optional, enabled via -Dwebrtc=true)
 #if defined(ENABLE_WEBRTC)
-#include "platform/video_output.h"
-#include "platform/audio_output.h"
+#include "drivers/video/video_output.h"
+#include "drivers/audio/audio_output.h"
 #include "config/config_manager.h"
-#include "webrtc/video_encoder_thread.h"
-#include "webrtc/audio_encoder_thread.h"
-#include "webrtc/webrtc_server.h"
-#include "webrtc/globals.h"
+#include "drivers/video/video_encoder_thread.h"
+#include "drivers/audio/audio_encoder_thread.h"
+// Note: webrtc_server.cpp merged into main.cpp (it was just thread launching)
+
+// WebRTC globals (from webrtc/globals.cpp)
+namespace webrtc {
+	std::atomic<bool> g_running(true);
+	std::atomic<bool> g_request_keyframe(false);
+}
+
+// Video encoder globals (shared with video namespace)
+namespace video {
+	std::atomic<bool> g_running(true);
+	std::atomic<bool> g_request_keyframe(false);
+}
+
+// Audio encoder globals (shared with audio namespace)
+namespace audio {
+	std::atomic<bool> g_running(true);
+}
+
+// Debug flags
+bool g_debug_png = false;
+bool g_debug_mode_switch = false;
 #endif
 
 #define DEBUG 1
@@ -468,19 +488,18 @@ int main(int argc, char **argv)
 	printf("Launching WebRTC worker threads...\n");
 
 	// Launch encoder threads
-	std::thread video_encoder_thread(webrtc::video_encoder_main,
+	std::thread video_encoder_thread(video::video_encoder_main,
 	                                  &video_output, &webrtc_config);
-	std::thread audio_encoder_thread(webrtc::audio_encoder_main,
+	std::thread audio_encoder_thread(audio::audio_encoder_main,
 	                                  &audio_output);
 
-	// Launch WebRTC/HTTP server thread
-	std::thread webrtc_server_thread(webrtc::webrtc_server_main,
-	                                  &webrtc_config);
+	// TODO: Launch HTTP server thread (when implemented)
+	// std::thread http_server_thread(webserver::http_server_main, &webrtc_config);
 
 	printf("WebRTC threads launched:\n");
 	printf("  - Video Encoder: %s codec\n", webrtc_config.web.codec.c_str());
 	printf("  - Audio Encoder: Opus 48kHz stereo\n");
-	printf("  - WebRTC Server: (stub)\n\n");
+	printf("  - HTTP Server: (not yet implemented)\n\n");
 
 	// TODO: Wire Platform API to buffers
 	// g_platform.video = &video_output;
@@ -553,12 +572,13 @@ exit_loop:
 #if defined(ENABLE_WEBRTC)
 	// Signal worker threads to shut down
 	printf("Shutting down WebRTC threads...\n");
-	webrtc::g_running.store(false, std::memory_order_release);
+	video::g_running.store(false, std::memory_order_release);
+	audio::g_running.store(false, std::memory_order_release);
 
 	// Wait for threads to exit
 	video_encoder_thread.join();
 	audio_encoder_thread.join();
-	webrtc_server_thread.join();
+	// TODO: http_server_thread.join(); (when implemented)
 
 	printf("All WebRTC threads exited\n");
 #endif

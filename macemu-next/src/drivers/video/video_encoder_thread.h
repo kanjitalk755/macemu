@@ -5,10 +5,10 @@
 #ifndef VIDEO_ENCODER_THREAD_H
 #define VIDEO_ENCODER_THREAD_H
 
-#include "../platform/video_output.h"
-#include "../config/config_manager.h"
+#include "video_output.h"
+#include "../../config/config_manager.h"
 
-namespace webrtc {
+namespace video {
 
 /**
  * Video encoder thread entry point
@@ -21,6 +21,6 @@ namespace webrtc {
  */
 void video_encoder_main(VideoOutput* video_output, config::MacemuConfig* config);
 
-} // namespace webrtc
+} // namespace video
 
 #endif // VIDEO_ENCODER_THREAD_H
