@@ -48,6 +48,10 @@ void cpu_trace_init(void) {
 	g_trace.current_count = 0;
 }
 
+bool cpu_trace_is_enabled(void) {
+	return g_trace.enabled;
+}
+
 bool cpu_trace_should_log(void) {
 	if (!g_trace.enabled) return false;
 	return (g_trace.current_count >= g_trace.start_count &&

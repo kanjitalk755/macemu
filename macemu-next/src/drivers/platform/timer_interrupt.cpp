@@ -13,6 +13,8 @@
 #include "platform.h"
 #include "timer_interrupt.h"
 #include "uae_wrapper.h"  // For intlev()
+#include "macos_util.h"   // For HasMacStarted()
+#include "cpu_trace.h"    // For cpu_trace_should_log()
 #include <time.h>
 #include <stdio.h>
 
@@ -68,11 +70,24 @@ uint64_t poll_timer_interrupt(void)
 	// This works for both UAE and Unicorn backends:
 	// - UAE: Sets SPCFLAG_INT, will be processed by do_specialties()
 	// - Unicorn: Sets g_pending_interrupt_level, will be checked by hook_block()
-	extern Platform g_platform;
-	if (g_platform.cpu_trigger_interrupt) {
-		int level = intlev();
-		if (level > 0) {
-			g_platform.cpu_trigger_interrupt(level);
+	//
+	// IMPORTANT: Only trigger interrupts after Mac has booted!
+	// During early boot, Mac ROM initializes interrupt vectors and other critical
+	// state. Taking interrupts too early can cause crashes or divergence between
+	// different CPU backends. BasiliskII checks HasMacStarted() before triggering
+	// 60Hz interrupts (see main_unix.cpp:1486).
+	//
+	// ALSO: Disable interrupts during CPU tracing for deterministic traces.
+	// Timer interrupts cause non-deterministic behavior between backends due to
+	// timing differences in when poll_timer_interrupt() is called, leading to
+	// trace divergence. When CPU_TRACE is active, suppress timer interrupts.
+	if (HasMacStarted() && !cpu_trace_is_enabled()) {
+		extern Platform g_platform;
+		if (g_platform.cpu_trigger_interrupt) {
+			int level = intlev();
+			if (level > 0) {
+				g_platform.cpu_trigger_interrupt(level);
+			}
 		}
 	}
 

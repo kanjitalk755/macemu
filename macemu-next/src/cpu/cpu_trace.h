@@ -29,6 +29,9 @@ typedef struct {
 /* Initialize tracing from environment variable */
 void cpu_trace_init(void);
 
+/* Check if tracing is enabled (regardless of current instruction count) */
+bool cpu_trace_is_enabled(void);
+
 /* Check if current instruction should be traced */
 bool cpu_trace_should_log(void);
 
