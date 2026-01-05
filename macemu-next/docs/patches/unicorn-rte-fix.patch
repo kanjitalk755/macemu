@@ -1,0 +1,48 @@
+--- a/qemu/accel/tcg/cpu-exec.c
++++ b/qemu/accel/tcg/cpu-exec.c
+@@ -401,6 +401,23 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
+ #if defined(TARGET_PPC)
+         CPUPPCState *env = &(POWERPC_CPU(uc->cpu)->env);
+         env->nip += 4;
++#endif
++#if defined(TARGET_M68K)
++        /* M68K: Handle RTE (Return from Exception) by calling QEMU's native handler.
++         * EXCP_RTE (0x100) needs special handling because m68k_interrupt_all() must
++         * be called to update PC from stack. If we don't do this here, exception_index
++         * gets cleared (line 426) before m68k_interrupt_all() is ever called, causing
++         * an infinite RTE loop with batch execution.
++         */
++        if (cpu->exception_index == 0x100) {  /* EXCP_RTE */
++            CPUM68KState *env = &(M68K_CPU(uc->cpu)->env);
++            m68k_interrupt_all(env, 0);  /* is_hw=0 for software exception */
++            cpu->exception_index = -1;
++            *ret = EXCP_INTERRUPT;
++            return false;
++        }
+ #endif
+         // Unicorn: call registered interrupt callbacks
+         catched = false;
+--- a/qemu/target/m68k/op_helper.c
++++ b/qemu/target/m68k/op_helper.c
+@@ -165,7 +165,8 @@ static void m68k_rte(CPUM68KState *env)
+     m68k_switch_sp(env);
+ }
+
+-static void m68k_interrupt_all(CPUM68KState *env, int is_hw)
++/* Unicorn: Made non-static so it can be called from UC_HOOK_INTR handler */
++void m68k_interrupt_all(CPUM68KState *env, int is_hw)
+ {
+     CPUState *cs = env_cpu(env);
+
+--- a/qemu/target/m68k/cpu.h
++++ b/qemu/target/m68k/cpu.h
+@@ -176,6 +176,9 @@ typedef enum {
+ } M68kCPUListState;
+
+ void m68k_cpu_list(void);
++
++/* Unicorn: Exposed for UC_HOOK_INTR handler to call directly */
++void m68k_interrupt_all(CPUM68KState *env, int is_hw);
+
+ void register_m68k_insns (CPUM68KState *env);
+
