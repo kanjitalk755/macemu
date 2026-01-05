@@ -177,18 +177,23 @@ def compare_side_by_side(trace1, trace2, disassembler, context=10, max_divergenc
     print(f"Trace 2: {len(trace2)} entries")
     print("=" * 140 + "\n")
 
-    min_len = min(len(trace1), len(trace2))
+    # Separate instructions from events for proper alignment
+    # Events are kept with their instruction index for display purposes
+    trace1_instrs = [(i, e) for i, e in enumerate(trace1) if not e.is_event()]
+    trace2_instrs = [(i, e) for i, e in enumerate(trace2) if not e.is_event()]
+
+    print(f"Trace 1: {len(trace1_instrs)} instructions (excluding events)")
+    print(f"Trace 2: {len(trace2_instrs)} instructions (excluding events)")
+    print()
+
+    min_len = min(len(trace1_instrs), len(trace2_instrs))
     divergence_count = 0
     divergence_points = []
 
-    # Find all divergence points
+    # Find all divergence points (comparing instructions only, ignoring events)
     for i in range(min_len):
-        e1 = trace1[i]
-        e2 = trace2[i]
-
-        # Skip events for now (they might differ in timing)
-        if e1.is_event() or e2.is_event():
-            continue
+        idx1, e1 = trace1_instrs[i]
+        idx2, e2 = trace2_instrs[i]
 
         # Check if instructions differ
         if e1.pc != e2.pc or e1.d_regs != e2.d_regs or e1.a_regs != e2.a_regs or e1.sr != e2.sr:
@@ -202,8 +207,11 @@ def compare_side_by_side(trace1, trace2, disassembler, context=10, max_divergenc
 
     # Show each divergence with context
     for div_idx, div_point in enumerate(divergence_points, 1):
+        idx1, e1_div = trace1_instrs[div_point]
+        idx2, e2_div = trace2_instrs[div_point]
+
         print(f"\n{'─' * 140}")
-        print(f" DIVERGENCE #{div_idx} at instruction index {div_point} (inst #{trace1[div_point].inst_num})")
+        print(f" DIVERGENCE #{div_idx} at instruction index {div_point} (inst #{e1_div.inst_num})")
         print(f"{'─' * 140}\n")
 
         # Show context before
@@ -211,24 +219,29 @@ def compare_side_by_side(trace1, trace2, disassembler, context=10, max_divergenc
         end = min(min_len, div_point + context + 1)
 
         for i in range(start, end):
-            e1 = trace1[i]
-            e2 = trace2[i]
+            idx1, e1 = trace1_instrs[i]
+            idx2, e2 = trace2_instrs[i]
 
             marker = ">>>>" if i == div_point else "    "
 
-            # Handle events
-            if e1.is_event() or e2.is_event():
-                event1_str = e1.event_str() if e1.is_event() else ""
-                event2_str = e2.event_str() if e2.is_event() else ""
+            # Check if there are events between this instruction and the previous one
+            # Show events from trace1
+            if i > 0:
+                prev_idx1 = trace1_instrs[i-1][0]
+                for event_idx in range(prev_idx1 + 1, idx1):
+                    if event_idx < len(trace1) and trace1[event_idx].is_event():
+                        print(f"     [{trace1[event_idx].inst_num:05d}]")
+                        print(f"     T1: {trace1[event_idx].event_str()}")
+                        print()
 
-                if event1_str or event2_str:
-                    print(f"{marker} [{e1.inst_num:05d}]")
-                    if event1_str:
-                        print(f"     T1: {event1_str}")
-                    if event2_str:
-                        print(f"     T2: {event2_str}")
-                    print()
-                continue
+            # Show events from trace2
+            if i > 0:
+                prev_idx2 = trace2_instrs[i-1][0]
+                for event_idx in range(prev_idx2 + 1, idx2):
+                    if event_idx < len(trace2) and trace2[event_idx].is_event():
+                        print(f"     [{trace2[event_idx].inst_num:05d}]")
+                        print(f"     T2: {trace2[event_idx].event_str()}")
+                        print()
 
             # Get disassembly
             disasm1 = disassembler.get_instruction(e1.pc)

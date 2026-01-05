@@ -78,6 +78,7 @@ struct UnicornCPU {
     uc_hook insn_invalid_hook;  // UC_HOOK_INSN_INVALID for EmulOps (no per-instruction overhead)
     uc_hook trap_hook;  // UC_HOOK_MEM_FETCH_UNMAPPED for MMIO trap region
     uc_hook trace_hook; // UC_HOOK_MEM_READ for CPU tracing
+    uc_hook intr_hook;  // UC_HOOK_INTR for exception handling (RTE, STOP, etc.)
 
     /* MMIO trap context */
     TrapContext trap_ctx;
@@ -309,6 +310,21 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
             return;
         }
     }
+}
+
+/**
+ * Hook for CPU exceptions (UC_HOOK_INTR)
+ * Called when Unicorn raises an exception (RTE, STOP, etc.)
+ * We need this to prevent UC_ERR_EXCEPTION on RTE instruction.
+ */
+static void hook_interrupt(uc_engine *uc, uint32_t intno, void *user_data) {
+    /* EXCP_RTE (0x100) is handled internally by m68k_rte() in Unicorn.
+     * We just need to acknowledge it here to prevent UC_ERR_EXCEPTION.
+     * No action needed - the exception handler already executed.
+     */
+    (void)uc;
+    (void)intno;
+    (void)user_data;
 }
 
 /**
@@ -550,6 +566,20 @@ UnicornCPU* unicorn_create_with_model(UnicornArch arch, int cpu_model) {
                      1, 0);  /* All addresses */
     if (err != UC_ERR_OK) {
         fprintf(stderr, "Failed to register UC_HOOK_INSN_INVALID: %s\n", uc_strerror(err));
+        uc_close(cpu->uc);
+        free(cpu);
+        return NULL;
+    }
+
+    /* Register interrupt hook to catch RTE and prevent UC_ERR_EXCEPTION */
+    fprintf(stderr, "[UNICORN] Registering UC_HOOK_INTR for RTE/exception handling\n");
+    err = uc_hook_add(cpu->uc, &cpu->intr_hook,
+                     UC_HOOK_INTR,
+                     (void*)hook_interrupt,
+                     cpu,  /* user_data */
+                     1, 0);  /* All addresses */
+    if (err != UC_ERR_OK) {
+        fprintf(stderr, "Failed to register UC_HOOK_INTR: %s\n", uc_strerror(err));
         uc_close(cpu->uc);
         free(cpu);
         return NULL;

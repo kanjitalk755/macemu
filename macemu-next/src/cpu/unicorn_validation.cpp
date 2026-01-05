@@ -22,6 +22,10 @@ extern uint32 ROMBaseMac;
 extern uint8 *ROMBaseHost;
 extern uint32 ROMSize;
 
+// External CPU configuration (from prefs system)
+extern int CPUType;  // 2=68020, 3=68030, 4=68040
+extern int FPUType;  // 0=none, 1=68881/68882/68040
+
 // Master CPU selection for EmulOps and traps
 typedef enum {
     MASTER_CPU_UAE,      // UAE handles EmulOps/traps, sync to Unicorn
@@ -102,14 +106,32 @@ bool unicorn_validation_init(void) {
         printf("✓ Master CPU: UAE (default)\n");
     }
 
-    // Create Unicorn CPU with 68040 model
-    #define UC_CPU_M68K_M68040 3
-    validation_state.unicorn = unicorn_create_with_model(UCPU_ARCH_M68K, UC_CPU_M68K_M68040);
+    // Create Unicorn CPU with model from prefs system (CPUType/FPUType)
+    // Follow same logic as standalone Unicorn backend (cpu_unicorn.cpp:157-166)
+    // NOTE: Unicorn's CPU table uses array indices, not UC_CPU_M68K enum values!
+    // Array order: 0=m68000, 1=m68020, 2=m68030, 3=m68040, 4=m68060...
+    int uc_model;
+    if (CPUType == 4) {
+        uc_model = 3;  // 68040 (array index)
+    } else {
+        if (FPUType)
+            uc_model = 2;  // 68030 (array index)
+        else if (CPUType >= 2)
+            uc_model = 1;  // 68020 (array index)
+        else
+            uc_model = 0;  // 68000 (array index)
+    }
+
+    fprintf(stderr, "[DualCPU] Creating Unicorn CPU with model %d (array index, CPUType=%d, FPUType=%d)\n",
+        uc_model, CPUType, FPUType);
+    validation_state.unicorn = unicorn_create_with_model(UCPU_ARCH_M68K, uc_model);
     if (!validation_state.unicorn) {
         fprintf(stderr, "Failed to create Unicorn CPU\n");
         return false;
     }
-    printf("✓ Unicorn CPU created (68040)\n");
+    printf("✓ Unicorn CPU created (680%02d%s)\n",
+           (uc_model == 0) ? 0 : (uc_model * 10 + 10),
+           FPUType ? " with FPU" : "");
 
     // Map RAM
     if (!unicorn_map_ram(validation_state.unicorn, RAMBaseMac, RAMBaseHost, RAMSize)) {

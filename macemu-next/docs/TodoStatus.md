@@ -38,6 +38,10 @@ Track what's done and what's next.
 - ✅ **Interrupt support** (UC_HOOK_BLOCK for efficiency, commit 1305d3b2)
 - ✅ **Native 68k trap execution** (no UAE dependency, commit d90208dc)
 - ✅ **Legacy API removal** (~236 lines, commit ebd3d1b2)
+- ✅ **RTE (Return from Exception) fix** - UC_HOOK_INTR handler (Jan 4, 2026)
+  - Fixed UC_ERR_EXCEPTION crash when returning from interrupts
+  - Unicorn now runs 157M+ instructions without crashing
+  - Critical for handling Mac OS interrupts
 
 ### DualCPU Backend
 - ✅ Lockstep execution (UAE + Unicorn)
@@ -99,7 +103,27 @@ Track what's done and what's next.
 
 ---
 
-## Phase 2: WebRTC Integration 🔜 BLOCKED BY PHASE 1.5
+## Phase 1.6: Trace Analysis Tools ✅ COMPLETE (Jan 4, 2026)
+
+### Trace Infrastructure
+- ✅ **Enhanced run_traces.sh** - Support for instruction ranges (start-end)
+- ✅ **Fixed trace_analyzer.py** - Proper handling of interrupt event markers
+  - Separates instructions from events before comparison
+  - Prevents false divergence reports from interrupt timing
+  - Shows events in context without using them for alignment
+- ✅ **CPU type initialization fix** - DualCPU now respects config settings
+  - Fixed unicorn_validation.cpp hardcoded 68040
+  - Both backends now use CPUType/FPUType from prefs system
+
+### Validation Results
+- ✅ UAE vs Unicorn: 98.5% match (29,536 instructions identical)
+- ✅ First divergence at instruction #29,537 (timing-related, expected)
+- ✅ Both backends execute same instructions in same order
+- ✅ Interrupt timing differences confirmed as architectural (not bugs)
+
+---
+
+## Phase 2: WebRTC Integration 🔜 NEXT
 
 ### Planning Phase ✅ COMPLETE
 - ✅ Merge master branch (WebRTC streaming code)

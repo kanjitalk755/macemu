@@ -2,14 +2,16 @@
 # Comprehensive CPU trace runner for macemu-next
 # Runs UAE, Unicorn, and DualCPU backends with configurable traces
 #
-# Usage: ./run_traces.sh [instruction_count] [rom_path] [timeout]
-#   instruction_count: Number of instructions to trace (default: 250000)
+# Usage: ./run_traces.sh [start] [end] [rom_path] [timeout]
+#   start: First instruction to trace (default: 0)
+#   end: Last instruction to trace (default: 250000)
 #   rom_path: Path to ROM file (default: ~/quadra.rom)
 #   timeout: Emulator timeout in seconds (default: 10)
 #
 # Examples:
-#   ./run_traces.sh                    # 250k instructions, 10 sec timeout
-#   ./run_traces.sh 100000 ~/rom.bin 5 # 100k instructions, 5 sec timeout
+#   ./run_traces.sh                          # 0-250k instructions, 10 sec timeout
+#   ./run_traces.sh 800000 900000            # 800k-900k instructions
+#   ./run_traces.sh 0 100000 ~/rom.bin 5     # 0-100k instructions, 5 sec timeout
 #
 # Output: Creates timestamped directory with trace logs and analysis
 
@@ -36,10 +38,11 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 # Parse arguments
-INSN_COUNT="${1:-250000}"
-ROM="${2:-$HOME/quadra.rom}"
-TIMEOUT="${3:-10}"
-TRACE_RANGE="0-$INSN_COUNT"
+INSN_START="${1:-0}"
+INSN_END="${2:-250000}"
+ROM="${3:-$HOME/quadra.rom}"
+TIMEOUT="${4:-10}"
+TRACE_RANGE="$INSN_START-$INSN_END"
 
 # Check ROM exists
 if [ ! -f "$ROM" ]; then
@@ -57,7 +60,7 @@ echo "════════════════════════�
 echo "Binary:      $MACEMU_BIN"
 echo "Config:      $CONFIG_FILE"
 echo "ROM:         $ROM"
-echo "Instructions: $INSN_COUNT (range: $TRACE_RANGE)"
+echo "Trace Range: $INSN_START - $INSN_END ($(($INSN_END - $INSN_START)) instructions)"
 echo "Timeout:     ${TIMEOUT}s"
 echo "Output:      $OUTDIR"
 echo "════════════════════════════════════════════════════════════════"
