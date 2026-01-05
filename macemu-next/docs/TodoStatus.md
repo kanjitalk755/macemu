@@ -108,6 +108,16 @@ Track what's done and what's next.
 - ✅ Threading model documented
 - ✅ Create comprehensive integration plan
 
+### Configuration System ✅ COMPLETE (Jan 4, 2026)
+- ✅ Copy JSON config system (nlohmann/json) - commit 19d871c8
+- ✅ Implement JSON config loading/saving
+- ✅ Add XDG directory support (~/.config/macemu-next/)
+- ✅ Add --config and --save-config CLI options
+- ✅ Human-readable CPU names ("68040" vs "4")
+- ✅ Complete documentation (JSON_CONFIG.md)
+- ✅ Test with all three backends (UAE, Unicorn, DualCPU)
+- ⏳ Add WebRTC-specific config options (codec, ports, etc.)
+
 ### Platform API (In-Process Buffers)
 - ⏳ Design video_output.h / audio_output.h APIs
 - ⏳ Implement triple buffer (lock-free, atomic operations)
@@ -122,12 +132,6 @@ Track what's done and what's next.
 - ⏳ Create video_encoder_thread.cpp
 - ⏳ Create audio_encoder_thread.cpp
 - ⏳ Wire encoders to in-process buffers
-
-### Configuration System
-- ⏳ Copy JSON config system (nlohmann/json)
-- ⏳ Migrate prefs conversion logic
-- ⏳ Update all code to use JsonConfig
-- ⏳ Test config load/save/hot-reload
 
 ### Main Entry Point
 - ⏳ Create unified main.cpp
@@ -295,6 +299,7 @@ Track what's done and what's next.
 ## Recent Commits (Dec 2025 - Jan 2026)
 
 ```
+19d871c8 - Add JSON configuration system with XDG support (Jan 4, 2026)
 c388b229 - Platform API interrupt abstraction (Jan 4, 2026)
 a3712b98 - WebRTC integration planning (initial documents)
 309d4fab - Merge master branch with WebRTC improvements
@@ -327,7 +332,7 @@ ebd3d1b2 - Remove legacy per-CPU hook API and UC_HOOK_CODE implementation
 
 ### Medium-Term (This Month)
 1. ⏳ Complete WebRTC integration
-2. ⏳ Migrate JSON config system
+2. ✅ Migrate JSON config system - DONE (commit 19d871c8)
 3. ⏳ Remove IPC layer
 4. ⏳ Remove legacy drivers
 5. ⏳ End-to-end testing (browser → emulator)
@@ -353,13 +358,18 @@ ebd3d1b2 - Remove legacy per-CPU hook API and UC_HOOK_CODE implementation
 
 ---
 
-**Last Updated**: January 3, 2026
+**Last Updated**: January 4, 2026
 **Current Phase**: Phase 2 (WebRTC Integration)
 **Branch**: phoenix-mac-planning
-**Focus**: Implementing in-process video/audio buffers, integrating WebRTC server
+**Focus**: JSON config system complete, ready for video/audio buffer implementation
 
-**Major Milestone**: Planning phase complete - comprehensive integration plan created with:
-- 7-thread architecture design
-- File-by-file migration mapping (180 files)
-- Clear implementation phases (10-14 days estimated)
-- Success criteria and testing strategy
+**Major Milestones**:
+- ✅ JSON configuration system (commit 19d871c8)
+  - Human-readable CPU names, XDG support
+  - Complete documentation and testing
+  - Breaking change: old text format removed
+- ✅ Planning phase complete
+  - 7-thread architecture design
+  - File-by-file migration mapping (180 files)
+  - Clear implementation phases (10-14 days estimated)
+  - Success criteria and testing strategy

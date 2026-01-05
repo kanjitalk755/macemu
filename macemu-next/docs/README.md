@@ -26,6 +26,15 @@ meson setup build
 meson compile -C build
 ```
 
+### Configure
+```bash
+# Generate default config
+./build/macemu-next --save-config
+
+# Edit config file
+nano ~/.config/macemu-next/config.json
+```
+
 ### Run with Unicorn (primary backend)
 ```bash
 CPU_BACKEND=unicorn ./build/macemu-next ~/quadra.rom
@@ -36,7 +45,13 @@ CPU_BACKEND=unicorn ./build/macemu-next ~/quadra.rom
 CPU_BACKEND=dualcpu ./build/macemu-next ~/quadra.rom
 ```
 
+### Run with custom config
+```bash
+./build/macemu-next --config myconfig.json ~/quadra.rom
+```
+
 See **[Commands.md](Commands.md)** for complete build and testing guide.
+See **[JSON_CONFIG.md](JSON_CONFIG.md)** for configuration documentation.
 
 ---
 
@@ -47,6 +62,7 @@ See **[Commands.md](Commands.md)** for complete build and testing guide.
 - **[ProjectGoals.md](ProjectGoals.md)** - Vision and end goals (Unicorn-first approach)
 - **[TodoStatus.md](TodoStatus.md)** - What's done ✅ and what's next ⏳
 - **[Commands.md](Commands.md)** - Build, test, debug, trace commands
+- **[JSON_CONFIG.md](JSON_CONFIG.md)** - Configuration system (NEW!)
 
 ### Deep Dive (Technical Details)
 - **[deepdive/](deepdive/)** - Detailed technical documentation on specific subsystems

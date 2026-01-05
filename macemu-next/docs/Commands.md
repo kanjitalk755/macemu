@@ -48,6 +48,35 @@ meson compile -C build
 
 ---
 
+## Configuration Commands
+
+### Generate Default Config
+
+```bash
+./build/macemu-next --save-config
+# Creates ~/.config/macemu-next/config.json
+```
+
+### Use Custom Config
+
+```bash
+./build/macemu-next --config myconfig.json ~/quadra.rom
+```
+
+### Edit Config
+
+```bash
+# User config
+nano ~/.config/macemu-next/config.json
+
+# Or copy example
+cp config.example.json ~/.config/macemu-next/config.json
+```
+
+See **[JSON_CONFIG.md](JSON_CONFIG.md)** for complete configuration documentation.
+
+---
+
 ## Run Commands
 
 ### Basic Execution
@@ -61,6 +90,9 @@ CPU_BACKEND=uae ./build/macemu-next ~/quadra.rom
 
 # DualCPU validation
 CPU_BACKEND=dualcpu ./build/macemu-next ~/quadra.rom
+
+# With custom config
+CPU_BACKEND=unicorn ./build/macemu-next --config myconfig.json ~/quadra.rom
 ```
 
 ### With Timeout
