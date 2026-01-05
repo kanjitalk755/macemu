@@ -227,8 +227,13 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
         cpu->block_stats.block_size_histogram[100]++;  /* 100+ bucket */
     }
 
-    /* Poll timer - may trigger interrupt */
-    poll_timer_interrupt();
+    /* Poll timer every 100 instructions (same as UAE for timing consistency) */
+    static uint64_t total_instructions = 0;
+    total_instructions += insn_count;
+    if (total_instructions >= 100) {
+        total_instructions = 0;
+        poll_timer_interrupt();
+    }
 
     /* Check for pending interrupts (platform API) */
     if (g_pending_interrupt_level > 0) {
@@ -768,8 +773,12 @@ bool unicorn_execute_one(UnicornCPU *cpu) {
 
                 /* MMIO Trap Approach: Redirect PC to unmapped region */
 
-                /* Handle EmulOp (0x71xx) via MMIO trap */
-                if ((opcode & 0xFF00) == 0x7100) {
+                /* Handle EmulOp (0x7100-0x713E) via MMIO trap
+                 * NOTE: Only opcodes 0x7100-0x713E are valid EmulOps.
+                 * Opcodes 0x713F and beyond (e.g., 0x7103 = MOVEQ #3,D0) are VALID M68K instructions!
+                 * See emul_op.h: M68K_EMUL_OP_MAX is the highest EmulOp number (~0x3E).
+                 */
+                if (opcode >= 0x7100 && opcode < 0x7140) {
                     /* Save original PC */
                     cpu->trap_ctx.saved_pc = (uint32_t)pc;
                     cpu->trap_ctx.in_emulop = true;
