@@ -1,0 +1,87 @@
+{
+  "version": "1.0",
+  "emulator": {
+    "cpu": "68040",
+    "fpu": true,
+    "ramsize": 33554432,
+    "modelid": 5
+  },
+  "boot": {
+    "bootdrive": 0,
+    "bootdriver": 0
+  },
+  "storage": {
+    "rom": null,
+    "disks": ["/home/mick/macemu/web-streaming/storage/images/7.6.img"],
+    "floppies": [],
+    "cdroms": [],
+    "scsi": {
+      "0": null,
+      "1": null,
+      "2": null,
+      "3": null,
+      "4": null,
+      "5": null,
+      "6": null
+    },
+    "extfs": null
+  },
+  "video": {
+    "displaycolordepth": 0,
+    "screen": null,
+    "frameskip": 6,
+    "scale_nearest": false,
+    "scale_integer": false
+  },
+  "audio": {
+    "nosound": true,
+    "sound_buffer": 0
+  },
+  "input": {
+    "keyboardtype": 5,
+    "keycodes": false,
+    "keycodefile": null,
+    "mousewheelmode": 0,
+    "mousewheellines": 0,
+    "hotkey": 0,
+    "swap_opt_cmd": true,
+    "init_grab": false
+  },
+  "network": {
+    "ether": null,
+    "etherconfig": null,
+    "udptunnel": false,
+    "udpport": 6066,
+    "redir": [],
+    "host_domain": []
+  },
+  "serial": {
+    "seriala": null,
+    "serialb": null
+  },
+  "jit": {
+    "enabled": false,
+    "fpu": false,
+    "debug": false,
+    "cachesize": 0,
+    "lazyflush": false,
+    "inline": false,
+    "blacklist": null
+  },
+  "ui": {
+    "nogui": true,
+    "noclipconversion": false,
+    "title": "macemu-next trace",
+    "gammaramp": null
+  },
+  "system": {
+    "nocdrom": true,
+    "ignoresegv": true,
+    "delay": 0,
+    "yearofs": 0,
+    "dayofs": 0,
+    "mag_rate": null,
+    "name_encoding": 0,
+    "xpram": null
+  }
+}

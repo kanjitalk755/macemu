@@ -26,6 +26,7 @@
 #include "sysdeps.h"
 #include "sys.h"
 #include "prefs.h"
+#include "json_config.h"
 
 
 // Prefs items are stored in a linked list of these nodes
@@ -53,8 +54,28 @@ void PrefsInit(const char *vmdir, int &argc, char **&argv)
 	AddPrefsDefaults();
 	AddPlatformPrefsDefaults();
 
-	// Load preferences from settings file
-	LoadPrefs(vmdir);
+	// Check for --config option first
+	const char *config_file_override = NULL;
+	for (int i=1; i<argc; i++) {
+		if (argv[i] && strcmp(argv[i], "--config") == 0 && i+1 < argc) {
+			config_file_override = argv[i+1];
+			argv[i] = NULL;
+			argv[i+1] = NULL;
+			break;
+		}
+	}
+
+	// Find and load configuration file (JSON format)
+	char *config_path = FindConfigFile(config_file_override);
+	if (config_path) {
+		if (!LoadConfigJSON(config_path)) {
+			fprintf(stderr, "WARNING: Failed to load config from %s, using defaults\n", config_path);
+		}
+		free(config_path);
+	} else {
+		printf("No config file found, using defaults\n");
+		printf("To create a config file, run with --save-config\n");
+	}
 
 	// Override prefs with command line options
 	for (int i=1; i<argc; i++) {
@@ -64,6 +85,23 @@ void PrefsInit(const char *vmdir, int &argc, char **&argv)
 		if (!option || strlen(option) < 3 || option[0] != '-' || option[1] != '-')
 			continue;
 		const char *keyword = option + 2;
+
+		// Skip --config (already processed)
+		if (strcmp(keyword, "config") == 0) {
+			i++;  // Skip the config file path too
+			continue;
+		}
+
+		// Handle --save-config
+		if (strcmp(keyword, "save-config") == 0) {
+			argv[i] = NULL;
+			if (!SaveConfigJSON(NULL)) {
+				fprintf(stderr, "ERROR: Failed to save config\n");
+				exit(1);
+			}
+			printf("Config saved successfully. Exiting.\n");
+			exit(0);
+		}
 
 		// Find descriptor for keyword
 		const prefs_desc *d = find_prefs_desc(keyword);

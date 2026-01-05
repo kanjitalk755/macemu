@@ -20,11 +20,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MACEMU_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$MACEMU_ROOT/build"
 MACEMU_BIN="$BUILD_DIR/macemu-next"
+CONFIG_FILE="$SCRIPT_DIR/trace-config.json"
 
 # Check if binary exists
 if [ ! -f "$MACEMU_BIN" ]; then
     echo "Error: macemu-next binary not found at $MACEMU_BIN"
     echo "Please build first: cd $MACEMU_ROOT && meson compile -C build"
+    exit 1
+fi
+
+# Check if config exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: Config file not found at $CONFIG_FILE"
     exit 1
 fi
 
@@ -48,6 +55,7 @@ echo "════════════════════════�
 echo "  macemu-next CPU Trace Runner"
 echo "════════════════════════════════════════════════════════════════"
 echo "Binary:      $MACEMU_BIN"
+echo "Config:      $CONFIG_FILE"
 echo "ROM:         $ROM"
 echo "Instructions: $INSN_COUNT (range: $TRACE_RANGE)"
 echo "Timeout:     ${TIMEOUT}s"
@@ -66,7 +74,7 @@ echo "│ Step 1/3: Running UAE (interpreter baseline)                  │"
 echo "└────────────────────────────────────────────────────────────────┘"
 
 env EMULATOR_TIMEOUT=$TIMEOUT CPU_TRACE="$TRACE_RANGE" CPU_BACKEND=uae \
-    "$MACEMU_BIN" "$ROM" > "$OUTDIR/uae_full.log" 2>&1
+    "$MACEMU_BIN" --config "$CONFIG_FILE" "$ROM" > "$OUTDIR/uae_full.log" 2>&1
 UAE_EXIT=$?
 
 # Extract just trace lines
@@ -86,7 +94,7 @@ echo "│ Step 2/3: Running Unicorn (JIT target)                        │"
 echo "└────────────────────────────────────────────────────────────────┘"
 
 env EMULATOR_TIMEOUT=$TIMEOUT CPU_TRACE="$TRACE_RANGE" CPU_BACKEND=unicorn \
-    "$MACEMU_BIN" "$ROM" > "$OUTDIR/unicorn_full.log" 2>&1
+    "$MACEMU_BIN" --config "$CONFIG_FILE" "$ROM" > "$OUTDIR/unicorn_full.log" 2>&1
 UNICORN_EXIT=$?
 
 # Extract just trace lines
@@ -106,7 +114,7 @@ echo "│ Step 3/3: Running DualCPU (lockstep validation)               │"
 echo "└────────────────────────────────────────────────────────────────┘"
 
 env EMULATOR_TIMEOUT=$TIMEOUT DUALCPU_TRACE_DEPTH=20 CPU_BACKEND=dualcpu \
-    "$MACEMU_BIN" "$ROM" > "$OUTDIR/dualcpu_full.log" 2>&1 || true
+    "$MACEMU_BIN" --config "$CONFIG_FILE" "$ROM" > "$OUTDIR/dualcpu_full.log" 2>&1 || true
 DUALCPU_EXIT=$?
 
 # Extract just trace lines

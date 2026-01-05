@@ -20,3 +20,6 @@ build/
 
 # Runtime
 .basilisk_ii_xpram
+BasiliskII_Prefs
+BasiliskII_XPRAM
+basilisk_ii.prefs

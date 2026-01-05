@@ -95,13 +95,6 @@ int main(int argc, char **argv)
 	// Initialize platform with null drivers
 	platform_init();
 
-	// Check for ROM file argument
-	if (argc < 2) {
-		fprintf(stderr, "Usage: %s <rom-file>\n", argv[0]);
-		return 1;
-	}
-	const char *rom_path = argv[1];
-
 	// Initialize random number generator
 	srand(time(NULL));
 
@@ -109,7 +102,15 @@ int main(int argc, char **argv)
 	RAMSize = 32 * 1024 * 1024;  // 32MB
 
 	// Read preferences (minimal)
+	// This processes --config and other options, modifying argc/argv
 	PrefsInit(NULL, argc, argv);
+
+	// Check for ROM file argument (after PrefsInit processes options)
+	if (argc < 2) {
+		fprintf(stderr, "Usage: %s [--config <file>] [--save-config] <rom-file>\n", argv[0]);
+		return 1;
+	}
+	const char *rom_path = argv[1];
 	PrefsAddInt32("ramsize", RAMSize);
 	PrefsAddInt32("cpu", 4);  // 68040
 	PrefsAddBool("fpu", true);

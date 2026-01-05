@@ -7,6 +7,7 @@ core_sources = [
   'emul_op.cpp',
   'ether.cpp',
   'extfs.cpp',
+  'json_config.cpp',
   'macos_util.cpp',
   'main.cpp',
   'prefs.cpp',
@@ -29,6 +30,7 @@ core_inc = include_directories(
   '../common/include',
   '../cpu',
   '../cpu/uae_cpu',
+  '../../external/json/include',  # nlohmann/json
 )
 
 core_lib = static_library('core',
