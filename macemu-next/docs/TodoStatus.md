@@ -4,6 +4,31 @@ Track what's done and what's next.
 
 ---
 
+## 🔥 HIGH PRIORITY ISSUES
+
+### Unicorn Batch Execution Performance Bug
+
+**Status**: ❌ BLOCKED
+**Impact**: 50-200% performance loss
+**Severity**: HIGH
+**Effort**: MEDIUM-HIGH
+
+**Problem**: Cannot use batch execution (`unicorn_execute_n(10000)`) due to RTE infinite loop. Must use single-step execution (`count=1`) which has significant function call overhead.
+
+**Documentation**: [UnicornBatchExecutionRTEBug.md](deepdive/UnicornBatchExecutionRTEBug.md)
+
+**Potential Solutions**:
+1. **Hybrid execution** (detect RTE, switch to count=1) - MEDIUM effort, MEDIUM risk
+2. **Patch Unicorn** (modify hook ordering) - HIGH effort, HIGH risk
+3. **Alternative JIT** (switch backend) - VERY HIGH effort, VERY HIGH risk
+4. **Accept limitation** (current) - ZERO effort, ZERO risk
+
+**Current Status**: Option 4 - Documented and working, but suboptimal
+
+**Next Steps**: Profile RTE frequency in Mac OS to determine if hybrid approach is worth pursuing
+
+---
+
 ## Phase 1: Core CPU Emulation ✅ COMPLETE
 
 ### Build System
@@ -42,6 +67,11 @@ Track what's done and what's next.
   - Fixed UC_ERR_EXCEPTION crash when returning from interrupts
   - Unicorn now runs 157M+ instructions without crashing
   - Critical for handling Mac OS interrupts
+- ❌ **Batch execution limitation** - HIGH PRIORITY PERFORMANCE ISSUE
+  - Cannot use `unicorn_execute_n(10000)` due to RTE infinite loop bug
+  - Must use `unicorn_execute_one()` (count=1) for correctness
+  - Performance cost: 50-200% slower than optimal batching
+  - See: [UnicornBatchExecutionRTEBug.md](deepdive/UnicornBatchExecutionRTEBug.md)
 
 ### DualCPU Backend
 - ✅ Lockstep execution (UAE + Unicorn)
