@@ -1,8 +1,8 @@
 /*
  *  main.cpp - macemu-next main entry point
  *
- *  Minimal Mac emulator entry point with platform adapter architecture.
- *  Uses null drivers for all platform functions.
+ *  Mac emulator with integrated WebRTC streaming (in-process architecture).
+ *  Launches 4 threads: CPU/Main, Video Encoder, Audio Encoder, WebRTC/HTTP
  */
 
 #include <stdio.h>
@@ -13,6 +13,8 @@
 #include <sys/mman.h>
 #include <thread>
 #include <chrono>
+#include <atomic>
+#include <csignal>
 
 #include "sysdeps.h"
 #include "cpu_emulation.h"
@@ -38,6 +40,17 @@
 #include "platform.h"
 #include "extfs.h"
 #include "timer_interrupt.h"
+
+// WebRTC streaming (optional, enabled via -Dwebrtc=true)
+#if defined(ENABLE_WEBRTC)
+#include "platform/video_output.h"
+#include "platform/audio_output.h"
+#include "config/config_manager.h"
+#include "webrtc/video_encoder_thread.h"
+#include "webrtc/audio_encoder_thread.h"
+#include "webrtc/webrtc_server.h"
+#include "webrtc/globals.h"
+#endif
 
 #define DEBUG 1
 #include "debug.h"
@@ -436,6 +449,46 @@ int main(int argc, char **argv)
 		}
 	}
 
+
+#if defined(ENABLE_WEBRTC)
+	// ============================================================
+	// WebRTC Streaming - Launch Worker Threads
+	// ============================================================
+	printf("\n=== WebRTC Streaming ===\n");
+
+	// Initialize video and audio output buffers
+	VideoOutput video_output(1920, 1080);  // Max 1080p
+	AudioOutput audio_output(48000, 2);     // 48kHz stereo
+
+	// Load configuration
+	config::MacemuConfig webrtc_config;
+	// TODO: Load from ~/.config/macemu-next/config.json
+	webrtc_config.web.codec = "png";  // Default codec
+
+	printf("Launching WebRTC worker threads...\n");
+
+	// Launch encoder threads
+	std::thread video_encoder_thread(webrtc::video_encoder_main,
+	                                  &video_output, &webrtc_config);
+	std::thread audio_encoder_thread(webrtc::audio_encoder_main,
+	                                  &audio_output);
+
+	// Launch WebRTC/HTTP server thread
+	std::thread webrtc_server_thread(webrtc::webrtc_server_main,
+	                                  &webrtc_config);
+
+	printf("WebRTC threads launched:\n");
+	printf("  - Video Encoder: %s codec\n", webrtc_config.web.codec.c_str());
+	printf("  - Audio Encoder: Opus 48kHz stereo\n");
+	printf("  - WebRTC Server: (stub)\n\n");
+
+	// TODO: Wire Platform API to buffers
+	// g_platform.video = &video_output;
+	// g_platform.audio = &audio_output;
+#else
+	printf("\nWebRTC disabled (build with -Dwebrtc=true to enable)\n\n");
+#endif
+
 	// Execution loop - uses platform CPU API
 	int result;
 	uint64_t instruction_count = 0;
@@ -496,6 +549,19 @@ int main(int argc, char **argv)
 		}
 	}
 exit_loop:
+
+#if defined(ENABLE_WEBRTC)
+	// Signal worker threads to shut down
+	printf("Shutting down WebRTC threads...\n");
+	webrtc::g_running.store(false, std::memory_order_release);
+
+	// Wait for threads to exit
+	video_encoder_thread.join();
+	audio_encoder_thread.join();
+	webrtc_server_thread.join();
+
+	printf("All WebRTC threads exited\n");
+#endif
 
 	// Clean up timer
 	printf("\n=== Shutting Down ===\n");

@@ -5,11 +5,10 @@
  */
 
 #include "api_handlers.h"
-#include "../config/config_manager.h"
+#include "../../config/config_manager.h"
 #include "../storage/file_scanner.h"
-#include "../storage/prefs_manager.h"
-#include "../utils/json_utils.h"
-#include "../../BasiliskII/src/IPC/ipc_protocol.h"
+#include "../../config/prefs_manager.h"
+#include "../../config/json_utils.h"
 #include <sstream>
 #include <iomanip>
 #include <cstdio>
@@ -228,103 +227,41 @@ Response APIRouter::handle_prefs_post(const Request& req) {
 }
 
 Response APIRouter::handle_restart(const Request& req) {
-    fprintf(stderr, "Server: Restart requested via API\n");
-    if (ctx_->send_command_fn) {
-        ctx_->send_command_fn(MACEMU_CMD_RESET);
-    }
-    return Response::json("{\"success\": true, \"message\": \"Restart sent to emulator\"}");
+    // TODO: In-process integration
+    (void)req;
+    fprintf(stderr, "Server: Restart requested via API (not implemented yet)\n");
+    return Response::json("{\"success\": false, \"message\": \"Not implemented yet\"}");
 }
 
 Response APIRouter::handle_status(const Request& req) {
-    std::ostringstream json;
-    json << "{";
-    json << "\"emulator_connected\": " << (ctx_->emulator_connected ? "true" : "false");
-    json << ", \"emulator_running\": " << (ctx_->started_emulator_pid > 0 ? "true" : "false");
-    json << ", \"emulator_pid\": " << ctx_->emulator_pid;
-
-    if (ctx_->ipc_shm) {
-        json << ", \"video\": {\"width\": " << ctx_->ipc_shm->width;
-        json << ", \"height\": " << ctx_->ipc_shm->height;
-        json << ", \"frame_count\": " << ctx_->ipc_shm->frame_count;
-        json << ", \"state\": " << ctx_->ipc_shm->state << "}";
-
-        // Mouse latency from emulator (atomic - can be updated by stats thread)
-        uint32_t latency_x10 = ATOMIC_LOAD(ctx_->ipc_shm->mouse_latency_avg_ms);
-        uint32_t latency_samples = ATOMIC_LOAD(ctx_->ipc_shm->mouse_latency_samples);
-        json << ", \"mouse_latency_ms\": " << std::fixed << std::setprecision(1) << (latency_x10 / 10.0);
-        json << ", \"mouse_latency_samples\": " << latency_samples;
-    }
-
-    json << "}";
-    return Response::json(json.str());
+    // TODO: In-process integration - get status from Platform API
+    (void)req;
+    return Response::json("{\"emulator_connected\": true, \"emulator_running\": true}");
 }
 
 Response APIRouter::handle_emulator_start(const Request& req) {
-    // Clear the "user stopped" flag - allow connection manager to scan/connect
-    if (ctx_->user_stopped_emulator) {
-        *ctx_->user_stopped_emulator = false;
-    }
-
-    std::string json_body;
-    if (ctx_->started_emulator_pid > 0) {
-        json_body = "{\"success\": false, \"message\": \"Emulator already running\", \"pid\": " +
-                    std::to_string(ctx_->started_emulator_pid) + "}";
-    } else if (ctx_->start_emulator_fn && ctx_->start_emulator_fn()) {
-        json_body = "{\"success\": true, \"message\": \"Emulator started\", \"pid\": " +
-                    std::to_string(ctx_->started_emulator_pid) + "}";
-    } else {
-        json_body = "{\"success\": false, \"message\": \"Failed to start emulator\"}";
-    }
-    return Response::json(json_body);
+    // TODO: In-process integration
+    (void)req;
+    return Response::json("{\"success\": false, \"message\": \"Not implemented yet (in-process integration pending)\"}");
 }
 
 Response APIRouter::handle_emulator_stop(const Request& req) {
-    // Set flag to prevent connection manager from auto-reconnecting
-    if (ctx_->user_stopped_emulator) {
-        *ctx_->user_stopped_emulator = true;
-    }
-
-    std::string json_body;
-    if (ctx_->started_emulator_pid <= 0 && ctx_->emulator_pid <= 0) {
-        json_body = "{\"success\": false, \"message\": \"Emulator not running\"}";
-    } else {
-        if (ctx_->started_emulator_pid > 0) {
-            if (ctx_->stop_emulator_fn) {
-                ctx_->stop_emulator_fn();
-            }
-        } else {
-            // Just disconnect from external emulator
-            if (ctx_->send_command_fn) {
-                ctx_->send_command_fn(MACEMU_CMD_STOP);
-            }
-            if (ctx_->disconnect_emulator_fn) {
-                ctx_->disconnect_emulator_fn();
-            }
-        }
-        json_body = "{\"success\": true, \"message\": \"Emulator stopped\"}";
-    }
-    return Response::json(json_body);
+    // TODO: In-process integration - call g_platform.cpu_stop() directly
+    (void)req;  // Suppress warning
+    return Response::json("{\"success\": false, \"message\": \"Not implemented yet (in-process integration pending)\"}");
 }
 
 Response APIRouter::handle_emulator_restart(const Request& req) {
-    // Clear the "user stopped" flag - restart is an intentional start action
-    if (ctx_->user_stopped_emulator) {
-        *ctx_->user_stopped_emulator = false;
-    }
-
-    if (ctx_->request_restart_fn) {
-        ctx_->request_restart_fn(true);
-    }
-    return Response::json("{\"success\": true, \"message\": \"Restart requested\"}");
+    // TODO: In-process integration - call g_platform.cpu_reset() directly
+    (void)req;  // Suppress warning
+    return Response::json("{\"success\": false, \"message\": \"Not implemented yet (in-process integration pending)\"}");
 }
 
 Response APIRouter::handle_emulator_reset(const Request& req) {
-    // Send RESET command to running emulator (soft reset, no restart)
-    fprintf(stderr, "API: Reset requested via web UI\n");
-    if (ctx_->send_command_fn) {
-        ctx_->send_command_fn(MACEMU_CMD_RESET);
-    }
-    return Response::json("{\"success\": true, \"message\": \"Reset command sent\"}");
+    // TODO: In-process integration - call g_platform.cpu_reset() directly
+    (void)req;  // Suppress warning
+    fprintf(stderr, "API: Reset requested via web UI (not implemented yet)\n");
+    return Response::json("{\"success\": false, \"message\": \"Not implemented yet (in-process integration pending)\"}");
 }
 
 Response APIRouter::handle_log(const Request& req) {

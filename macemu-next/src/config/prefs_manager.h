@@ -9,7 +9,7 @@
 #define PREFS_MANAGER_H
 
 #include <string>
-#include "../codec.h"
+#include "../webrtc/encoders/codec.h"
 
 namespace storage {
 

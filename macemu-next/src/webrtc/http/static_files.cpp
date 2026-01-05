@@ -5,7 +5,7 @@
  */
 
 #include "static_files.h"
-#include "../config/config_manager.h"
+#include "../../config/config_manager.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <sstream>

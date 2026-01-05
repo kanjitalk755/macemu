@@ -8,8 +8,8 @@
 #define API_HANDLERS_H
 
 #include "http_server.h"
-#include "../../BasiliskII/src/IPC/ipc_protocol.h"
-#include "../config/server_config.h"  // For CodecType
+#include "../../config/config_manager.h"
+#include "../encoders/codec.h"  // For CodecType
 #include <string>
 #include <functional>
 
@@ -30,23 +30,24 @@ struct APIContext {
     std::string roms_path;
     std::string images_path;
 
-    // Emulator state
-    bool emulator_connected;
-    int emulator_pid;
-    int started_emulator_pid;
-    MacEmuIPCBuffer* ipc_shm;  // Shared memory for video and audio IPC
-    std::atomic<bool>* user_stopped_emulator;  // Flag: user explicitly stopped via web UI
+    // TODO: In-process integration - remove IPC fields, add direct Platform API access
+    // Emulator state (legacy IPC fields - to be removed)
+    // bool emulator_connected;
+    // int emulator_pid;
+    // int started_emulator_pid;
+    // MacEmuIPCBuffer* ipc_shm;  // Shared memory for video and audio IPC
+    // std::atomic<bool>* user_stopped_emulator;  // Flag: user explicitly stopped via web UI
 
     // Codec state
     CodecType* server_codec;  // Pointer to g_server_codec
     std::function<void(CodecType)> notify_codec_change_fn;  // Notify clients of codec change
 
-    // Command callbacks
-    std::function<void(uint8_t)> send_command_fn;
-    std::function<bool()> start_emulator_fn;
-    std::function<void()> stop_emulator_fn;
-    std::function<void()> disconnect_emulator_fn;
-    std::function<void(bool)> request_restart_fn;
+    // Command callbacks (legacy IPC - to be replaced with direct Platform API calls)
+    // std::function<void(uint8_t)> send_command_fn;
+    // std::function<bool()> start_emulator_fn;
+    // std::function<void()> stop_emulator_fn;
+    // std::function<void()> disconnect_emulator_fn;
+    // std::function<void(bool)> request_restart_fn;
 };
 
 /**

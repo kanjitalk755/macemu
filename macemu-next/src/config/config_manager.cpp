@@ -3,7 +3,7 @@
  */
 
 #include "config_manager.h"
-#include "../utils/json_utils.h"
+#include "json_utils.h"
 #include <fstream>
 #include <sstream>
 #include <cstdio>
