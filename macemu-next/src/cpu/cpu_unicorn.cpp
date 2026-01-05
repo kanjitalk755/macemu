@@ -353,6 +353,8 @@ static void unicorn_backend_destroy(void) {
 }
 
 // Execution
+// NOTE: Despite the name "execute_one", this function executes in batches of 10k instructions
+// for better JIT efficiency. The platform API calls this in a loop, so batching here is optimal.
 static int unicorn_backend_execute_one(void) {
 	if (!unicorn_cpu) {
 		return 3;  // CPU_EXEC_EXCEPTION
@@ -390,7 +392,12 @@ static int unicorn_backend_execute_one(void) {
 		);
 	}
 
-	if (!unicorn_execute_one(unicorn_cpu)) {
+	/* Execute 10k instructions at once for better JIT efficiency
+	 * This reduces overhead from repeatedly calling uc_emu_start()
+	 * UC_HOOK_BLOCK still fires for interrupt checking
+	 * Translation blocks are cached across batches
+	 */
+	if (!unicorn_execute_n(unicorn_cpu, 10000)) {
 		uint32_t pc = unicorn_get_pc(unicorn_cpu);
 		uint32_t a7 = unicorn_get_areg(unicorn_cpu, 7);
 		const char *err_str = unicorn_get_error(unicorn_cpu);
