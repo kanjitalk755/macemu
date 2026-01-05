@@ -390,28 +390,21 @@ static int unicorn_backend_execute_one(void) {
 		);
 	}
 
-	/* NOTE: Cannot use batch execution (unicorn_execute_n) due to RTE incompatibility
+	/* NOTE: Batch execution enabled after fixing RTE in Unicorn
 	 *
-	 * Problem: RTE (Return from Exception) doesn't work correctly with batch execution.
-	 * The UC_HOOK_INTR hook fires BEFORE m68k_rte() updates the PC, so even if we
-	 * call uc_emu_stop(), the PC hasn't been updated yet and we loop infinitely.
+	 * The RTE (Return from Exception) bug has been fixed by modifying Unicorn's
+	 * cpu-exec.c to handle EXCP_RTE (0x100) specially. When RTE is encountered,
+	 * m68k_interrupt_all() is called directly BEFORE clearing exception_index,
+	 * which updates the PC from the stack correctly.
 	 *
-	 * QEMU/Unicorn execution order:
-	 * 1. RTE instruction → generates EXCP_RTE
-	 * 2. cpu_handle_exception() called
-	 * 3. UC_HOOK_INTR fires (PC still = RTE instruction address)
-	 * 4. m68k_interrupt_all() called
-	 * 5. m68k_rte() updates PC from stack
+	 * This allows us to use batch execution (count=10000) for significant
+	 * performance improvement. Expected speedup: 1.5-3x due to reduced
+	 * function call overhead (from 802k calls/sec to ~80 calls/sec).
 	 *
-	 * With single-step (count=1): Each uc_emu_start() completes fully, so step 5
-	 * finishes before next instruction fetch.
-	 *
-	 * With batch (count>1): Even with uc_emu_stop() at step 3, PC update at step 5
-	 * hasn't happened yet, causing infinite RTE loop.
-	 *
-	 * Solution: Must use unicorn_execute_one() which still uses JIT but with count=1.
+	 * See: external/unicorn/qemu/accel/tcg/cpu-exec.c (TARGET_M68K section)
+	 * See: docs/deepdive/UnicornBatchExecutionRTEBug.md
 	 */
-	if (!unicorn_execute_one(unicorn_cpu)) {
+	if (!unicorn_execute_n(unicorn_cpu, 10000)) {
 		uint32_t pc = unicorn_get_pc(unicorn_cpu);
 		uint32_t a7 = unicorn_get_areg(unicorn_cpu, 7);
 		const char *err_str = unicorn_get_error(unicorn_cpu);

@@ -29,9 +29,11 @@
 #include "cpu_trace.h"
 #include "timer_interrupt.h"
 #include <unicorn/unicorn.h>
+#include <unicorn/m68k.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
 
 /* MMIO Trap Region for JIT-compatible EmulOp handling */
 #define TRAP_REGION_BASE  0xFF000000UL
@@ -318,26 +320,9 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
  * We need this to prevent UC_ERR_EXCEPTION on RTE instruction.
  */
 static void hook_interrupt(uc_engine *uc, uint32_t intno, void *user_data) {
-    /* EXCP_RTE (0x100) is handled internally by m68k_rte() in Unicorn.
-     * We just need to acknowledge it here to prevent UC_ERR_EXCEPTION.
-     *
-     * CRITICAL: This hook fires BEFORE m68k_rte() executes (before PC update)!
-     *
-     * Execution order in Unicorn:
-     * 1. RTE instruction executed → EXCP_RTE exception raised
-     * 2. cpu_handle_exception() called
-     * 3. UC_HOOK_INTR fires (THIS HOOK) - PC still at RTE instruction!
-     * 4. Hook returns → exception_index cleared
-     * 5. m68k_interrupt_all() called
-     * 6. m68k_rte() executes - NOW PC gets updated from stack
-     * 7. Execution continues with updated PC
-     *
-     * For batch execution (count > 1), this causes problems:
-     * - Even if we call uc_emu_stop() here (step 3), PC hasn't been updated yet
-     * - When execution resumes, it re-fetches from old PC → infinite RTE loop
-     * - Solution: Use count=1 (single-step) to ensure full completion
-     *
-     * No action needed in this hook - just acknowledge the exception.
+    /* Just acknowledged exception.
+     * EXCP_RTE (0x100) is now handled directly in Unicorn's cpu-exec.c
+     * before this hook is called, so batch execution works correctly.
      */
     (void)uc;
     (void)intno;
