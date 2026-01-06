@@ -390,12 +390,12 @@ void VideoInterrupt()
 // Timer stubs
 bool tick_inhibit = false;
 
-uint32 TimerDateTime()
+extern "C" uint32 TimerDateTime()
 {
 	return 0;  // Stub - return epoch
 }
 
-void Microseconds(uint32 &hi, uint32 &lo)
+extern "C" void Microseconds(uint32 &hi, uint32 &lo)
 {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);

@@ -1,87 +1,116 @@
 /*
- *  timer_interrupt.cpp - 60Hz timer via polling
+ *  timer_interrupt.cpp - 60Hz timer via timerfd
  *
- *  Checks wall-clock time to generate periodic interrupts.
+ *  Based on BasiliskII's tick_func() (main_unix.cpp:1492-1515)
+ *  Replaces pthread with Linux timerfd for kernel-managed timing.
+ *
  *  Called from CPU backend execution loops (UAE and Unicorn).
- *
- *  This replaces the previous SIGALRM-based approach which had issues
- *  with signal masking and async-signal-safe constraints.
  */
 
 #include "sysdeps.h"
 #include "main.h"
 #include "platform.h"
 #include "timer_interrupt.h"
-#include "uae_wrapper.h"  // For intlev()
-#include "macos_util.h"   // For HasMacStarted()
-#include "cpu_trace.h"    // For cpu_trace_should_log()
-#include <time.h>
+#include "rom_patches.h"   // For ROMVersion, ROM_VERSION_CLASSIC
+#include "uae_wrapper.h"   // For intlev()
+#include "macos_util.h"    // For HasMacStarted()
+
+#include <sys/timerfd.h>
+#include <unistd.h>
+#include <errno.h>
 #include <stdio.h>
 
+// Forward declaration (avoid including timer.h due to C linkage conflicts)
+extern "C" uint32 TimerDateTime(void);
+
 // Timer state
-static uint64_t last_timer_ns = 0;
+static int timer_fd = -1;
 static uint64_t interrupt_count = 0;
+static uint64_t tick_counter = 0;
 static bool timer_initialized = false;
 
 extern "C" {
 
 /*
  *  Initialize timer system
+ *
+ *  Creates a 60.15Hz periodic timerfd (matches BasiliskII timing)
+ *  This is the master heartbeat for the emulator.
  */
 void setup_timer_interrupt(void)
 {
-	struct timespec now;
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	last_timer_ns = now.tv_sec * 1000000000ULL + now.tv_nsec;
-	interrupt_count = 0;
-	timer_initialized = true;
+	// Create non-blocking timerfd
+	timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+	if (timer_fd < 0) {
+		perror("timerfd_create");
+		fprintf(stderr, "ERROR: Failed to create timer (timerfd not supported?)\n");
+		return;
+	}
 
-	printf("Timer: Initialized 60 Hz timer (polling-based)\n");
+	// Set to 60.15 Hz periodic timer (16,625 microseconds = 16,625,000 nanoseconds)
+	// This matches BasiliskII's timing exactly (see main_unix.cpp:1502)
+	struct itimerspec spec;
+	spec.it_interval.tv_sec = 0;
+	spec.it_interval.tv_nsec = 16625000;  // 60.15 Hz
+	spec.it_value.tv_sec = 0;
+	spec.it_value.tv_nsec = 16625000;     // Initial expiration
+
+	if (timerfd_settime(timer_fd, 0, &spec, NULL) < 0) {
+		perror("timerfd_settime");
+		close(timer_fd);
+		timer_fd = -1;
+		return;
+	}
+
+	timer_initialized = true;
+	interrupt_count = 0;
+	tick_counter = 0;
+
+	printf("Timer: Initialized 60.15 Hz timer (timerfd, fd=%d)\n", timer_fd);
 }
 
 /*
- *  Poll timer - call from CPU execution loop
- *  Returns number of timer expirations (usually 0 or 1)
+ *  one_second() - Called every 60 ticks (~1 second)
+ *
+ *  Matches BasiliskII main_unix.cpp:1450-1465
  */
-uint64_t poll_timer_interrupt(void)
+static void one_second(void)
 {
-	if (!timer_initialized) {
-		return 0;
+	// Pseudo Mac 1Hz interrupt, update local time
+	WriteMacInt32(0x20c, TimerDateTime());
+
+	SetInterruptFlag(INTFLAG_1HZ);
+	// Note: TriggerInterrupt() will be called from poll_timer_interrupt()
+}
+
+/*
+ *  one_tick() - Called every 16.625ms (60.15 Hz)
+ *
+ *  Matches BasiliskII main_unix.cpp:1467-1490
+ */
+static void one_tick(void)
+{
+	// Every 60 ticks = ~1 second
+	if (++tick_counter >= 60) {
+		tick_counter = 0;
+		one_second();
 	}
 
-	struct timespec now;
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	uint64_t now_ns = now.tv_sec * 1000000000ULL + now.tv_nsec;
-
-	// Check if 16.667ms have passed (60 Hz)
-	uint64_t elapsed = now_ns - last_timer_ns;
-	if (elapsed < 16667000ULL) {
-		return 0;  // Not time yet
-	}
-
-	// Timer fired! Update last fire time
-	last_timer_ns = now_ns;
-	interrupt_count++;
-
-	// Set Mac-level interrupt flag (for video/audio callbacks)
+	// Set 60Hz interrupt flag
 	SetInterruptFlag(INTFLAG_60HZ);
 
 	// Trigger CPU-level interrupt via platform API
-	// This works for both UAE and Unicorn backends:
-	// - UAE: Sets SPCFLAG_INT, will be processed by do_specialties()
-	// - Unicorn: Sets g_pending_interrupt_level, will be checked by hook_block()
-	//
 	// IMPORTANT: Only trigger interrupts after Mac has booted!
+	// This matches BasiliskII's check (main_unix.cpp:1486)
+	//
 	// During early boot, Mac ROM initializes interrupt vectors and other critical
 	// state. Taking interrupts too early can cause crashes or divergence between
 	// different CPU backends. BasiliskII checks HasMacStarted() before triggering
-	// 60Hz interrupts (see main_unix.cpp:1486).
+	// 60Hz interrupts.
 	//
-	// ALSO: Disable interrupts during CPU tracing for deterministic traces.
-	// Timer interrupts cause non-deterministic behavior between backends due to
-	// timing differences in when poll_timer_interrupt() is called, leading to
-	// trace divergence. When CPU_TRACE is active, suppress timer interrupts.
-	if (HasMacStarted() && !cpu_trace_is_enabled()) {
+	// The ROM_VERSION_CLASSIC check allows Classic Mac ROMs (Plus, SE) to bypass
+	// this guard as they have different boot sequences.
+	if (ROMVersion != ROM_VERSION_CLASSIC || HasMacStarted()) {
 		extern Platform g_platform;
 		if (g_platform.cpu_trigger_interrupt) {
 			int level = intlev();
@@ -90,8 +119,48 @@ uint64_t poll_timer_interrupt(void)
 			}
 		}
 	}
+}
 
-	return 1;  // One expiration
+/*
+ *  Poll timer - call from CPU execution loop
+ *
+ *  Returns number of timer expirations (usually 0 or 1, but can be >1 if system is lagging)
+ */
+uint64_t poll_timer_interrupt(void)
+{
+	if (!timer_initialized || timer_fd < 0) {
+		return 0;
+	}
+
+	// Read from timerfd (non-blocking)
+	uint64_t expirations;
+	ssize_t ret = read(timer_fd, &expirations, sizeof(expirations));
+
+	if (ret < 0) {
+		if (errno != EAGAIN) {
+			// Real error (not just "no data available")
+			perror("timerfd read");
+		}
+		return 0;  // No timer expiration yet
+	}
+
+	// Timer fired! Process each expiration
+	for (uint64_t i = 0; i < expirations; i++) {
+		one_tick();
+		interrupt_count++;
+	}
+
+	// If expirations > 1, we're lagging (CPU can't keep up with real-time)
+	if (expirations > 1) {
+		static bool warned = false;
+		if (!warned) {
+			fprintf(stderr, "Timer: Warning - System lagging (%llu missed ticks)\n",
+			        (unsigned long long)(expirations - 1));
+			warned = true;  // Only warn once
+		}
+	}
+
+	return expirations;
 }
 
 /*
@@ -103,9 +172,15 @@ void stop_timer_interrupt(void)
 		return;
 	}
 
+	if (timer_fd >= 0) {
+		close(timer_fd);
+		timer_fd = -1;
+	}
+
 	timer_initialized = false;
-	printf("Timer: Stopped after %llu interrupts\n",
-	       (unsigned long long)interrupt_count);
+	printf("Timer: Stopped after %llu interrupts (%llu seconds)\n",
+	       (unsigned long long)interrupt_count,
+	       (unsigned long long)interrupt_count / 60);
 }
 
 /*

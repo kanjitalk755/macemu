@@ -21,6 +21,10 @@
 #ifndef TIMER_H
 #define TIMER_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern void TimerInit(void);
 extern void TimerExit(void);
 extern void TimerReset(void);
@@ -33,6 +37,10 @@ extern int16 PrimeTime(uint32 tm, int32 time);
 extern void Microseconds(uint32 &hi, uint32 &lo);
 
 extern uint32 TimerDateTime(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 // System specific and internal functions/data
 extern void timer_current_time(tm_time_t &t);
