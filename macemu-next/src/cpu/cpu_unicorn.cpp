@@ -109,34 +109,84 @@ static bool unicorn_platform_trap_handler(int vector, uint16_t opcode, bool is_p
 
 // Unmapped memory handlers - mimic UAE's dummy_bank behavior
 // UAE silently ignores all unmapped reads (returns 0) and writes (no-op)
+// To properly return 0, we need to map the memory region on-demand
 static bool unicorn_unmapped_read_handler(uc_engine *uc, uc_mem_type type,
                                           uint64_t address, int size,
                                           int64_t value, void *user_data) {
-	(void)uc;
 	(void)type;
 	(void)value;
 	(void)user_data;
 
-	// Return 0 for unmapped reads (matches UAE dummy_bank behavior)
-	// Note: Unicorn will use the 'value' we would set, but we can't set it in the hook
-	// The hook just prevents the error - actual value returned is undefined
-	fprintf(stderr, "[Unicorn] Unmapped read at 0x%08lX (size=%d) - returning 0 (UAE compat)\n",
+	fprintf(stderr, "[Unicorn] Unmapped read at 0x%08lX (size=%d) - mapping on-demand (UAE compat)\n",
 	        address, size);
-	return true;  // Prevent UC_ERR_READ_UNMAPPED
+
+	// Map a 1MB region containing this address, aligned to 1MB boundary
+	// This matches UAE's behavior where the entire address space is backed by dummy_bank
+	const uint32_t map_size = 1024 * 1024;  // 1 MB
+	uint32_t map_base = (address / map_size) * map_size;  // Round down to 1MB boundary
+
+	// Allocate zeroed buffer
+	uint8_t *buffer = (uint8_t *)calloc(1, map_size);
+	if (!buffer) {
+		fprintf(stderr, "[Unicorn] Failed to allocate buffer for on-demand mapping at 0x%08X\n", map_base);
+		return false;
+	}
+
+	// Map the region
+	uc_err err = uc_mem_map_ptr(uc, map_base, map_size, UC_PROT_ALL, buffer);
+	if (err != UC_ERR_OK) {
+		fprintf(stderr, "[Unicorn] Failed to map on-demand region at 0x%08X: %s\n",
+		        map_base, uc_strerror(err));
+		free(buffer);
+		return false;
+	}
+
+	fprintf(stderr, "[Unicorn] Mapped on-demand region: 0x%08X - 0x%08X (1 MB, zeroed)\n",
+	        map_base, map_base + map_size - 1);
+
+	// Note: We leak the buffer here, but that's acceptable since these are permanent mappings
+	// that last for the lifetime of the emulator
+
+	return true;  // Retry the read - it will now succeed
 }
 
 static bool unicorn_unmapped_write_handler(uc_engine *uc, uc_mem_type type,
                                            uint64_t address, int size,
                                            int64_t value, void *user_data) {
-	(void)uc;
 	(void)type;
 	(void)value;
 	(void)user_data;
 
-	// Silently ignore unmapped writes (matches UAE dummy_bank behavior)
-	fprintf(stderr, "[Unicorn] Unmapped write at 0x%08lX (size=%d, value=0x%lX) - ignored (UAE compat)\n",
+	fprintf(stderr, "[Unicorn] Unmapped write at 0x%08lX (size=%d, value=0x%lX) - mapping on-demand (UAE compat)\n",
 	        address, size, (unsigned long)value);
-	return true;  // Prevent UC_ERR_WRITE_UNMAPPED
+
+	// Map a 1MB region containing this address, aligned to 1MB boundary
+	const uint32_t map_size = 1024 * 1024;  // 1 MB
+	uint32_t map_base = (address / map_size) * map_size;  // Round down to 1MB boundary
+
+	// Allocate zeroed buffer
+	uint8_t *buffer = (uint8_t *)calloc(1, map_size);
+	if (!buffer) {
+		fprintf(stderr, "[Unicorn] Failed to allocate buffer for on-demand mapping at 0x%08X\n", map_base);
+		return false;
+	}
+
+	// Map the region
+	uc_err err = uc_mem_map_ptr(uc, map_base, map_size, UC_PROT_ALL, buffer);
+	if (err != UC_ERR_OK) {
+		fprintf(stderr, "[Unicorn] Failed to map on-demand region at 0x%08X: %s\n",
+		        map_base, uc_strerror(err));
+		free(buffer);
+		return false;
+	}
+
+	fprintf(stderr, "[Unicorn] Mapped on-demand region: 0x%08X - 0x%08X (1 MB, zeroed)\n",
+	        map_base, map_base + map_size - 1);
+
+	// Note: We leak the buffer here, but that's acceptable since these are permanent mappings
+	// that last for the lifetime of the emulator
+
+	return true;  // Retry the write - it will now succeed
 }
 
 // CPU Lifecycle
@@ -401,10 +451,14 @@ static int unicorn_backend_execute_one(void) {
 	 * performance improvement. Expected speedup: 1.5-3x due to reduced
 	 * function call overhead (from 802k calls/sec to ~80 calls/sec).
 	 *
+	 * IMPORTANT: When CPU tracing is enabled, execute only 1 instruction at a time
+	 * so that the trace log accurately captures every instruction.
+	 *
 	 * See: external/unicorn/qemu/accel/tcg/cpu-exec.c (TARGET_M68K section)
 	 * See: docs/deepdive/UnicornBatchExecutionRTEBug.md
 	 */
-	if (!unicorn_execute_n(unicorn_cpu, 10000)) {
+	int count = cpu_trace_is_enabled() ? 1 : 10000;
+	if (!unicorn_execute_n(unicorn_cpu, count)) {
 		uint32_t pc = unicorn_get_pc(unicorn_cpu);
 		uint32_t a7 = unicorn_get_areg(unicorn_cpu, 7);
 		const char *err_str = unicorn_get_error(unicorn_cpu);

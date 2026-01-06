@@ -34,6 +34,13 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Unicorn M68K interrupt API
+ * We added uc_m68k_trigger_interrupt() to Unicorn's target/m68k/unicorn.c
+ * to avoid needing to access internal structures or include QEMU headers.
+ * This wraps QEMU's m68k_set_irq_level() which is used by hw/m68k/q800.c.
+ */
+extern void uc_m68k_trigger_interrupt(uc_engine *uc, int level, uint8_t vector);
+
 
 /* MMIO Trap Region for JIT-compatible EmulOp handling */
 #define TRAP_REGION_BASE  0xFF000000UL
@@ -235,6 +242,15 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
         poll_timer_interrupt();
     }
 
+    /* Track if we need to clear a previous interrupt */
+    static bool clear_interrupt_next = false;
+
+    /* Clear interrupt from previous trigger (QEMU requires explicit clear) */
+    if (clear_interrupt_next) {
+        uc_m68k_trigger_interrupt(uc, 0, 0);  /* level=0 clears the interrupt */
+        clear_interrupt_next = false;
+    }
+
     /* Check for pending interrupts (platform API) */
     if (g_pending_interrupt_level > 0) {
         int intr_level = g_pending_interrupt_level;
@@ -246,74 +262,44 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
         int current_mask = (sr >> 8) & 7;
 
         if (intr_level > current_mask) {
-            /* Trigger M68K interrupt - manually build exception stack frame
-             * This is the correct approach for Unicorn - we researched using QEMU's
-             * m68k_set_irq_level() but it requires accessing internal structs with
-             * architecture-dependent offsets, making it fragile and non-portable.
-             * Manual stack building is clean, works correctly, and is well-tested.
+            /* Use QEMU's native interrupt mechanism!
+             *
+             * Instead of manually building exception stack frames and modifying PC
+             * (which caused RTS/RTE failures due to instruction skipping), we now
+             * use QEMU's m68k_set_irq_level() API that Unicorn exposes.
+             *
+             * This approach matches how QEMU's Quadra 800 platform triggers interrupts:
+             * 1. m68k_set_irq_level() sets env->pending_level and env->pending_vector
+             * 2. Raises CPU_INTERRUPT_HARD flag
+             * 3. QEMU's TCG main loop (cpu_handle_interrupt()) checks this flag
+             *    BETWEEN translation blocks (not during!)
+             * 4. Calls m68k_cpu_exec_interrupt() which calls do_interrupt_m68k_hardirq()
+             * 5. Stack frame is built naturally by QEMU, PC updated to handler
+             *
+             * Benefits:
+             * - No manual PC modification → no instruction skipping
+             * - No manual stack building → correct RTS/RTE behavior
+             * - Interrupts processed between TBs → preserves JIT performance
+             * - Uses proven QEMU code path → reliable and maintainable
              */
-            uint32_t sp;
-            uc_reg_read(uc, UC_M68K_REG_A7, &sp);
 
-            /* Push PC (long, big-endian) */
-            sp -= 4;
-            uint32_t pc_be = __builtin_bswap32(pc);
-            uc_mem_write(uc, sp, &pc_be, 4);
+            /* Calculate autovector number (VIA timer uses autovector level 1-7) */
+            uint8_t vector = 24 + intr_level;
 
-            /* Push SR (word, big-endian) */
-            sp -= 2;
-            uint16_t sr_be = __builtin_bswap16((uint16_t)sr);
-            uc_mem_write(uc, sp, &sr_be, 2);
-
-            /* Update SR: set supervisor mode, set interrupt mask */
-            sr |= (1 << 13);  /* S bit */
-            sr = (sr & ~0x0700) | ((intr_level & 7) << 8);  /* I2-I0 */
-            uc_reg_write(uc, UC_M68K_REG_SR, &sr);
-            uc_reg_write(uc, UC_M68K_REG_A7, &sp);
-
-            /* Read interrupt vector and jump to handler */
-            uint32_t vbr = 0;  /* TODO: Read VBR for 68020+ */
-            uint32_t vector_addr = vbr + (24 + intr_level) * 4;
-            uint32_t handler_addr_be;
-            uc_mem_read(uc, vector_addr, &handler_addr_be, 4);
-            uint32_t handler_addr = __builtin_bswap32(handler_addr_be);
-
-            /* Log interrupt being taken */
-            cpu_trace_log_interrupt_taken(intr_level, handler_addr);
-
-            /* Update PC to handler address
-             *
-             * CRITICAL: We do NOT call uc_emu_stop() here!
-             *
-             * Calling uc_emu_stop() mid-block causes instruction skipping because:
-             * 1. Current translation block (TB) execution is aborted mid-stream
-             * 2. Some instructions may have already executed from this block
-             * 3. PC might not align with instruction boundaries when resuming
-             * 4. Next uc_emu_start() may resume at wrong offset within the block
-             *
-             * QEMU's approach (from our analysis of Quadra 800 code):
-             * - Interrupts are checked BETWEEN translation blocks, not during
-             * - cpu_handle_interrupt() runs after each TB completes
-             * - When interrupt accepted, PC is updated and execution continues naturally
-             * - No forced stop, no TB abortion, no instruction skipping
-             *
-             * Our solution:
-             * - Update PC register to handler address (done above)
-             * - Let this hook return normally
-             * - Current block will complete (or Unicorn will abort it naturally)
-             * - Next block fetch will use the new PC (handler address)
-             * - No instruction skipping, clean transition
-             *
-             * Evidence: Traces showed divergence at instruction #3832 where Unicorn
-             * executed PC=0x02081138 instead of correct 0x0208113A (off by 2 bytes)
-             * due to uc_emu_stop() aborting mid-block.
+            /* Call Unicorn's M68K interrupt API - this wraps QEMU's m68k_set_irq_level()
+             * which is the same call that QEMU's hw/m68k/q800.c makes to trigger interrupts!
              */
-            uc_reg_write(uc, UC_M68K_REG_PC, &handler_addr);
+            uc_m68k_trigger_interrupt(uc, intr_level, vector);
 
-            /* Invalidate any cached translations at the new PC to force fresh decode */
-            uc_ctl_remove_cache(uc, handler_addr, handler_addr + 4);
+            /* Schedule clear for next block (QEMU needs explicit level=0 to clear) */
+            clear_interrupt_next = true;
 
-            /* Let execution continue naturally - Unicorn will execute handler */
+            /* Log for tracing (but don't log "taken" yet - QEMU will handle that) */
+            cpu_trace_log_interrupt_trigger(intr_level);
+
+            /* Return normally - QEMU's TCG will handle interrupt at next TB boundary.
+             * No uc_emu_stop(), no PC modification, no manual stack manipulation.
+             */
             return;
         }
     }

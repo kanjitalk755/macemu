@@ -110,7 +110,18 @@ static void one_tick(void)
 	//
 	// The ROM_VERSION_CLASSIC check allows Classic Mac ROMs (Plus, SE) to bypass
 	// this guard as they have different boot sequences.
-	if (ROMVersion != ROM_VERSION_CLASSIC || HasMacStarted()) {
+
+	// Debug: Check what HasMacStarted returns
+	static bool debug_logged = false;
+	bool mac_started = HasMacStarted();
+	if (!debug_logged && interrupt_count < 5) {
+		uint32_t cfc_value = ReadMacInt32(0xcfc);
+		fprintf(stderr, "[DEBUG Timer] tick=%llu ROM=0x%04x mac_started=%d cfc=0x%08x (expected 0x574C5343='WLSC')\n",
+		        (unsigned long long)interrupt_count, ROMVersion, mac_started, cfc_value);
+		if (interrupt_count >= 4) debug_logged = true;
+	}
+
+	if (ROMVersion != ROM_VERSION_CLASSIC || mac_started) {
 		extern Platform g_platform;
 		if (g_platform.cpu_trigger_interrupt) {
 			int level = intlev();
@@ -128,6 +139,12 @@ static void one_tick(void)
  */
 uint64_t poll_timer_interrupt(void)
 {
+	// Suppress timer interrupts during CPU tracing for deterministic execution
+	static bool tracing_mode = (getenv("CPU_TRACE") != NULL);
+	if (tracing_mode) {
+		return 0;  // No interrupts during tracing
+	}
+
 	if (!timer_initialized || timer_fd < 0) {
 		return 0;
 	}
