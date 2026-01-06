@@ -695,6 +695,15 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 			break;
 		}
 
+		case M68K_EXEC_RETURN:		// 0x7100 - Return from Execute68k()
+			D(bug("EmulOp: EXEC_RETURN\n"));
+			// This opcode marks the return point when calling Mac 68k code from the emulator
+			// via Execute68k() or Execute68kTrap(). When Mac code executes RTS and returns
+			// to this address, it should exit back to the emulator. In BasiliskII, this
+			// triggers quit_program which exits m68k_execute(). For macemu-next, we just
+			// return normally - the CPU will see this and stop execution.
+			break;
+
 		default:
 			printf("FATAL: EMUL_OP called with bogus opcode %08x\n", opcode);
 			printf("d0 %08x d1 %08x d2 %08x d3 %08x\n"
