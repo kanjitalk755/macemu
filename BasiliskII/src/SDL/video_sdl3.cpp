@@ -808,11 +808,7 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
     }
 
 	SDL_assert(sdl_texture == NULL);
-#ifdef ENABLE_VOSF
 	sdl_texture = SDL_CreateTexture(sdl_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
-#else
-	sdl_texture = SDL_CreateTexture(sdl_renderer, SDL_PIXELFORMAT_BGRA8888, SDL_TEXTUREACCESS_STREAMING, width, height);
-#endif
     if (!sdl_texture) {
         shutdown_sdl_video();
         return NULL;
@@ -862,14 +858,7 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
     if (!host_surface) {
 		SDL_PropertiesID props = SDL_GetTextureProperties(sdl_texture);
 		SDL_PixelFormat texture_format = (SDL_PixelFormat)SDL_GetNumberProperty(props, SDL_PROP_TEXTURE_FORMAT_NUMBER, 0);
-    	int bpp;
-    	Uint32 Rmask, Gmask, Bmask, Amask;
-    	if (!SDL_GetMasksForPixelFormat(texture_format, &bpp, &Rmask, &Gmask, &Bmask, &Amask)) {
-    		printf("ERROR: Unable to determine format for host SDL_surface: %s\n", SDL_GetError());
-    		shutdown_sdl_video();
-    		return NULL;
-    	}
-        host_surface = SDL_CreateSurface(width, height, SDL_GetPixelFormatForMasks(bpp, Rmask, Gmask, Bmask, Amask));
+        host_surface = SDL_CreateSurface(width, height, texture_format);
         if (!host_surface) {
         	printf("ERROR: Unable to create host SDL_surface: %s\n", SDL_GetError());
             shutdown_sdl_video();
@@ -934,34 +923,39 @@ static int present_sdl_video()
 	UNLOCK_PALETTE; // passed potential deadlock, can unlock palette
 	
 	// Update the host OS' texture
-	uint8_t *srcPixels = (uint8_t *)host_surface->pixels +
+	uint32_t *dstPixels, *srcPixels = (uint32_t *)((uint8_t *)host_surface->pixels +
 		sdl_update_video_rect.y * host_surface->pitch +
-		sdl_update_video_rect.x * SDL_GetPixelFormatDetails(host_surface->format)->bytes_per_pixel;
-
-	uint8_t *dstPixels;
+		sdl_update_video_rect.x * SDL_GetPixelFormatDetails(host_surface->format)->bytes_per_pixel);
 	int dstPitch;
 	if (!SDL_LockTexture(sdl_texture, &sdl_update_video_rect, (void **)&dstPixels, &dstPitch)) {
 		SDL_UnlockMutex(sdl_update_video_mutex);
 		return -1;
 	}
 #ifdef VIDEO_CHROMAKEY
-	if (display_type == DISPLAY_CHROMAKEY)
+	if (display_type == DISPLAY_CHROMAKEY && host_surface == guest_surface)
 		for (int y = 0; y < sdl_update_video_rect.h; y++) {
-			uint32_t *src = (uint32_t *)srcPixels, *dst = (uint32_t *)dstPixels;
-			for (int i = 0; i < sdl_update_video_rect.w; i++) {
-				uint32 d = *src++;
-				*dst++ = d | (d == VIDEO_CHROMAKEY ? 0 : 0xff); // alpha value
+			for (int x = 0; x < sdl_update_video_rect.w; x++) {
+				uint32 d = srcPixels[x];
+				dstPixels[x] = __builtin_bswap32(d | (d == VIDEO_CHROMAKEY ? 0 : 0xff)); // alpha value
 			}
-			srcPixels += host_surface->pitch;
-			dstPixels += dstPitch;
+			srcPixels += host_surface->pitch >> 2;
+			dstPixels += dstPitch >> 2;
 		}
 	else
 #endif
-		for (int y = 0; y < sdl_update_video_rect.h; y++) {
-			memcpy(dstPixels, srcPixels, sdl_update_video_rect.w << 2);
-			srcPixels += host_surface->pitch;
-			dstPixels += dstPitch;
-		}
+		if (host_surface == guest_surface)
+			for (int y = 0; y < sdl_update_video_rect.h; y++) {
+				for (int x = 0; x < sdl_update_video_rect.w; x++)
+					dstPixels[x] = __builtin_bswap32(srcPixels[x]);
+				srcPixels += host_surface->pitch >> 2;
+				dstPixels += dstPitch >> 2;
+			}
+		else
+			for (int y = 0; y < sdl_update_video_rect.h; y++) {
+				memcpy(dstPixels, srcPixels, sdl_update_video_rect.w << 2);
+				srcPixels += host_surface->pitch >> 2;
+				dstPixels += dstPitch >> 2;
+			}
 	SDL_UnlockTexture(sdl_texture);
 
     // We are done working with pixels in host_surface.  Reset sdl_update_video_rect, then let
