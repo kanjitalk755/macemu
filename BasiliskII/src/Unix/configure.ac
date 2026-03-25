@@ -476,7 +476,11 @@ if [[ "$WANT_GTK" = "any" -o "$WANT_GTK" = "GTK3" ]]; then
     WANT_GTK=GTK3
     GUI_CFLAGS="$GTK3_CFLAGS"
     GUI_LIBS="$GTK3_LIBS"
-    LDFLAGS="$LDFLAGS -Wl,--export-dynamic"
+    # Only add --export-dynamic if not on macOS/Darwin
+    case $host_os in
+      darwin*) ;;  # Skip on macOS
+      *) LDFLAGS="$LDFLAGS -Wl,--export-dynamic" ;;
+    esac
     AC_CHECK_PROG([ac_cv_gcr], [glib-compile-resources], [yes])
     if [[ "$ac_cv_gcr" = "yes" ]]; then
       GCR="glib-compile-resources"
