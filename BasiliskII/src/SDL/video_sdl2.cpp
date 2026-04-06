@@ -497,8 +497,17 @@ static inline int sdl_display_height(void)
 // Check whether specified mode is available
 static bool has_mode(int type, int width, int height, int depth)
 {
-	// Filter out out-of-bounds resolutions
-	if (width > sdl_display_width() || height > sdl_display_height())
+	// Filter out out-of-bounds resolutions.
+	// When display_rotate is 90 or 270, the Mac framebuffer uses pre-rotation (swapped)
+	// dimensions, so compare against the swapped display limits.
+	int dw = sdl_display_width();
+	int dh = sdl_display_height();
+	{
+		int rot = PrefsFindInt32("display_rotate");
+		if (rot == 90 || rot == 270)
+			std::swap(dw, dh);
+	}
+	if (width > dw || height > dh)
 		return false;
 
 	// Whatever size it is, beyond what we've checked, we'll scale to/from as appropriate.
@@ -728,6 +737,14 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
     
 	int window_width = width;
 	int window_height = height;
+
+        // Prevent letterboxing for +/-90 degrees screen rotation
+        int rot = PrefsFindInt32("display_rotate");
+
+        if ((rot == 90) || (rot == 270)) {
+                 std::swap(window_width, window_height);
+        }
+
 	Uint32 window_flags = SDL_WINDOW_ALLOW_HIGHDPI;
 	const int window_flags_to_monitor = SDL_WINDOW_FULLSCREEN;
 	
@@ -978,11 +995,63 @@ static int present_sdl_video()
     sdl_update_video_rect.h = 0;
     SDL_UnlockMutex(sdl_update_video_mutex);
 
-    // Copy the texture to the display
-    if (SDL_RenderCopy(sdl_renderer, sdl_texture, NULL, NULL) != 0) {
-		return -1;
-	}
 	
+    // Process screen rotation
+    int rot = PrefsFindInt32("display_rotate");
+    double angle = 0.0;
+
+    if (rot == 90) {
+         angle = 90.0;
+    }
+    else if (rot == 180) {
+         angle = 180.0;
+    }
+    else if (rot == 270) {
+         angle = -90.0;
+    }
+    // For 90°/270° rotation SDL_RenderSetLogicalSize interferes: SDL applies its
+    // letterbox scale+offset to the dst rect *before* rotating, shrinking the
+    // image into a small strip.  Save and disable it so dst is in raw physical
+    // output pixels, then restore it afterwards.
+    int saved_log_w = 0, saved_log_h = 0;
+    if (rot == 90 || rot == 270) {
+        SDL_RenderGetLogicalSize(sdl_renderer, &saved_log_w, &saved_log_h);
+        SDL_RenderSetLogicalSize(sdl_renderer, 0, 0);  // 0,0 disables logical scaling
+    }
+
+    // Build the destination rect in physical output pixels.
+    // SDL_RenderCopyEx scales the texture to fill dst, THEN rotates the content
+    // of dst around its centre.  For 90°/270° the pre-rotation rect must have
+    // its w/h swapped relative to the physical output so that after rotation
+    // the image covers the display exactly.
+    int out_w, out_h;
+    SDL_GetRendererOutputSize(sdl_renderer, &out_w, &out_h);
+    SDL_Rect dst;
+    if (rot == 90 || rot == 270) {
+        dst.w = out_h;
+        dst.h = out_w;
+        dst.x = (out_w - dst.w) / 2;
+        dst.y = (out_h - dst.h) / 2;
+    } else {
+        dst.x = 0;
+        dst.y = 0;
+        dst.w = out_w;
+        dst.h = out_h;
+    }
+
+    // No flipping
+    SDL_RendererFlip flip = SDL_FLIP_NONE;
+    int render_result = SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, &dst, angle, NULL, flip);
+
+    // Restore logical size so the rest of the pipeline is unaffected
+    if (rot == 90 || rot == 270) {
+        SDL_RenderSetLogicalSize(sdl_renderer, saved_log_w, saved_log_h);
+    }
+
+    if (render_result != 0) {
+       return -1;
+    }
+
     // Update the display
 	SDL_RenderPresent(sdl_renderer);
     
@@ -1454,14 +1523,23 @@ bool VideoInit(bool classic)
 		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
 			display_type = DISPLAY_SCREEN;
 	}
-	if (default_width <= 0)
-		default_width = sdl_display_width();
-	else if (default_width > sdl_display_width())
-		default_width = sdl_display_width();
-	if (default_height <= 0)
-		default_height = sdl_display_height();
-	else if (default_height > sdl_display_height())
-		default_height = sdl_display_height();
+	{
+		// When display_rotate is 90 or 270 the Mac runs at pre-rotation (swapped)
+		// dimensions, so clamp against the swapped display limits.
+		int dw = sdl_display_width();
+		int dh = sdl_display_height();
+		int rot = PrefsFindInt32("display_rotate");
+		if (rot == 90 || rot == 270)
+			std::swap(dw, dh);
+		if (default_width <= 0)
+			default_width = dw;
+		else if (default_width > dw)
+			default_width = dw;
+		if (default_height <= 0)
+			default_height = dh;
+		else if (default_height > dh)
+			default_height = dh;
+	}
 
 	// Mac screen depth follows X depth
 	screen_depth = 32;

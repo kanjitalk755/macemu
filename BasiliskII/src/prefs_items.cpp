@@ -29,6 +29,7 @@
 // these are guaranteed to be in the prefs.
 prefs_desc common_prefs_items[] = {
 	{"displaycolordepth", TYPE_INT32, false, "display color depth"},
+        {"display_rotate", TYPE_INT32, false, "rotate the screen"},
 	{"disk", TYPE_STRING, true,       "device/file name of Mac volume"},
 	{"floppy", TYPE_STRING, true,     "device/file name of Mac floppy drive"},
 	{"cdrom", TYPE_STRING, true,      "device/file names of Mac CD-ROM drive"},
@@ -108,6 +109,7 @@ void AddPrefsDefaults(void)
 	PrefsAddInt32("modelid", 5);	// Mac IIci
 	PrefsAddInt32("cpu", 3);		// 68030
 	PrefsAddInt32("displaycolordepth", 0);
+        PrefsAddInt32("display_rotate", 0);
 	PrefsAddBool("fpu", false);
 	PrefsAddBool("nocdrom", false);
 	PrefsAddBool("nosound", false);
