@@ -747,6 +747,11 @@ AS_IF([test  "x$have_libvhd" = "xyes" ], [
 ])
 
 
+AC_ARG_WITH(vdeplug,
+AS_HELP_STRING([--with-vdeplug], [Enable VDE virtual network support]),
+[],
+[with_vdeplug=yes])
+
 
 
 dnl Is the slirp library supported?
@@ -767,6 +772,13 @@ if [[ -n "$CAN_SLIRP" ]]; then
     ../slirp/ip_input.c  ../slirp/socket.c     ../slirp/udp.c"
 fi
 AC_SUBST(SLIRP_SRCS)
+
+dnl Is libvdeplug available?
+have_vdeplug=no
+AS_IF([test "x$with_vdeplug" = "xyes"], [
+have_vdeplug=yes
+AC_CHECK_LIB(vdeplug, vde_close, [], [have_vdeplug=no])
+])
 
 dnl SDL overrides
 if [[ "x$WANT_SDL" = "xyes" ]]; then
@@ -1761,6 +1773,7 @@ echo SDL support ...................... : $SDL_SUPPORT
 echo SDL major-version ................ : $WANT_SDL_VERSION_MAJOR
 echo BINCUE support ................... : $have_bincue
 echo LIBVHD support ................... : $have_libvhd
+echo VDE support ...................... : $have_vdeplug
 echo FBDev DGA support ................ : $WANT_FBDEV_DGA
 echo XFree86 DGA support .............. : $WANT_XF86_DGA
 echo XFree86 VidMode support .......... : $WANT_XF86_VIDMODE
