@@ -207,6 +207,8 @@ int64 TimebaseSpeed;	// Timebase clock speed (Hz)
 uint8 *RAMBaseHost;		// Base address of Mac RAM (host address space)
 uint8 *ROMBaseHost;		// Base address of Mac ROM (host address space)
 uint32 ROMEnd;
+// vde switch variable
+char* vde_sock;
 
 #if defined(__APPLE__) && defined(__x86_64__) || defined(MEM_BULK)
 uint8 gZeroPage[0x3000], gKernelData[0x2000];
