@@ -692,7 +692,7 @@ static DWORD tick_func(void *arg)
 		// Pseudo Mac 1Hz interrupt, update local time
 		if (++tick_counter > 60) {
 			tick_counter = 0;
-			WriteMacInt32(0x20c, TimerDateTime());
+			WriteMacInt32(0x20c, ReadMacInt32(0x20c) + 1);
 		}
 
 		// Trigger 60Hz interrupt

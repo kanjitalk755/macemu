@@ -40,6 +40,7 @@
 #include "audio_defs.h"
 #include "serial.h"
 #include "macos_util.h"
+#include "timer.h"
 #include "thunks.h"
 
 #define DEBUG 0
@@ -1938,11 +1939,16 @@ static bool patch_68k(void)
 		*wp = htons(M68K_RTS);
 	}
 
-	// Don't poke VIA in InitTimeMgr (via 0x298)
+	// Don't poke VIA in InitTimeMgr (via 0x298), but load in host time
 	static const uint8 time_via_dat[] = {0x40, 0xe7, 0x00, 0x7c, 0x07, 0x00, 0x28, 0x78, 0x01, 0xd4, 0x43, 0xec, 0x10, 0x00};
 	if ((base = find_rom_data(0x30000, 0x40000, time_via_dat, sizeof(time_via_dat))) == 0) return false;
 	D(bug("time_via %08lx\n", base));
 	wp = (uint16 *)(ROMBaseHost + base);
+	*wp++ = htons(0x307c);			// move.w	#0x20c,a0
+	*wp++ = htons(0x020c);
+	*wp++ = htons(0x20bc);			// move.l	[host_time],(a0)
+	*wp++ = htons(TimerDateTime() >> 16);
+	*wp++ = htons(TimerDateTime() & 0xffff);
 	*wp++ = htons(0x4cdf);			// movem.l	(sp)+,d0-d5/a0-a4
 	*wp++ = htons(0x1f3f);
 	*wp = htons(M68K_RTS);
