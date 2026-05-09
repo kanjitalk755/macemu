@@ -599,7 +599,7 @@ static int xpram_func(void *arg)
 static void one_second(void)
 {
 	// Pseudo Mac 1Hz interrupt, update local time
-	WriteMacInt32(0x20c, TimerDateTime());
+	WriteMacInt32(0x20c, ReadMacInt32(0x20c) + 1);
 
 	SetInterruptFlag(INTFLAG_1HZ);
 	TriggerInterrupt();

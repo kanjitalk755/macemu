@@ -32,6 +32,7 @@
 #include "video.h"
 #include "extfs.h"
 #include "prefs.h"
+#include "timer.h"
 
 #if ENABLE_MON
 #include "mon.h"
@@ -1295,8 +1296,13 @@ static bool patch_rom_32(void)
 		*wp = htons(0x602c);		// bra.b	#$2c
 #endif
 	
-	// Don't write to VIA in InitTimeMgr
+	// Don't write to VIA in InitTimeMgr, but load in host time
 	wp = (uint16 *)(ROMBaseHost + 0xb0e2);
+	/**wp++ = htons(0x307c);			// move.w	#0x20c,a0
+	*wp++ = htons(0x020c);
+	*wp++ = htons(0x20bc);			// move.l	[host_time],(a0)
+	*wp++ = htons((TimerDateTime() >> 16));
+	*wp++ = htons((TimerDateTime() & 0xffff));*/
 	*wp++ = htons(0x4cdf);			// movem.l	(sp)+,d0-d5/a0-a4
 	*wp++ = htons(0x1f3f);
 	*wp = htons(M68K_RTS);
@@ -1642,7 +1648,13 @@ static bool patch_rom_32(void)
 	if ((base = find_rom_resource(FOURCC('P','A','C','K'), 4)) == 0) return false;
 	if ((base = find_rom_resource(FOURCC('P','A','C','K'), 4, true)) == 0 && FPUType == 0)
 		printf("WARNING: This ROM seems to require an FPU\n");
-
+	
+	// Patch SetDateTime to skip clock chip verification
+	base = find_rom_trap(0xa03a);
+	wp = (uint16 *)(ROMBaseHost + base + 4);
+	*wp++ = htons(0x7000);		// moveq	#0,d0 (always noErr)
+	*wp = htons(M68K_RTS);
+	
 	// Patch VIA interrupt handler
 	wp = (uint16 *)(ROMBaseHost + 0x9bc4);	// Level 1 handler
 	*wp++ = htons(0x7002);		// moveq	#2,d0 (always 60Hz interrupt)

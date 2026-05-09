@@ -2333,6 +2333,12 @@ static bool patch_68k(void)
 			D(bug("SynchIdleTime patch not installed\n"));
 		}
 	}
+	
+	// Patch SetDateTime to skip clock chip verification
+	base = find_rom_trap(0xa03a);
+	wp = (uint16 *)(ROMBaseHost + base + 4);
+	*wp++ = htons(0x7000);		// moveq	#0,d0 (always noErr)
+	*wp = htons(M68K_RTS);
 
 	// Construct list of all sifters used by sound components in ROM
 	D(bug("Searching for sound components with type sdev in ROM\n"));

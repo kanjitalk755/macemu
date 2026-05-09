@@ -170,8 +170,17 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 						XPRAM[reg] = r->d[2];
 					}
 				} else if (reg < 0x08 && is_read) {
-					uint32 t = TimerDateTime();
-					uint8 b = t;
+					uint32 t;
+					uint8 b;
+					
+					if (HasMacStarted()) {
+						t = ReadMacInt32(0x20c);
+					} else {
+						t = TimerDateTime();
+					}
+					
+					b = t;
+					
 					switch (reg & 3) {
 						case 1: b = t >> 8; break;
 						case 2: b = t >> 16; break;
