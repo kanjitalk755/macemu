@@ -712,10 +712,10 @@ static bool init_sdl()
 	assert(sdl_flags != 0);
 
 #ifdef USE_SDL_VIDEO
-#if REAL_ADDRESSING && defined(GDK_WINDOWING_WAYLAND)
-	// Needed to fix a crash when using Wayland
-	// Forces use of XWayland instead
-	setenv("SDL_VIDEODRIVER", "x11", true);
+#if REAL_ADDRESSING && defined(__linux__)
+	// Wayland's mmap usage conflicts with fixed low-address mappings; force XWayland.
+	if (getenv("WAYLAND_DISPLAY") && !getenv("SDL_VIDEODRIVER"))
+		setenv("SDL_VIDEODRIVER", "x11", 0);
 #endif
 
 	// Don't let SDL block the screensaver
