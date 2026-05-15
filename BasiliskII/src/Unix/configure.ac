@@ -1438,7 +1438,7 @@ if [[ -n "$LINKER_SCRIPT_FLAGS" ]]; then
     saved_LDFLAGS="$LDFLAGS"
     LDFLAGS="$LDFLAGS $LINKER_SCRIPT_FLAGS"
     AC_TRY_RUN(
-      [int main() {if ((char *)&main < (char *)0x70000000) return 1;}],
+      [int main() {if ((char *)(&main) < (char *)0x70000000) return 1;}],
       [ac_cv_linker_script_works=yes],
       [ac_cv_linker_script_works=no],
       dnl When cross-compiling, assume it works
