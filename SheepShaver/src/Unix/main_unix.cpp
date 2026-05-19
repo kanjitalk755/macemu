@@ -1535,10 +1535,9 @@ static void *tick_func(void *arg)
 
 			// Yes, dump registers
 			sigregs *r = &sigsegv_regs;
-			char str[256];
 			if (crash_reason == NULL)
 				crash_reason = "SIGSEGV";
-			sprintf(str, "%s\n"
+			printf("%s\n"
 				"   pc %08lx     lr %08lx    ctr %08lx    msr %08lx\n"
 				"  xer %08lx     cr %08lx  \n"
 				"   r0 %08lx     r1 %08lx     r2 %08lx     r3 %08lx\n"
@@ -1560,7 +1559,6 @@ static void *tick_func(void *arg)
 				r->gpr[20], r->gpr[21], r->gpr[22], r->gpr[23],
 				r->gpr[24], r->gpr[25], r->gpr[26], r->gpr[27],
 				r->gpr[28], r->gpr[29], r->gpr[30], r->gpr[31]);
-			printf(str);
 			VideoQuitFullScreen();
 
 #ifdef ENABLE_MON
@@ -2100,7 +2098,7 @@ static void sigsegv_handler(int sig, siginfo_t *sip, void *scp)
 	// For all other errors, jump into debugger (sort of...)
 	crash_reason = (sig == SIGBUS) ? "SIGBUS" : "SIGSEGV";
 	if (!ready_for_signals) {
-		printf("%s\n");
+		printf("%s\n", crash_reason);
 		printf(" sigcontext %p, machine_regs %p\n", scp, r);
 		printf(
 			"   pc %08lx     lr %08lx    ctr %08lx    msr %08lx\n"
@@ -2113,7 +2111,6 @@ static void sigsegv_handler(int sig, siginfo_t *sip, void *scp)
 			"  r20 %08lx    r21 %08lx    r22 %08lx    r23 %08lx\n"
 			"  r24 %08lx    r25 %08lx    r26 %08lx    r27 %08lx\n"
 			"  r28 %08lx    r29 %08lx    r30 %08lx    r31 %08lx\n",
-			crash_reason,
 			r->pc(), r->lr(), r->ctr(), r->msr(),
 			r->xer(), r->cr(),
 			r->gpr(0), r->gpr(1), r->gpr(2), r->gpr(3),
@@ -2275,7 +2272,7 @@ power_inst:		sprintf(str, GetString(STR_POWER_INSTRUCTION_ERR), r->pc(), r->gpr(
 	// For all other errors, jump into debugger (sort of...)
 	crash_reason = "SIGILL";
 	if (!ready_for_signals) {
-		printf("%s\n");
+		printf("%s\n", crash_reason);
 		printf(" sigcontext %p, machine_regs %p\n", scp, r);
 		printf(
 			"   pc %08lx     lr %08lx    ctr %08lx    msr %08lx\n"
@@ -2288,7 +2285,6 @@ power_inst:		sprintf(str, GetString(STR_POWER_INSTRUCTION_ERR), r->pc(), r->gpr(
 			"  r20 %08lx    r21 %08lx    r22 %08lx    r23 %08lx\n"
 			"  r24 %08lx    r25 %08lx    r26 %08lx    r27 %08lx\n"
 			"  r28 %08lx    r29 %08lx    r30 %08lx    r31 %08lx\n",
-			crash_reason,
 			r->pc(), r->lr(), r->ctr(), r->msr(),
 			r->xer(), r->cr(),
 			r->gpr(0), r->gpr(1), r->gpr(2), r->gpr(3),
