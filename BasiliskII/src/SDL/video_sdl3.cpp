@@ -75,6 +75,9 @@
 #define CODE_INVALID -1
 #define CODE_HOTKEY  -2
 
+void make_window_transparent(SDL_Window *window);
+void set_mouse_ignore(SDL_Window *window, int flag);
+
 // Supported video modes
 using std::vector;
 static vector<VIDEO_MODE> VideoModes;

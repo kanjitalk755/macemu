@@ -637,6 +637,12 @@ struct R_DATA
 /** Create local const char * varname pointing
  * to the C string in the buffer data, observing its length len,
  * and adjust data and len to reflect the remaining data */
+size_t strnlen(const char *s, size_t maxlen) {
+	int i;
+	for (i = 0; i < maxlen && s[i]; i++)
+		;
+	return i;
+}
 #define POP_STR(varname, data, len) \
 	const char * varname; \
 	{ \

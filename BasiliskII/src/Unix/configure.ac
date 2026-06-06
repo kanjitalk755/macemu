@@ -1508,8 +1508,10 @@ fi
 
 if [[ "x$OS_TYPE" = "xdarwin" ]]; then
   WANT_VOSF=no
-  if [[ "$target_cpu" != "arm" ]]; then
+  if [[ "$target_cpu" = "x86_64" ]]; then
     LDFLAGS="$LDFLAGS -Wl,-no_pie -pagezero_size 0x1000"
+  elif [[ "$target_cpu" = "powerpc" ]]; then
+    LDFLAGS="$LDFLAGS -pagezero_size 0x1000"
   fi
 fi
 

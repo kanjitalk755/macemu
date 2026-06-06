@@ -30,7 +30,9 @@
 
 #include <unistd.h>
 
-#include "SDL.h"
+#ifdef USE_SDL_VIDEO
+#include <SDL.h>
+#endif
 
 // NSInteger was added in 10.5 SDK.
 #if MAC_OS_X_VERSION_MIN_REQUIRED < 1050
@@ -482,11 +484,15 @@ static NSString *makeRelativeIfNecessary(NSString *path)
   cancelWasClicked = NO;
 
   // quit
-#if !SDL_VERSION_ATLEAST(3, 0, 0)
-#define SDL_EVENT_QUIT	SDL_QUIT
+#ifdef USE_SDL_VIDEO
+  SDL_Event event;
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+  event.type = SDL_EVENT_QUIT;
+#else
+  event.type = SDL_QUIT;
 #endif
-  SDL_Event event = { .type = SDL_EVENT_QUIT };
   SDL_PushEvent(&event);
+#endif
 }
 
 - (BOOL) cancelWasClicked

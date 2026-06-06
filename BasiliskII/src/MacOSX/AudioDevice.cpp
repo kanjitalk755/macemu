@@ -42,6 +42,10 @@
 
 #include "AudioDevice.h"
 
+#ifndef __Verify_noErr
+#define __Verify_noErr	verify_noerr
+#endif
+
 void	AudioDevice::Init(AudioDeviceID devid, bool isInput)
 {
 	mID = devid;

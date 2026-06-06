@@ -1022,7 +1022,7 @@ AC_CACHE_CHECK([whether __PAGEZERO can be Low Memory area 0x0000-0x3000],
   ac_cv_pagezero_hack, [
   ac_cv_pagezero_hack=no 
   case $target_os:$target_cpu in
-  darwin*:x86_64)
+  darwin*:powerpc | darwin*:x86_64)
     ac_cv_pagezero_hack=yes
     ;;
   esac
@@ -1476,7 +1476,11 @@ gcc_AC_C_FLOAT_FORMAT
 dnl Platform specific binary postprocessor
 AC_PATH_PROG(BLESS, "true")
 if [[ "x$ac_cv_pagezero_hack" = "xyes" ]]; then
-#  BLESS=Darwin/lowmem
+  case $target_os:$target_cpu in
+  darwin*:powerpc)
+    BLESS=Darwin/lowmem
+    ;;
+  esac
   LDFLAGS="$LDFLAGS -pagezero_size 0x3000"
 fi
 
