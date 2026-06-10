@@ -69,6 +69,7 @@ else
 endif
 APP_BASENAME = BasiliskII
 APP = $(APP_BASENAME)$(CURR_APP_FLAVOR)
+APP_ID = io.github.kanjitalk755.macemu.basilisk
 APP_APP = $(APP).app
 
 PROGS = $(APP)$(EXEEXT)
@@ -159,6 +160,10 @@ install: $(PROGS) installdirs
 	$(INSTALL_DATA) @top_srcdir@/$(KEYCODES) $(DESTDIR)$(datadir)/$(APP)/keycodes
 	$(INSTALL_DATA) @top_srcdir@/fbdevices $(DESTDIR)$(datadir)/$(APP)/fbdevices
 	$(INSTALL_DATA) @top_srcdir@/tunconfig $(DESTDIR)$(datadir)/$(APP)/tunconfig
+	${INSTALL_DATA} @top_srcdir@/../dist/freedesktop/${APP_ID}.desktop -Dt ${DESTDIR}${datadir}/applications/
+	${INSTALL_DATA} @top_srcdir@/../dist/freedesktop/${APP_ID}.svg -Dt ${DESTDIR}${datadir}/icons/hicolor/scalable/apps/
+	${INSTALL_DATA} @top_srcdir@/../dist/freedesktop/${APP_ID}.png -Dt ${DESTDIR}${datadir}/icons/hicolor/256x256/apps/
+	${INSTALL_DATA} @top_srcdir@/../dist/freedesktop/${APP_ID}.metainfo.xml -Dt ${DESTDIR}${datadir}/metainfo/
 
 installdirs:
 	$(SHELL) @top_srcdir@/mkinstalldirs $(DESTDIR)$(bindir) $(DESTDIR)$(man1dir) $(DESTDIR)$(datadir)/$(APP)
