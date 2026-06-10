@@ -62,7 +62,7 @@ user_string_def common_strings[] = {
 	{STR_CREATE_BUTTON, "Create"},
 	{STR_APP_NAME, "BasiliskII"},
 	{STR_APP_DISPLAY_NAME, "Basilisk II"},
-	{STR_APP_ID, "net.cebix.BasiliskII"},
+	{STR_APP_ID, "io.github.kanjitalk755.macemu.basilisk"},
 
 	{STR_NO_MEM_ERR, "Not enough free memory."},
 	{STR_NOT_ENOUGH_MEMORY_ERR, "Your computer does not have enough memory to run Basilisk II."},

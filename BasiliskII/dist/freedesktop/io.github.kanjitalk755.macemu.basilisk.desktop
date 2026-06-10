@@ -1,0 +1,10 @@
+[Desktop Entry]
+Categories=Utility;Emulator
+Comment=A classic 68k Macintosh emulator
+Exec=BasiliskII
+Icon=io.github.kanjitalk755.macemu.basilisk
+Keywords=emulator;mac;apple;macos
+Name=Basilisk II
+StartupNotify=true
+Terminal=false
+Type=Application
