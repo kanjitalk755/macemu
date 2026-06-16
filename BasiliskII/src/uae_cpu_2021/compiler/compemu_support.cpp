@@ -842,7 +842,7 @@ static inline blockinfo* get_blockinfo_addr_new(void* addr, int /* setstate */)
 
 static void prepare_block(blockinfo* bi);
 
-/* Managment of blockinfos.
+/* Management of blockinfos.
 
    A blockinfo struct is allocated whenever a new block has to be
    compiled. If the list of free blockinfos is empty, we allocate a new
@@ -1296,7 +1296,7 @@ static void ru_fill_ea(regusage *ru, int reg, amodes mode,
 		ru_set(write_mode ? &ru->wmask : &ru->rmask, reg);
 		break;
 	case Ad16:
-		/* skip displacment */
+		/* skip displacement */
 		m68k_pc_offset += 2;
 	case Aind:
 	case Aipi:
@@ -3562,7 +3562,7 @@ void get_n_addr(int address, int dest, int tmp)
 //#if FIXED_ADDRESSING
 		lea_l_brr(dest,address,MEMBaseDiff);
 //#else
-//# error "Only fixed adressing mode supported"
+//# error "Only fixed addressing mode supported"
 //#endif
 		forget_about(tmp);
 		(void) f;
@@ -4484,7 +4484,7 @@ void build_comp(void)
 		if (compfunctbl[cft_map(opcode)])
 			count++;
 	}
-	jit_log("<JIT compiler> : supposedly %d compileable opcodes!",count);
+	jit_log("<JIT compiler> : supposedly %d compilable opcodes!",count);
 
 	/* Initialise state */
 	create_popalls();

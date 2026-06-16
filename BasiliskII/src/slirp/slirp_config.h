@@ -27,7 +27,7 @@
 
 /* Define this if you want slirp to write to the tty as fast as it can */
 /* This should only be set if you are using load-balancing, slirp does a */
-/* pretty good job on single modems already, and seting this will make */
+/* pretty good job on single modems already, and setting this will make */
 /* interactive sessions less responsive */
 /* XXXXX Talk about having fast modem as unit 0 */
 #undef FULL_BOLT

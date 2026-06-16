@@ -234,7 +234,7 @@ NTSTATUS PacketCleanup(
                               &Open->RcvQSpinLock
                               )) != NULL) {
 
-      IF_LOUD(DbgPrint("Packet: CleanUp - Completeing read\n");)
+      IF_LOUD(DbgPrint("Packet: CleanUp - Completing read\n");)
 
       pPacket=CONTAINING_RECORD(PacketListEntry,NDIS_PACKET,ProtocolReserved);
 

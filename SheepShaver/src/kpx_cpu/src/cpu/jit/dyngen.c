@@ -1383,7 +1383,7 @@ static const char * get_reloc_name(EXE_RELOC * rel, int * sslide)
 	return 0;
 #else
 
-	/* Intruction contains an offset to the symbols pointed to, in the rel->r_symbolnum section */
+	/* Instruction contains an offset to the symbols pointed to, in the rel->r_symbolnum section */
 	sectoffset = *(uint32_t *)(text + rel->r_address) & 0xffff;
 			
 	if(sectnum==0xffffff)
@@ -2243,7 +2243,7 @@ void patch_relocations(FILE *outfile, const char *name, host_ulong size, host_ul
 				error("unsupported i386 relocation (%d)", type);
 			}
 #else
-#error unsupport object format for HOST_I386
+#error unsupported object format for HOST_I386
 #endif
 		}
 	}
@@ -2406,7 +2406,7 @@ void patch_relocations(FILE *outfile, const char *name, host_ulong size, host_ul
 		}
 	}
 #else
-#error unsupport object format for HOST_X86_64 
+#error unsupported object format for HOST_X86_64 
 #endif
 #elif defined(HOST_PPC)
 #ifdef CONFIG_FORMAT_ELF
@@ -2543,7 +2543,7 @@ void patch_relocations(FILE *outfile, const char *name, host_ulong size, host_ul
 		}
 	}
 #else
-#error unsupport object format
+#error unsupported object format
 #endif
 #elif defined(HOST_S390)
 	char final_sym_name[256];

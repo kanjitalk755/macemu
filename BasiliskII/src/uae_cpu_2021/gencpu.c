@@ -283,7 +283,7 @@ static void gen_set_fault_pc (void)
  * the calling routine handles Apdi and Aipi modes.
  * gb-- movem == 2 means the same thing but for a MOVE16 instruction */
 
-/* fixup indicates if we want to fix up adress registers in pre decrement
+/* fixup indicates if we want to fix up address registers in pre decrement
  * or post increment mode now (0) or later (1). A value of 2 will then be
  * used to do the actual fix up. This allows to do all memory readings
  * before any register is modified, and so to rerun operation without
@@ -999,7 +999,7 @@ static void gen_opcode (unsigned long int opcode)
 	    next_cpu_level = 0;
 
 	/* fall through */
-     case 2: /* priviledged */
+     case 2: /* privileged */
 	printf ("if (!regs.s) { Exception(8,0); goto %s; }\n", endlabelstr);
 	need_endlabel = 1;
 	start_brace ();

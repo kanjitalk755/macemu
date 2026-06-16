@@ -68,7 +68,7 @@ struct file_handle {
 	void *bincue_fd;
 #endif
 	file_handle() {
-		// Since our PreventRemovalOfVolume implementaion on Windows increments a lock counter,
+		// Since our PreventRemovalOfVolume implementation on Windows increments a lock counter,
 		// let's have our own safeguard to prevent incrementing it more than once.
 		is_tray_locked = false;
 		storage_ejection_handle = NULL;

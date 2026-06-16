@@ -157,7 +157,7 @@ static status_t remap_page(uint32 *free_pte, uint32 ra, uint32 bits)
 
 
 /*
- *  Foward declarations for hook functions
+ *  Forward declarations for hook functions
  */
 
 static status_t sheep_open(const char *name, uint32 flags, void **cookie);

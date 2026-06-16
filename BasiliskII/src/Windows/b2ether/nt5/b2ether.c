@@ -570,7 +570,7 @@ PacketBindAdapter(
 
 		// Clear the DO_DEVICE_INITIALIZING flag. This is required
 		// if you create deviceobjects outside of DriverEntry.
-		// Untill you do this, application cannot send I/O request.
+		// Until you do this, application cannot send I/O request.
 
 		deviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
 	} while (FALSE);

@@ -113,7 +113,7 @@ static inline void do_put_mem_word(uae_u16 *a, uae_u32 v) {__asm__ ("rolw $8,%0"
 
 #else
 
-// PowerPC (memory.cpp not used, so no optimization neccessary)
+// PowerPC (memory.cpp not used, so no optimization necessary)
 static inline uae_u32 do_get_mem_long(uae_u32 *a) {return *a;}
 static inline uae_u32 do_get_mem_word(uae_u16 *a) {return *a;}
 static inline void do_put_mem_long(uae_u32 *a, uae_u32 v) {*a = v;}

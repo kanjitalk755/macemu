@@ -50,7 +50,7 @@ extern bool InitAll(const char *vmdir);
 extern void ExitAll(void);
 
 // Platform-specific functions
-extern void FlushCodeCache(void *start, uint32 size);	// Code was patched, flush caches if neccessary
+extern void FlushCodeCache(void *start, uint32 size);	// Code was patched, flush caches if necessary
 extern void QuitEmulator(void);							// Quit emulator
 extern void ErrorAlert(const char *text);				// Display error alert
 extern void ErrorAlert(int string_id);

@@ -84,7 +84,7 @@ DEFINES=
 
 #	specify special warning levels
 #	if unspecified default warnings will be used
-#	NONE = supress all warnings
+#	NONE = suppress all warnings
 #	ALL = enable all warnings
 WARNINGS = 
 
@@ -95,7 +95,7 @@ SYMBOLS =
 
 #	specify debug settings
 #	if TRUE will allow application to be run from a source-level
-#	debugger.  Note that this will disable all optimzation.
+#	debugger.  Note that this will disable all optimization.
 DEBUGGER = 
 
 #	specify additional compiler flags for all files

@@ -708,7 +708,7 @@ int16 CDROMControl(uint32 pb, uint32 dce)
 			WriteMacInt32(pb + csParam, 0x00000b01);	// Unspecified external removable SCSI disk
 			return noErr;
 		
-		// TODO: revist this section, is it necessary with DriverGestalt also in Status section?
+		// TODO: revisit this section, is it necessary with DriverGestalt also in Status section?
 		case 43: {		// DriverGestalt
 			int selector = ReadMacInt32(pb + csParam);
 			switch (selector) {

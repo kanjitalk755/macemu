@@ -575,7 +575,7 @@ else
 fi
 AC_SUBST(SDL_CFLAGS)
 AC_SUBST(SDL_LIBS)
-AC_DEFINE(USE_SDL, 1, [Define to enble SDL support])
+AC_DEFINE(USE_SDL, 1, [Define to enable SDL support])
 AC_DEFINE(USE_SDL_VIDEO, 1, [Define to enable SDL video graphics support])
 AC_DEFINE(USE_SDL_AUDIO, 1, [Define to enable SDL audio support])
 

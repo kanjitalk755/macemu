@@ -866,7 +866,7 @@ static void gen_opcode (unsigned long int opcode)
 	    next_cpu_level = 0;
 
 	/* fall through */
-     case 2: /* priviledged */
+     case 2: /* privileged */
 	printf ("if (!regs.s) { Exception(8,0); goto %s; }\n", endlabelstr);
 	need_endlabel = 1;
 	start_brace ();

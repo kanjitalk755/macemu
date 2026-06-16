@@ -1,7 +1,7 @@
 /*
  *	$Id$
  *
- *	sys_darwin.cpp - Extra Darwin system dependant routines. Called by:
+ *	sys_darwin.cpp - Extra Darwin system dependent routines. Called by:
  *
  *  sys_unix.cpp - System dependent routines, Unix implementation
  *

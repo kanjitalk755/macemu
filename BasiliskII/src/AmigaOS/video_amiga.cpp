@@ -487,7 +487,7 @@ void VideoQuitFullScreen(void)
 
 
 /*
- *  Video message handling (not neccessary under AmigaOS, handled by periodic_func())
+ *  Video message handling (not necessary under AmigaOS, handled by periodic_func())
  */
 
 void VideoInterrupt(void)

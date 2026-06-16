@@ -101,7 +101,7 @@ DEFINES= FPU_X86 SIZEOF_FLOAT=4 SIZEOF_DOUBLE=8 SIZEOF_LONG_DOUBLE=10
 
 #	specify special warning levels
 #	if unspecified default warnings will be used
-#	NONE = supress all warnings
+#	NONE = suppress all warnings
 #	ALL = enable all warnings
 WARNINGS = 
 

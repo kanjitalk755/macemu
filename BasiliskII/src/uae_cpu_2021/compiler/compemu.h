@@ -94,7 +94,7 @@ union cacheline {
 /* Use code inlining, aka follow-up of constant jumps */
 #define USE_INLINING 1
 
-/* Inlining requires the chained checksuming information */
+/* Inlining requires the chained checksumming information */
 #if USE_INLINING
 #undef  USE_CHECKSUM_INFO
 #define USE_CHECKSUM_INFO 1

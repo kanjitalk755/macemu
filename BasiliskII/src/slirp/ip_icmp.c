@@ -173,7 +173,7 @@ icmp_input(m, hlen)
   default:
     icmpstat.icps_badtype++;
     m_freem(m);
-  } /* swith */
+  } /* switch */
 
 end_error:
   /* m is m_free()'d xor put in a socket xor or given to ip_send */
@@ -305,7 +305,7 @@ icmp_error(
 
   ip->ip_ttl = MAXTTL;
   ip->ip_p = IPPROTO_ICMP;
-  ip->ip_dst = ip->ip_src;    /* ip adresses */
+  ip->ip_dst = ip->ip_src;    /* ip addresses */
   ip->ip_src = alias_addr;
 
   (void ) ip_output((struct socket *)NULL, m);

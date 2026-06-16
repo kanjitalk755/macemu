@@ -487,7 +487,7 @@ NTSTATUS PacketReadRegistry(
 
   RtlZeroMemory( ParamTable, sizeof(ParamTable) );
 
-  //  change to the parmeters key
+  //  change to the parameters key
   ParamTable[0].QueryRoutine = NULL;
   ParamTable[0].Flags = RTL_QUERY_REGISTRY_SUBKEY;
   ParamTable[0].Name = Parameters;

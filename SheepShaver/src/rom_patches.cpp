@@ -961,7 +961,7 @@ static bool patch_nanokernel_boot(void)
 	if ((base = find_rom_data(0x310000, 0x320000, pvr_read4_dat, sizeof(pvr_read4_dat))) != 0) {
 		D(bug("pvr_read4 %08lx\n", base));
 		lp = (uint32 *)(ROMBaseHost + base);
-		*lp = htonl(0x81200000 + XLM_PVR);	// lzw  r9,(theoritical PVR)
+		*lp = htonl(0x81200000 + XLM_PVR);	// lzw  r9,(theoretical PVR)
 	}
 
 	// Don't read SDR1

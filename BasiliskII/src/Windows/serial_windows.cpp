@@ -964,7 +964,7 @@ int XSERDPort::acknowledge_error(HANDLE h, bool is_read)
 	err = is_read ? readErr : writErr;
 
 	if(ClearCommError(h,&error_state,&comstat)) {
-		D(bug("A %s error 0x%X occured.\r\n", is_read ? "read" : "write", error_state));
+		D(bug("A %s error 0x%X occurred.\r\n", is_read ? "read" : "write", error_state));
 		D(bug("There was %d bytes in input buffer and %d bytes in output buffer.\r\n",(int)comstat.cbInQue,(int)comstat.cbOutQue));
 		if(error_state & CE_MODE) {
 			D(bug("The requested mode is not supported.\r\n"));

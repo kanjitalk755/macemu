@@ -1,5 +1,5 @@
 /*
- *  etherhelpertool.c - Reads and writes raw ethernet packets usng bpf
+ *  etherhelpertool.c - Reads and writes raw ethernet packets using bpf
  *  interface.
  *
  *  Copyright (C) 2010, Daniel Sumorok
@@ -312,7 +312,7 @@ static int open_tap(char *ifname)
         }
 
 	if (bridge != NULL) {
-		/* Check to see if bridge is alread up */
+		/* Check to see if bridge is already up */
 		snprintf(str, STR_MAX, "/sbin/ifconfig %s", bridge);
 		if (run_cmd(str) == 0) {
 			/* bridge is already up */

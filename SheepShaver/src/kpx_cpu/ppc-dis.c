@@ -5209,7 +5209,7 @@ operand_value_powerpc (const struct powerpc_operand *operand,
       if ((operand->flags & PPC_OPERAND_SIGNED) != 0)
 	{
 	  /* BITM is always some number of zeros followed by some
-	     number of ones, followed by some numer of zeros.  */
+	     number of ones, followed by some number of zeros.  */
 	  unsigned long top = operand->bitm;
 	  /* top & -top gives the rightmost 1 bit, so this
 	     fills in any trailing zeros.  */
@@ -5295,7 +5295,7 @@ perror_memory (int status, bfd_vma memaddr, struct disassemble_info *info)
 			   "Address 0x%" PRIx64 " is out of bounds.\n", memaddr);
 }
 
-/* This could be in a separate file, to save miniscule amounts of space
+/* This could be in a separate file, to save minuscule amounts of space
    in statically linked executables.  */
 
 /* Just print the address is hex.  This is included for completeness even

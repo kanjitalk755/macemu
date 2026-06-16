@@ -314,7 +314,7 @@ int main(int argc, char **argv)
 	if (!InitAll(NULL))
 		QuitEmulator();
 
-	// Move VBR away from 0 if neccessary
+	// Move VBR away from 0 if necessary
 	MoveVBR();
 
 	// On 68060, disable Super Bypass mode because of a CPU bug that is triggered by MacOS 8
@@ -472,7 +472,7 @@ void QuitEmulator(void)
 
 
 /*
- *  Code was patched, flush caches if neccessary (i.e. when using a real 680x0
+ *  Code was patched, flush caches if necessary (i.e. when using a real 680x0
  *  or a dynamically recompiling emulator)
  */
 

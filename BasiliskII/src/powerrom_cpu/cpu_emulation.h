@@ -51,7 +51,7 @@ static inline uint32 Host2MacAddr(uint8 *addr) {return (uint32)addr;}
  */
 
 // Initialization
-extern bool Init680x0(void);	// This routine may want to look at CPUType/FPUType to set up the apropriate emulation
+extern bool Init680x0(void);	// This routine may want to look at CPUType/FPUType to set up the appropriate emulation
 extern void Exit680x0(void);
 
 // 680x0 emulation functions

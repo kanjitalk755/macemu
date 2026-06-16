@@ -117,7 +117,7 @@ static void disasm_translation(uint32 src_addr, uint32 src_len,
 #ifdef TARGET_NATIVE
 	disasm_block(TARGET_NATIVE, dst_addr, dst_len);
 #else
-	printf("unsupported disassembler for this archicture\n");
+	printf("unsupported disassembler for this architecture\n");
 #endif
 }
 #endif

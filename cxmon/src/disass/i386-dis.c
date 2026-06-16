@@ -206,7 +206,7 @@ fetch_data (info, addr)
 #define Rd OP_Rd, d_mode
 #define Rm OP_Rd, m_mode
 #define Ib OP_I, b_mode
-#define sIb OP_sI, b_mode	/* sign extened byte */
+#define sIb OP_sI, b_mode	/* sign extended byte */
 #define Iv OP_I, v_mode
 #define Iq OP_I, q_mode
 #define Iv64 OP_I64, v_mode

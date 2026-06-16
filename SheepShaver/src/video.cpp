@@ -671,7 +671,7 @@ static int16 VideoStatus(uint32 pb, VidLocals *csSave)
 			WriteMacInt16(param + csPage, csSave->savePage);
 			D(bug("return: mode:%04x page:%04x ", ReadMacInt16(param + csMode),
 				ReadMacInt16(param + csPage)));
-			D(bug("base adress %08lx\n", ReadMacInt32(param + csBaseAddr)));
+			D(bug("base address %08lx\n", ReadMacInt32(param + csBaseAddr)));
 			return noErr;
 
 		case cscGetEntries: {						// GetEntries
@@ -753,7 +753,7 @@ static int16 VideoStatus(uint32 pb, VidLocals *csSave)
 			
 			D(bug("return: mode:%04x ID:%08lx page:%04x ", ReadMacInt16(param + csMode),
 				ReadMacInt32(param + csData), ReadMacInt16(param + csPage)));
-			D(bug("base adress %08lx\n", ReadMacInt32(param + csBaseAddr)));
+			D(bug("base address %08lx\n", ReadMacInt32(param + csBaseAddr)));
 			return noErr;
 
 		case cscGetConnection:						// GetConnection

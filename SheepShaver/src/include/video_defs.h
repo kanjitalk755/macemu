@@ -157,7 +157,7 @@ enum {
 	cscPrivateControlCall,				// Takes a VDPrivateSelectorDataRec
 	cscSetMultiConnect,					// From a GDI point of view, this call should be implemented completely in the HAL and not at all in the core.
 	cscSetClutBehavior,					// Takes a VDClutBehavior 
-	cscUnusedCall=127					// This call used to expend the scrn resource.  Its imbedded data contains more control info 
+	cscUnusedCall=127					// This call used to expend the scrn resource.  Its embedded data contains more control info 
 };
 
 /* Constants for the GetNextResolution call */

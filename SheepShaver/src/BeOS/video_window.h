@@ -332,13 +332,13 @@ void MacWindow::MessageReceived(BMessage *msg)
 				for (int i=0; i<length; i++)
 					*++dest = remap_mac_be[*++source];
 			} else if (mode == B_RGB_16_BIT) {
-				// Endianess conversion
+				// Endianness conversion
 				uint16 *source = (uint16 *)the_buffer;
 				uint16 *dest = (uint16 *)the_bitmap->Bits() - 1;
 				for (int i=0; i<length/2; i++)
 					*++dest = __lhbrx(source++, 0);
 			} else if (mode == B_RGB_32_BIT) {
-				// Endianess conversion
+				// Endianness conversion
 				uint32 *source = (uint32 *)the_buffer;
 				uint32 *dest = (uint32 *)the_bitmap->Bits() - 1;
 				for (int i=0; i<length/4; i++)

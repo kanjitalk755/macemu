@@ -296,7 +296,7 @@ void SysAddFloppyPrefs(void)
 	DarwinAddFloppyPrefs();
   #else
 	// Until I can convince the other guys that my Darwin code is useful,
-	// we just add something safe (a non-existant device):
+	// we just add something safe (a non-existent device):
 	PrefsAddString("floppy", "/dev/null");
   #endif
 #else
@@ -411,7 +411,7 @@ void SysAddSerialPrefs(void)
 	DarwinAddSerialPrefs();
   #else
 	// Until I can convince the other guys that my Darwin code is useful,
-	// we just add something safe (non-existant devices):
+	// we just add something safe (non-existent devices):
 	PrefsAddString("seriala", "/dev/null");
 	PrefsAddString("serialb", "/dev/null");
   #endif
@@ -991,7 +991,7 @@ bool SysIsDiskInserted(void *arg)
 #ifdef CDROM_MEDIA_CHANGED
 		if (fh->cdrom_cap & CDC_MEDIA_CHANGED) {
 			// If we don't do this, all attempts to read from a disc fail
-			// once the tray has been opened (altough the TOC reads fine).
+			// once the tray has been opened (although the TOC reads fine).
 			// Can somebody explain this to me?
 			if (ioctl(fh->fd, CDROM_MEDIA_CHANGED) == 1) {
 				close(fh->fd);

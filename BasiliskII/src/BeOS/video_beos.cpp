@@ -435,7 +435,7 @@ void VideoQuitFullScreen(void)
 
 
 /*
- *  Video event handling (not neccessary under BeOS, handled by filter function)
+ *  Video event handling (not necessary under BeOS, handled by filter function)
  */
 
 void VideoInterrupt(void)

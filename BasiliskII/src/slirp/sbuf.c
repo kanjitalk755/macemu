@@ -190,7 +190,7 @@ sbcopy(sb, off, len, to)
 		if (len > sb->sb_cc) len = sb->sb_cc;
 		memcpy(to,from,len);
 	} else {
-		/* re-use off */
+		/* reuse off */
 		off = (sb->sb_data + sb->sb_datalen) - from;
 		if (off > len) off = len;
 		memcpy(to,from,off);

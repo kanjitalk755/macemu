@@ -168,7 +168,7 @@ static ALWAYS_INLINE int mmu_lookup(uaecptr addr, bool data, bool write,
 }
 
 /*
- * similiar to mmu_user_lookup, but for the use of the moves instruction
+ * similar to mmu_user_lookup, but for the use of the moves instruction
  */
 static ALWAYS_INLINE int mmu_user_lookup(uaecptr addr, bool super, bool data,
 										   bool write, struct mmu_atc_line **cl)

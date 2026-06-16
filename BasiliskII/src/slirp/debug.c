@@ -263,7 +263,7 @@ icmpstats()
 	lprint("  %6d were too short\r\n", icmpstat.icps_tooshort);
 	lprint("  %6d with bad checksums\r\n", icmpstat.icps_checksum);
 	lprint("  %6d with type not supported\r\n", icmpstat.icps_notsupp);
-	lprint("  %6d with bad type feilds\r\n", icmpstat.icps_badtype);
+	lprint("  %6d with bad type fields\r\n", icmpstat.icps_badtype);
 	lprint("  %6d ICMP packets sent in reply\r\n", icmpstat.icps_reflect);
 }
 
