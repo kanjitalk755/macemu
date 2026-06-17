@@ -1388,7 +1388,7 @@ gen_opcode (unsigned int opcode)
 	    next_cpu_level = 0;
 
 	/* fall through */
-     case 2:			/* priviledged */
+     case 2:			/* privileged */
 	failure;   /* Easy ones first */
 	break;
      case 3:			/* privileged if size == word */

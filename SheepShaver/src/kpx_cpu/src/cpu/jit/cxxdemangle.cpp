@@ -92,7 +92,7 @@ cxx_demangle(const char *mangled_name, char *buf, size_t *n, int *status)
 #define ISDIGIT(c) isdigit(c)
 #define ISLOWER(c) islower(c)
 
-/* ANSI and traditional C compatability macros
+/* ANSI and traditional C compatibility macros
    Copyright 1991, 1992, 1993, 1994, 1995, 1996, 1998, 1999, 2000, 2001
    Free Software Foundation, Inc.
    This file is part of the GNU C Library.  */
@@ -889,7 +889,7 @@ work_stuff_copy_to_from (work_stuff *to, work_stuff *from)
 }
 
 
-/* Delete dynamic stuff in work_stuff that is not to be re-used.  */
+/* Delete dynamic stuff in work_stuff that is not to be reused.  */
 
 static void
 delete_non_B_K_work_stuff (work_stuff *work)
@@ -1460,7 +1460,7 @@ demangle_integral_value (
 	  string_append (s, buf);
 
 	  /* Numbers not otherwise delimited, might have an underscore
-	     appended as a delimeter, which we should skip.
+	     appended as a delimiter, which we should skip.
 
 	     ??? This used to always remove a following underscore, which
 	     is wrong.  If other (arbitrary) cases are followed by an

@@ -70,7 +70,7 @@ if_init()
  * we don't expect any signals, but what the hell..
  */
 inline int
-writen(fd, bptr, n)
+written(fd, bptr, n)
 	int fd;
 	char *bptr;
 	int n;

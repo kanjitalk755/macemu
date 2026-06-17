@@ -1258,14 +1258,14 @@ enum {
 
 /*									_format		Opcd		,Mod ,r	    ,m		,mem=dsp+sib	,imm... */
 
-// FIXME: no prefix is availble to encode a 32-bit operand size in 64-bit mode
+// FIXME: no prefix is available to encode a 32-bit operand size in 64-bit mode
 #define CALLm(M)							_O_D32		(0xe8					,(int)(M)		)
 #define _CALLLsr(R)			(_REXLrr(0, R),			_O_Mrm		(0xff		,_b11,_b010,_r4(R)				))
 #define _CALLQsr(R)			(_REXLrr(0, R),			_O_Mrm		(0xff		,_b11,_b010,_r8(R)				))
 #define CALLsr(R)			( X86_TARGET_64BIT ? _CALLQsr(R) : _CALLLsr(R))
 #define CALLsm(D,B,I,S)			(_REXLrm(0, B, I),		_O_r_X		(0xff		     ,_b010		,(int)(D),B,I,S		))
 
-// FIXME: no prefix is availble to encode a 32-bit operand size in 64-bit mode
+// FIXME: no prefix is available to encode a 32-bit operand size in 64-bit mode
 #define JMPSm(M)							_O_D8		(0xeb					,(int)(M)		)
 #define JMPm(M)								_O_D32		(0xe9					,(int)(M)		)
 #define _JMPLsr(R)			(_REXLrr(0, R),			_O_Mrm		(0xff		,_b11,_b100,_r4(R)				))
@@ -1898,7 +1898,7 @@ enum {
 #define MMX_PINSRWQirr(IM, RS, RD)		__MMXQirr(X86_MMX_PINSRW, IM, RS,_r4, RD,_rM)
 #define MMX_PINSRWQimr(IM, MD, MB, MI, MS, RD)	__MMXQimr(X86_MMX_PINSRW, IM, MD, MB, MI, MS, RD,_r8)
 
-// Additionnal MMX instructions, brought by SSSE3 ISA
+// Additional MMX instructions, brought by SSSE3 ISA
 #define MMX_PABSBrr(RS, RD)		_2P_MMXLrr(X86_MMX_PABSB,RS,RD)
 #define MMX_PABSBmr(MD,MB,MI,MS,RD)	_2P_MMXLmr(X86_MMX_PABSB, MD, MB, MI, MS, RD)
 #define MMX_PABSWrr(RS, RD)		_2P_MMXLrr(X86_MMX_PABSW,RS,RD)

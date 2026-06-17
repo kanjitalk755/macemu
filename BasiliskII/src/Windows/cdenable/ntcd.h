@@ -34,7 +34,7 @@
 		always doesn't hurt anything, it will immediately return
 		with success if the service is running.
 
-		Returns non-zero if installation/startup was succesfull,
+		Returns non-zero if installation/startup was successful,
 		zero if anything failed.
 		Returns non-zero also if the driver was already running.
 

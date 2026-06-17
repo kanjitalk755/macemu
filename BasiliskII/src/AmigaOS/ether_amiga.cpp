@@ -363,7 +363,7 @@ static __saveds void net_func(void)
 		TAG_END
 	};
 
-	// Default: error occured
+	// Default: error occurred
 	proc_error = true;
 
 	// Create message port for communication with main task

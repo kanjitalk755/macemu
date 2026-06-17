@@ -149,7 +149,7 @@ cdrom <CD-ROM drive description>
   installed CD-ROM drives. The format of the "CD-ROM drive description"
   is the same as that of "disk" lines.
 
-extfs <direcory path>
+extfs <directory path>
 
   This item specifies the root directory for the "Host Directory Tree"
   file system (the "Unix/BeOS/Amiga/..." icon on the Finder desktop).
@@ -484,7 +484,7 @@ ether <ethernet card description>
 
          By setting the "ethernet card description" to "slirp",
          Basilisk II uses a completely user mode network stack (you
-         don't need root priviledges to use the virtual network). The
+         don't need root privileges to use the virtual network). The
          virtual network configuration is the following:
 
            Basilisk II <------> Firewall/DHCP server <-----> Internet
@@ -504,7 +504,7 @@ ether <ethernet card description>
          DHCP server.
 
          Note that ping is not supported reliably to the internet as
-         it would require root priviledges. It means you can only ping
+         it would require root privileges. It means you can only ping
          the local router (10.0.2.2).
 
          When using the built-in TFTP server, the router is also the

@@ -75,7 +75,7 @@ _AtomicOr	move.l	4(sp),a0
 		rts
 
 *
-* Move VBR away from 0 if neccessary
+* Move VBR away from 0 if necessary
 *
 
 _MoveVBR	movem.l	d0-d1/a0-a1/a5-a6,-(sp)
@@ -656,7 +656,7 @@ popsr		move.l	a0,-(sp)		;Save a0
 		and.w	#$e700,d0		;Extract supervisor bits
 		move.w	d0,_EmulatedSR		;And save them
 
-		and.w	#$0700,d0		;Rethrow exception if interrupts are pending and reenabled
+		and.w	#$0700,d0		;Rethrow exception if interrupts are pending and re-enabled
 		bne	1$
 		tst.l	_InterruptFlags
 		beq	1$
@@ -706,7 +706,7 @@ storesr4	move.w	d0,4(sp)		;Store into CCR on stack
 		and.w	#$e700,d0		;Extract supervisor bits
 		move.w	d0,_EmulatedSR		;And save them
 
-		and.w	#$0700,d0		;Rethrow exception if interrupts are pending and reenabled
+		and.w	#$0700,d0		;Rethrow exception if interrupts are pending and re-enabled
 		bne.s	1$
 		tst.l	_InterruptFlags
 		beq.s	1$
@@ -1020,7 +1020,7 @@ storesr2	move.w	d0,4(sp)
 		and.w	#$e700,d0
 		move.w	d0,_EmulatedSR
 
-		and.w	#$0700,d0		;Rethrow exception if interrupts are pending and reenabled
+		and.w	#$0700,d0		;Rethrow exception if interrupts are pending and re-enabled
 		bne.s	1$
 		tst.l	_InterruptFlags
 		beq.s	1$

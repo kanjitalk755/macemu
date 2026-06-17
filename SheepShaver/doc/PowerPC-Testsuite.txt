@@ -2,7 +2,7 @@
 
 The PowerPC Emulator Tester is a self-contained testsuite I wrote for the [[en:projects:sheepshaver|SheepShaver]] emulation engine. It was a very handy tool during the development of the SheepShaver PowerPC Emulator and considerably reduced debugging time when AltiVec emulation was added. I hope this would be useful to other PowerPC Emulator authors. The code is distributed under the terms of the [[http://www.gnu.org/copyleft/gpl.html|GNU General Public License]] (GPL).
 
-It's not terrific code and can largely be improved and cleaned up, but it provides reasonnable information to chase down a bug.
+It's not terrific code and can largely be improved and cleaned up, but it provides reasonable information to chase down a bug.
 
 See [[#links|links]] for other testsuites. As of **2006/07/04**, the current SheepShaver CVS branch contains a more accurate FPU emulation engine. It passes VEX tests with more precision & exception bits. All the following glibc tests pass on PPC: ''test-fenv'', ''test-arith{,f}'', ''test-{float,double}''. Almost all of them pass on x86-64 too (modulo a few errors in ''test-float''), provided that GCC >= 4.0.1 is used. The more accurate engine is enabled with ''PPC_ENABLE_FPU_EXCEPTIONS''.
 

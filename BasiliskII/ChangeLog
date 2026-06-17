@@ -22,7 +22,7 @@ V1.0 (snapshot) - <date>
  - Unix: new prefs options "dsp" and "mixer" to set the OSS device names
    instead of the hardcoded '/dev/dsp' and '/dev/mixer'
  - Unix: new ether prefs option 'tun' to use a TUN/TAP interface. The
-   configure script used can be overriden with "etherconfig"
+   configure script used can be overridden with "etherconfig"
  - Unix: SDL audio and video output are now available in option
  - Unix: sheep_net driver ported to kernel 2.6 (patches from Mac-On-Linux)
  - Unix: fix network code to work correctly on 64-bit platforms
@@ -30,7 +30,7 @@ V1.0 (snapshot) - <date>
  - Unix: implement X11 to MacOS exchange of text through the clipboard
  - Unix: improve overall responsiveness on NetBSD platforms
  - Unix: fix GUI to build with newer GTK+2
- - Unix: fix crash when exitting the GUI early
+ - Unix: fix crash when exiting the GUI early
  - Unix: fix fullscreen DGA mode with the VidMode extension
  - Windows: a new port derived from Lauri's work is now available
 
@@ -317,7 +317,7 @@ V0.6 (alpha) - 2.Jul.1999
  - Unix/video_x.cpp: support for Classic video mode and display on 1-bit
    screens
  - Unix/video_x.cpp: added check whether screen is really DGA capable
- - Unix/video_x.cpp: added check for image endianess
+ - Unix/video_x.cpp: added check for image endianness
  - Unix/sys_unix.cpp: added replacement for Linux llseek() for platforms that
    don't have it
  - Unix/*.cpp: replaced sleep()/usleep() by nanosleep()
@@ -501,7 +501,7 @@ V0.3 (alpha) - 14.Mar.1999
 
 V0.2 (alpha) - 11.Mar.1999
  - tested with ROM versions 19 and 26
- - prefs.cpp: renamed TYPE_BOOL to TYPE_BOOLEAN beacuse of name clash on BeOS
+ - prefs.cpp: renamed TYPE_BOOL to TYPE_BOOLEAN because of name clash on BeOS
    R4.1
  - uae_memory.cpp: added support for frame buffer pixel type conversion in
    virtual addressing mode, the Mac frame buffer layout now has to be specified

@@ -2464,7 +2464,7 @@ static bool arm_skip_instruction(unsigned long * regs)
 	  transfer_size = SIZE_LONG;
 	break;
   default:
-	// FIXME: support load/store mutliple?
+	// FIXME: support load/store multiple?
 	return false;
   }
 
@@ -2736,10 +2736,10 @@ static bool handle_badaccess(SIGSEGV_FAULT_HANDLER_ARGLIST_1)
 /*
  * There are two mechanisms for handling a bad memory access,
  * Mach exceptions and UNIX signals. The implementation specific
- * code appears below. Its reponsibility is to call handle_badaccess
+ * code appears below. Its responsibility is to call handle_badaccess
  * which is the routine that handles the fault in an implementation
  * agnostic manner. The implementation specific code below is then
- * reponsible for checking whether handle_badaccess was able
+ * responsible for checking whether handle_badaccess was able
  * to handle the memory access error and perform any implementation
  * specific tasks necessary afterwards.
  */
@@ -2749,7 +2749,7 @@ static bool handle_badaccess(SIGSEGV_FAULT_HANDLER_ARGLIST_1)
  * We need to forward all exceptions that we do not handle.
  * This is important, there are many exceptions that may be
  * handled by other exception handlers. For example debuggers
- * use exceptions and the exception hander is in another
+ * use exceptions and the exception handler is in another
  * process in such a case. (Timothy J. Wood states in his
  * message to the list that he based this code on that from
  * gdb for Darwin.)
@@ -2778,7 +2778,7 @@ forward_exception(mach_port_t thread_port,
 	}
 
 	if (portIndex >= oldExceptionPorts->maskCount) {
-		fprintf(stderr, "No handler for exception_type = %d. Not fowarding\n", exception_type);
+		fprintf(stderr, "No handler for exception_type = %d. Not forwarding\n", exception_type);
 		return KERN_FAILURE;
 	}
 
@@ -3043,7 +3043,7 @@ static bool sigsegv_do_install_handler(sigsegv_fault_handler_t handler)
 	// We could have used EXCEPTION_STATE_IDENTITY instead of
 	// EXCEPTION_DEFAULT to get the thread state in the initial
 	// message, but it turns out that in the common case this is not
-	// neccessary. If we need it we can later ask for it from the
+	// necessary. If we need it we can later ask for it from the
 	// suspended thread.
 	//
 	// Even with THREAD_STATE_NONE, Darwin provides the program

@@ -48,7 +48,7 @@ extern "C" int fesetround(int);
 
 // Make sure previous instructions are executed first
 // XXX this is most really a hint to the compiler so that is doesn't
-// reorder calls to fe*() functions before the actual compuation...
+// reorder calls to fe*() functions before the actual computation...
 #if defined __GNUC__
 #define febarrier() __asm__ __volatile__ ("")
 #endif

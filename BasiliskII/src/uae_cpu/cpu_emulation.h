@@ -78,7 +78,7 @@ static inline void *Mac2Mac_memcpy(uint32 dest, uint32 src, size_t n) {return me
  */
 
 // Initialization
-extern bool Init680x0(void);	// This routine may want to look at CPUType/FPUType to set up the apropriate emulation
+extern bool Init680x0(void);	// This routine may want to look at CPUType/FPUType to set up the appropriate emulation
 extern void Exit680x0(void);
 extern void InitFrameBufferMapping(void);
 

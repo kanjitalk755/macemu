@@ -90,7 +90,7 @@ typedef unsigned long vm_uintptr_t;
 #endif
 #ifdef HAVE_MMAP_VM
 #if (defined(__linux__) && defined(__i386__)) || defined(__sun__) || defined(__FreeBSD__) || defined(__NetBSD__) || HAVE_LINKER_SCRIPT
-/* Force a reasonnable address below 0x80000000 on x86 so that we
+/* Force a reasonable address below 0x80000000 on x86 so that we
    don't get addresses above when the program is run on AMD64.
    NOTE: this is empirically determined on Linux/x86.  */
 #define MAP_BASE	0x10000000
@@ -313,7 +313,7 @@ static void *vm_acquire_internal(size_t size, int options)
 	return addr;
 #endif
 
-	// Explicitely protect the newly mapped region here because on some systems,
+	// Explicitly protect the newly mapped region here because on some systems,
 	// say MacOS X, mmap() doesn't honour the requested protection flags.
 	if (vm_protect(addr, size, VM_PAGE_DEFAULT) != 0)
 		return VM_MAP_FAILED;
@@ -323,7 +323,7 @@ static void *vm_acquire_internal(size_t size, int options)
 }
 
 /* Allocate zero-filled memory at exactly ADDR (which must be page-aligned).
-   Retuns 0 if successful, -1 on errors.  */
+   Returns 0 if successful, -1 on errors.  */
 
 static int vm_acquire_fixed_internal(void * addr, size_t size, int options)
 {
@@ -371,7 +371,7 @@ static int vm_acquire_fixed_internal(void * addr, size_t size, int options)
 	return -1;
 #endif
 
-	// Explicitely protect the newly mapped region here because on some systems,
+	// Explicitly protect the newly mapped region here because on some systems,
 	// say MacOS X, mmap() doesn't honour the requested protection flags.
 	if (vm_protect(addr, size, VM_PAGE_DEFAULT) != 0)
 		return -1;

@@ -88,7 +88,7 @@ VOID PacketSendComplete(
 
   Irp = RESERVED(pPacket)->Irp;
 
-  //  recyle the packet
+  //  recycle the packet
   NdisReinitializePacket(pPacket);
 
   //  Put the packet back on the free list

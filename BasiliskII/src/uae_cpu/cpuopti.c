@@ -29,7 +29,7 @@
 
 struct line {
     struct line *next, *prev;
-    int delet;
+    int delete;
     char *data;
 };
 
@@ -189,12 +189,12 @@ reordered:
 	    return;
 	}
 	f->initial_offset = v;
-	fl->delet = 3;
+	fl->delete = 3;
 	fl = fl->next;
-	l1->delet = 2;
+	l1->delete = 2;
 	l1 = l1->prev;
 	while (l1 != l) {
-	    l1->delet = 1;
+	    l1->delete = 1;
 	    l1 = l1->prev;
 	}
     }
@@ -205,7 +205,7 @@ reordered:
 	pushm = match (fl, "pushl %");
 	if (popm && pushm && strcmp(pushm, popm) == 0) {
 	    pops_at_end++;
-	    fl->delet = l->delet = 1;
+	    fl->delete = l->delete = 1;
 	} else
 	    in_pop_area = 0;
 	l = l->prev;
@@ -220,7 +220,7 @@ static void output_function(struct func *f)
     struct line *l = f->first_line;
 
     while (l) {
-	switch (l->delet) {
+	switch (l->delete) {
 	 case 1:
 	    break;
 	 case 0:
@@ -280,7 +280,7 @@ int main(int argc, char **argv)
 		    nextp = &current->next;
 		    current->prev = prev; prev = current;
 		    current->next = NULL;
-		    current->delet = 0;
+		    current->delete = 0;
 		    current->data = strdup (tmp);
 		    if (match (current, "movl %esp,%ebp") || match (current, "enter")) {
 			fprintf (stderr, "GCC failed to eliminate fp: %s\n", first_line->data);

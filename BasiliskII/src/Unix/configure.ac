@@ -890,7 +890,7 @@ fi
 
 dnl SDL overrides
 if [[ "x$WANT_SDL" = "xyes" ]]; then
-  AC_DEFINE(USE_SDL, 1, [Define to enble SDL support])
+  AC_DEFINE(USE_SDL, 1, [Define to enable SDL support])
   if [[ "x$WANT_SDL_FRAMEWORK" = "xyes" ]]; then
     EXTRASYSSRCS="$EXTRASYSSRCS ../SDL/SDLMain.m"
   fi

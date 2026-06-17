@@ -110,7 +110,7 @@ NTSTATUS PacketRead(
 
 	//
 	//  Put this packet in a list of pending reads.
-	//  The receive indication handler will attemp to remove packets
+	//  The receive indication handler will attempt to remove packets
 	//  from this list for use in transfer data calls
 	//
 	ExInterlockedInsertTailList(

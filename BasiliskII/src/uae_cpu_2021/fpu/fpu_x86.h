@@ -65,7 +65,7 @@ PRIVATE fpu_register const_z;
 PRIVATE fpu_register const_ln2;
 PRIVATE fpu_register const_1;
 
-// FMOVECR constants not not suported by x86 FPU
+// FMOVECR constants not not supported by x86 FPU
 PRIVATE fpu_register const_e;
 PRIVATE fpu_register const_log_10_e;
 PRIVATE fpu_register const_ln_10;

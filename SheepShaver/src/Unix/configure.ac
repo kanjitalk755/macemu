@@ -782,7 +782,7 @@ AC_CHECK_LIB(vdeplug, vde_close, [], [have_vdeplug=no])
 
 dnl SDL overrides
 if [[ "x$WANT_SDL" = "xyes" ]]; then
-  AC_DEFINE(USE_SDL, 1, [Define to enble SDL support.])
+  AC_DEFINE(USE_SDL, 1, [Define to enable SDL support.])
 fi
 if [[ "x$WANT_SDL_VIDEO" = "xyes" ]]; then
   AC_DEFINE(USE_SDL_VIDEO, 1, [Define to enable SDL video graphics support.])

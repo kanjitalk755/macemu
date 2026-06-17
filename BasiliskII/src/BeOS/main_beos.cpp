@@ -461,7 +461,7 @@ status_t BasiliskII::emul_func(void *arg)
 
 
 /*
- *  Code was patched, flush caches if neccessary (i.e. when using a real 680x0
+ *  Code was patched, flush caches if necessary (i.e. when using a real 680x0
  *  or a dynamically recompiling emulator)
  */
 

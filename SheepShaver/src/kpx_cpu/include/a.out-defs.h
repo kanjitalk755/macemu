@@ -176,7 +176,7 @@ struct external_syment
 
 union external_auxent {
   struct {
-    uint32_t x_tagndx;	/* str, un, or enum tag indx */
+    uint32_t x_tagndx;	/* str, un, or enum tag index */
     union {
       struct {
 	uint16_t  x_lnno; /* declaration line number */
@@ -304,7 +304,7 @@ struct external_reloc {
 
 
 #define IMAGE_SCN_LNK_NRELOC_OVFL            0x01000000  /* Section contains extended relocations. */
-#define IMAGE_SCN_MEM_NOT_CACHED             0x04000000  /* Section is not cachable.               */
+#define IMAGE_SCN_MEM_NOT_CACHED             0x04000000  /* Section is not cacheable.               */
 #define IMAGE_SCN_MEM_NOT_PAGED              0x08000000  /* Section is not pageable.               */
 #define IMAGE_SCN_MEM_SHARED                 0x10000000  /* Section is shareable.                  */
 #endif
@@ -330,7 +330,7 @@ struct external_reloc {
 
 
 #ifdef COFF_IMAGE_WITH_PE
-/* The filehdr is only weired in images */
+/* The filehdr is only weird in images */
 
 #undef FILHDR
 struct external_PE_filehdr

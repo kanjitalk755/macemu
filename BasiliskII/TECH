@@ -58,7 +58,7 @@ DIRECT_ADDRESSING and EMULATED_68K defines in "sysdeps.h"):
    memory access functions that carry out the necessary operations (e.g.
    byte-swapping, catching illegal writes to memory). A generic memory access
    function, get_long() for example, goes through the table of memory banks
-   (mem_banks) and fetches the appropriate specific memory access fonction,
+   (mem_banks) and fetches the appropriate specific memory access function,
    lget() in our example. This slows down the emulator, of course.
 
 2. Emulated CPU, "direct" addressing (EMULATED_68K = 1, DIRECT_ADDRESSING = 1):
@@ -124,9 +124,9 @@ DIRECT_ADDRESSING and EMULATED_68K defines in "sysdeps.h"):
         of control can crash the emulator or the whole system)
      b) MacOS and Mac applications assume that they always run in supervisor
         mode (more precisely, they assume that they can safely use certain
-        priviledged instructions, mostly for interrupt control). So either
+        privileged instructions, mostly for interrupt control). So either
         the whole emulator has to be run in supervisor mode (which usually is
-        not possible on multitasking systems) or priviledged instructions have
+        not possible on multitasking systems) or privileged instructions have
         to be trapped and emulated. The Amiga and NetBSD/m68k versions of
         Basilisk II use the latter approach (it is possible to run supervisor
         mode tasks under the AmigaOS multitasking kernel (ShapeShifter does
@@ -167,7 +167,7 @@ data types and functions are provided:
      a Mac memory address to a (uint8 *) in host address space. This allows you
      to access larger chunks of Mac memory directly, without going through the
      read/write functions for every access. But doing so you have to perform
-     any needed endianess conversion of the data yourself by using the ntohs()
+     any needed endianness conversion of the data yourself by using the ntohs()
      etc. macros which are available on most systems or defined in "sysdeps.h".
 
 4. Calling native routines from 68k mode and vice-versa
@@ -419,7 +419,7 @@ Sony).
 6.10. External file system
 --------------------------
 
-Basilisk II also provides a method for accessing files and direcories on the
+Basilisk II also provides a method for accessing files and directories on the
 host OS from the MacOS side by means of an "external" file system
 (henceforth called "ExtFS"). The ExtFS is built upon the File System Manager
 1.2 interface that is built into MacOS 7.6 (and later) and available as a
@@ -441,7 +441,7 @@ subclasses.
 
 Unlike the disk drivers, the serial driver must be able to handle
 asynchronous operations. Calls to SerialPrime() will usually not actually
-transmit or receive data but delegate the action to an independant thread.
+transmit or receive data but delegate the action to an independent thread.
 SerialPrime() then returns "1" to indicate that the I/O operation is not yet
 completed. The completion of the I/O request is signalled by calling the
 MacOS trap "IODone". However, this can't be done by the I/O thread because
@@ -462,7 +462,7 @@ Basilisk II must be able to send and receive raw Ethernet packets, including
 the 14-byte header (destination and source address and type/length field),
 but not including the 4-byte CRC. This may not be possible on all platforms
 or it may require writing special net drivers or add-ons or running with
-superuser priviledges to get access to the raw packets.
+superuser privileges to get access to the raw packets.
 
 For situations in which access to raw Ethernet packets is not possible,
 Basilisk II implements a special "tunneling" mode in which it sends and
@@ -582,7 +582,7 @@ steps involved in the process:
    Basilisk II will run.
 3. Create a "sysdeps.h" file which defines the mode and system-dependant
    data types and memory access functions. Things which are used in Basilisk
-   but missing on your platform (such as endianess macros) should also be
+   but missing on your platform (such as endianness macros) should also be
    defined here.
 4. Implement the system-specific parts of Basilisk:
      main_*.cpp, sys_*.cpp, prefs_*.cpp, prefs_editor_*.cpp, xpram_*.cpp,
@@ -594,7 +594,7 @@ steps involved in the process:
 5. Important things to remember:
      - Use the ReadMacInt*() and WriteMacInt*() functions from "cpu_emulation.h"
        to access Mac memory
-     - Use the ntohs() etc. macros to convert endianess when accessing Mac
+     - Use the ntohs() etc. macros to convert endianness when accessing Mac
        memory directly
      - Don't modify any source files outside of your platform directory unless
        you really, really have to. Instead of adding "#ifdef PLATFORM" blocks

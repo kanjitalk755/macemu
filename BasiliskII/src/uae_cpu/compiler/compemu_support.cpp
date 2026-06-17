@@ -570,7 +570,7 @@ static __inline__ blockinfo* get_blockinfo_addr_new(void* addr, int setstate)
 
 static void prepare_block(blockinfo* bi);
 
-/* Managment of blockinfos.
+/* Management of blockinfos.
 
    A blockinfo struct is allocated whenever a new block has to be
    compiled. If the list of free blockinfos is empty, we allocate a new
@@ -886,7 +886,7 @@ static void ru_fill_ea(regusage *ru, int reg, amodes mode,
 		ru_set(write_mode ? &ru->wmask : &ru->rmask, reg);
 		break;
 	case Ad16:
-		/* skip displacment */
+		/* skip displacement */
 		m68k_pc_offset += 2;
 	case Aind:
 	case Aipi:
@@ -6276,7 +6276,7 @@ void build_comp(void)
 	if (compfunctbl[cft_map(opcode)])
 	    count++;
     }
-	write_log("<JIT compiler> : supposedly %d compileable opcodes!\n",count);
+	write_log("<JIT compiler> : supposedly %d compilable opcodes!\n",count);
 
     /* Initialise state */
     create_popalls();

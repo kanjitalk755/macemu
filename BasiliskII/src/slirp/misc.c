@@ -552,7 +552,7 @@ relay(s)
 			n = read(0, buf, 8192);
 			if (n <= 0)
 			   slirp_exit(0);
-			n = writen(s, buf, n);
+			n = written(s, buf, n);
 			if (n <= 0)
 			   slirp_exit(0);
 		}
@@ -561,7 +561,7 @@ relay(s)
 			n = read(s, buf, 8192);
 			if (n <= 0)
 			   slirp_exit(0);
-			n = writen(0, buf, n);
+			n = written(0, buf, n);
 			if (n <= 0)
 			   slirp_exit(0);
 		}

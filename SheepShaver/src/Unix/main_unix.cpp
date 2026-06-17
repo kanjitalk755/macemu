@@ -30,7 +30,7 @@
  *    - There is a pointer to Thread Local Storage (TLS) under Linux with
  *      recent enough glibc. This is r2 in 32-bit mode and r13 in
  *      64-bit mode (PowerOpen/AIX ABI)
- *    - r13 is used as a small data pointer under Linux (but appearently
+ *    - r13 is used as a small data pointer under Linux (but apparently
  *      it is not used this way? To be sure, we specify -msdata=none
  *      in the Makefile)
  *    - There are no TVECTs under Linux; function pointers point

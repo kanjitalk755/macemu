@@ -277,7 +277,7 @@ soread(so)
 	 * We don't test for <= 0 this time, because there legitimately
 	 * might not be any more data (since the socket is non-blocking),
 	 * a close will be detected on next iteration.
-	 * A return of -1 wont (shouldn't) happen, since it didn't happen above
+	 * A return of -1 won't (shouldn't) happen, since it didn't happen above
 	 */
 	if (n == 2 && nn == iov[0].iov_len) {
             int ret;
@@ -591,7 +591,7 @@ struct DNS_HEADER
  
     unsigned char rd :1; // recursion desired
     unsigned char tc :1; // truncated message
-    unsigned char aa :1; // authoritive answer
+    unsigned char aa :1; // authoritative answer
     unsigned char opcode :4; // purpose of message
     unsigned char qr :1; // query/response flag
  

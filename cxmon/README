@@ -23,7 +23,7 @@ similar to a machine code monitor/debugger, but it lacks any functions for
 running/tracing code. There are, however, built-in PowerPC, 680x0, 80x86,
 x86-64, 6502 and Z80 disassemblers and special support for disassembling
 MacOS code. By default, cxmon operates on a fixed-size (but adjustable)
-memory buffer with adresses starting at 0.
+memory buffer with addresses starting at 0.
 
 
 Installation
@@ -102,7 +102,7 @@ There are two special symbols that can be used in expressions:
       the command prompt). What exactly the current address is, depends on the
       command last executed. The display commands set "." to the address after
       the last address displayed, the "hunt" commands sets "." to the address
-      of the first found occurence of the search string, etc.
+      of the first found occurrence of the search string, etc.
   :   is used by the "apply" ("y") command and holds the value of the byte/
       half-word/word at the current address.
 
@@ -126,7 +126,7 @@ integer address. Addresses start at 0 and are taken modulo the buffer size
 byte).
 
 The buffer is the working area of cxmon where you load files into, manipulate
-them, and write files back from. Arbitraty portions of the buffer may be used
+them, and write files back from. Arbitrary portions of the buffer may be used
 as scratch space.
 
 

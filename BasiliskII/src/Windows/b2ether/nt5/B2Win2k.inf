@@ -16,7 +16,7 @@ DriverVer   = 12/05/1999,5.00.2128
 ;-------------------------------------------------------------------------
 [Install]
 AddReg=Inst_Ndi
-Characteristics=0 ; Has no characterstic
+Characteristics=0 ; Has no characteristic
 CopyFiles=CpyFiles_Sys
 
 ;-------------------------------------------------------------------------

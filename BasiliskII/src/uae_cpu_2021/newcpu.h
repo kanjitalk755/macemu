@@ -58,7 +58,7 @@ extern int broken_in;
 
 #ifdef X86_ASSEMBLY
 /* This hack seems to force all register saves (pushl %reg) to be moved to the
-   begining of the function, thus making it possible to cpuopti to remove them
+   beginning of the function, thus making it possible to cpuopti to remove them
    since m68k_run_1 will save those registers before calling the instruction
    handler */
 # define cpuop_tag(tag)		__asm__ __volatile__ ( "#cpuop_" tag )

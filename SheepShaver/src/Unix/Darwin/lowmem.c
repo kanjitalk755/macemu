@@ -122,7 +122,7 @@ void pagezero_64(struct mach_header_64 *machhead)
  * default size of this segment is the page size of the target system and
  * the initial and maximum permissions are set to allow no access. This is so
  * that all programs fault on a NULL pointer dereference. Arguably this is
- * incorrect and the maximum permissions shoould be rwx so that programs can
+ * incorrect and the maximum permissions should be rwx so that programs can
  * change this default behavior. Then programs could be written that assume
  * a null string at the null address, which was the convention on some
  * systems. In our case we need to have 8K mapped at zero for the low memory

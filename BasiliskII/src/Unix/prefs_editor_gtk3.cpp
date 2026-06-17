@@ -1521,7 +1521,7 @@ static rpc_connection_t *g_gui_connection = NULL;
 
 static void sigchld_handler (int sig, siginfo_t *sip, void *)
 {
-	D(bug("Child %d exitted with status = %x\n", sip->si_pid, sip->si_status));
+	D(bug("Child %d exited with status = %x\n", sip->si_pid, sip->si_status));
 
 	// XXX perform a new wait because sip->si_status is sometimes not
 	// the exit _value_ on MacOS X but rather the usual status field

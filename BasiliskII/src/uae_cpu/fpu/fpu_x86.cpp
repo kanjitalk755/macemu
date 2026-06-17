@@ -7,7 +7,7 @@
  *
  *  Based on UAE FPU, original copyright 1996 Herman ten Brugge,
  *  rewritten for x86 by Lauri Pesonen 1999-2000,
- *  accomodated to GCC's Extended Asm syntax by Gwenole Beauchesne 2000.
+ *  accommodated to GCC's Extended Asm syntax by Gwenole Beauchesne 2000.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by

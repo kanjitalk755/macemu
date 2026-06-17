@@ -95,7 +95,7 @@ extern uintptr SignalStackBase();
 extern "C" void check_load_invoc(uint32 type, int16 id, uint32 h);
 extern "C" void named_check_load_invoc(uint32 type, uint32 name, uint32 h);
 
-// PowerPC EmulOp to exit from emulation looop
+// PowerPC EmulOp to exit from emulation loop
 const uint32 POWERPC_EXEC_RETURN = POWERPC_EMUL_OP | 1;
 
 // Enable Execute68k() safety checks?

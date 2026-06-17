@@ -636,7 +636,7 @@ findso:
 	    if (lastbyte!=CTL_ALIAS && lastbyte!=CTL_DNS) {
 #if 0
 	      if(lastbyte==CTL_CMD || lastbyte==CTL_EXEC) {
-		/* Command or exec adress */
+		/* Command or exec address */
 		so->so_state |= SS_CTL;
 	      } else 
 #endif
