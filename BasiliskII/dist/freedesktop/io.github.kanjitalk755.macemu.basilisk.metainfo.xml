@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.kanjitalk755.macemu.basilisk</id>
+  <name>Basilisk II</name>
+  <developer id="io.github.kanjitalk755.macemu.basilisk">
+    <name>Basilisk II Contributors</name>
+    <url>https://github.com/kanjitalk755/macemu/graphs/contributors</url>
+  </developer>
+  <branding>
+    <color type="primary" scheme_preference="light">#ff8d00</color>
+    <color type="primary" scheme_preference="dark">#f3511b</color>
+  </branding>
+  <summary>A classic 68k Macintosh emulator</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+  <launchable type="desktop-id">io.github.kanjitalk755.macemu.basilisk.desktop</launchable>
+  <url type="homepage">https://github.com/kanjitalk755/macemu</url>
+  <url type="vcs-browser">https://github.com/kanjitalk755/macemu</url>
+  <description>
+    <p>Basilisk II is an Open Source 68k Macintosh emulator, that is, it enables you to run
+      68k Mac OS software on you computer, even if you are using a different operating system.</p>
+    <p>The latest version of MacOS that can run on Basilisk II is MacOS 8.1. <em>PLEASE NOTE</em>
+      that Basilisk II does <em>not</em> include a copy of MacOS or a Macintosh ROM. You will
+      need to supply your own copy of the operating system or installation disk as well as a ROM
+      file extracted from a 68k-based Macintosh computer (not a PowerPC one!)</p>
+  </description>
+  <screenshots>
+    <screenshot type="default">
+      <image type="source">https://cdn.jsdelivr.net/gh/kanjitalk755/macemu@master/dist/screenshots/linux/setup.png</image>
+      <caption>Basilisk II's main GUI, now ported to full Gtk3</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source">https://cdn.jsdelivr.net/gh/kanjitalk755/macemu@master/dist/screenshots/linux/boot.png</image>
+      <caption>MacOS 8.1 booting in Basilisk II</caption>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Utility</category>
+    <category>Emulator</category>
+  </categories>
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+  <provides>
+    <binary>BasiliskII</binary>
+  </provides>
+  <keywords>
+    <keyword>emulator</keyword>
+    <keyword>retro</keyword>
+    <keyword>mac</keyword>
+    <keyword>macos</keyword>
+    <keyword>macintosh</keyword>
+  </keywords>
+  <releases>
+    <release version="git-9a3f687" date="2026-06-06">
+      <description/>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>
