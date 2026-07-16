@@ -29,6 +29,7 @@
 #include "dsp_pixmap_offsets.h"
 #include "gfxaccel_resources.h"
 #include "metal_compositor.h"  // MetalCompositorSubmitFrame_ClearCachedOverlay
+#include "display_mode_controller.h"
 #include "qd3d_init_logging.h"
 
 #include <cstring>
@@ -2220,6 +2221,15 @@ uint32 NativeHookEngineDisable(uint32 vendorID, uint32 engineID)
 {
 	RAVE_LOG("HOOK: QAEngineDisable(vendor=0x%08x engine=0x%08x)", vendorID, engineID);
 	if (RaveEngineEnableHandledByNative(vendorID, engineID)) {
+		/* EngineDisable is the explicit RAVE -> QuickDraw handoff used by
+		 * clients that retain their draw context for later reuse. Keeping the
+		 * last submitted overlay cached here leaves an opaque final 3D frame
+		 * over the application's 2D menu until process exit. */
+		MetalCompositorSubmitFrame_ClearCachedOverlay();
+		const DMCModeSnapshot *snap = dmc_current_snapshot();
+		if (snap && snap->active_owner == (uint32_t)kDMCOwnerRAVE)
+			(void)dmc_set_active_owner(kDMCOwnerQuickDraw);
+		QD3D_STATE_LOG("QAEngineDisable: native engine relinquished cached overlay and RAVE display ownership");
 		RAVE_LOG("HOOK: QAEngineDisable -> kQANoErr (native accepted)");
 		return kQANoErr;
 	}

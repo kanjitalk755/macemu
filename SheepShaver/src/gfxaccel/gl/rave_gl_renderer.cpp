@@ -65,6 +65,8 @@ struct RaveMetalState {
 	uint32_t draw_cpu_mac = 0;
 	uint32_t draw_cpu_size = 0;
 	bool draw_accessed = false;
+	uint32_t notice_device_mac = 0;
+	uint32_t notice_dirty_rect_mac = 0;
 	uint32_t z_cpu_mac = 0;
 	uint32_t z_cpu_size = 0;
 	bool z_accessed = false;
@@ -97,6 +99,8 @@ static bool trace_frame(const RaveDrawPrivate *priv)
 {
 	return priv && trace_sample(priv->frameCount);
 }
+
+static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector);
 
 #if QD3D_INIT_LOGGING_ENABLED
 static void trace_overlay_readback(const RaveDrawPrivate *priv,
@@ -198,6 +202,8 @@ void RaveCreateMetalOverlay(int32_t left, int32_t top, int32_t width, int32_t he
 	s_dst_l = left; s_dst_t = top; s_dst_w = width; s_dst_h = height;
 	if (width > 0 && height > 0)
 		acquire_overlay((uint32_t)width, (uint32_t)height);
+	if (s_overlay_tex)
+		(void)dmc_set_active_owner(kDMCOwnerRAVE);
 	QD3D_INIT_LOG("RaveCreateMetalOverlay(GL): texture=%u pair=(%u,%u) allocated=%ux%u",
 	              (unsigned)s_overlay_tex, (unsigned)s_overlay_pair[0],
 	              (unsigned)s_overlay_pair[1], s_ow, s_oh);
@@ -322,6 +328,193 @@ static void unbind_fbo(void)
 	auto &ext = gfx_gl_ext();
 	if (ext.fbo)
 		ext.BindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+static bool restore_overlay_fbo(RaveMetalState *ms)
+{
+	if (!ms || !ms->fbo || !ms->color_tex || !GfxGLDeviceMakeCurrent())
+		return false;
+	auto &ext = gfx_gl_ext();
+	if (!ext.fbo) return false;
+	ext.BindFramebuffer(GL_FRAMEBUFFER, ms->fbo);
+	ext.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+	                         GL_TEXTURE_2D, ms->color_tex, 0);
+	if (ext.CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+		return false;
+	glViewport(0, 0, (GLsizei)ms->w, (GLsizei)ms->h);
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(0, (GLdouble)ms->w, (GLdouble)ms->h, 0, 1, 0);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	return true;
+}
+
+enum {
+	kRaveNoticeDeviceMemory = 0,
+	kRaveNoticePixelRGB32 = 3
+};
+
+static bool ensure_draw_buffer_cpu(RaveMetalState *ms)
+{
+	if (!ms || !ms->w || !ms->h) return false;
+	const uint64_t size64 = (uint64_t)ms->w * ms->h * 4u;
+	if (size64 > UINT32_MAX) return false;
+	const uint32_t size = (uint32_t)size64;
+	if (!ms->draw_cpu_mac || ms->draw_cpu_size != size) {
+		const uint32_t mac = Mac_sysalloc(size);
+		if (!mac || !Mac2HostAddr(mac)) return false;
+		ms->draw_cpu_mac = mac;
+		ms->draw_cpu_size = size;
+	}
+	return true;
+}
+
+/* GL render targets are bottom-up. RAVE's CPU image-buffer contract is a
+ * top-down big-endian RGB32/ARGB byte stream. */
+static bool copy_overlay_to_guest(RaveMetalState *ms)
+{
+	if (!ensure_draw_buffer_cpu(ms) || !GfxGLDeviceMakeCurrent()) return false;
+	auto &ext = gfx_gl_ext();
+	if (!ext.fbo || !ms->fbo) return false;
+	ext.BindFramebuffer(GL_FRAMEBUFFER, ms->fbo);
+	const uint32_t w = ms->w, h = ms->h;
+	std::vector<uint8_t> pixels((size_t)w * h * 4u);
+	GLint old_pack = 4;
+	glGetIntegerv(GL_PACK_ALIGNMENT, &old_pack);
+	while (glGetError() != GL_NO_ERROR) {}
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	glReadPixels(0, 0, (GLsizei)w, (GLsizei)h,
+	             GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
+	glPixelStorei(GL_PACK_ALIGNMENT, old_pack);
+	if (glGetError() != GL_NO_ERROR) return false;
+	uint8_t *guest = Mac2HostAddr(ms->draw_cpu_mac);
+	if (!guest) return false;
+	for (uint32_t guest_y = 0; guest_y < h; guest_y++) {
+		const uint8_t *src = pixels.data() + (size_t)(h - 1u - guest_y) * w * 4u;
+		uint8_t *dst = guest + (size_t)guest_y * w * 4u;
+		for (uint32_t x = 0; x < w; x++) {
+			const uint8_t b = src[x * 4u + 0u];
+			const uint8_t g = src[x * 4u + 1u];
+			const uint8_t r = src[x * 4u + 2u];
+			const uint8_t a = src[x * 4u + 3u];
+			dst[x * 4u + 0u] = a;
+			dst[x * 4u + 1u] = r;
+			dst[x * 4u + 2u] = g;
+			dst[x * 4u + 3u] = b;
+		}
+	}
+	return true;
+}
+
+static bool upload_guest_to_overlay(RaveMetalState *ms, uint32_t rect_addr)
+{
+	if (!ms || !ms->color_tex || !ms->draw_cpu_mac ||
+	    !GfxGLDeviceMakeCurrent()) return false;
+	int32_t left = 0, right = (int32_t)ms->w;
+	int32_t top = 0, bottom = (int32_t)ms->h;
+	if (rect_addr) {
+		left = (int32_t)ReadMacInt32(rect_addr + 0u);
+		right = (int32_t)ReadMacInt32(rect_addr + 4u);
+		top = (int32_t)ReadMacInt32(rect_addr + 8u);
+		bottom = (int32_t)ReadMacInt32(rect_addr + 12u);
+	}
+	left = std::max<int32_t>(0, std::min<int32_t>(left, (int32_t)ms->w));
+	right = std::max<int32_t>(0, std::min<int32_t>(right, (int32_t)ms->w));
+	top = std::max<int32_t>(0, std::min<int32_t>(top, (int32_t)ms->h));
+	bottom = std::max<int32_t>(0, std::min<int32_t>(bottom, (int32_t)ms->h));
+	if (right <= left || bottom <= top) return restore_overlay_fbo(ms);
+
+	const uint32_t upload_w = (uint32_t)(right - left);
+	const uint32_t upload_h = (uint32_t)(bottom - top);
+	std::vector<uint8_t> pixels((size_t)upload_w * upload_h * 4u);
+	const uint8_t *guest = Mac2HostAddr(ms->draw_cpu_mac);
+	if (!guest) return false;
+	for (uint32_t gl_row = 0; gl_row < upload_h; gl_row++) {
+		const uint32_t guest_y = (uint32_t)bottom - 1u - gl_row;
+		const uint8_t *src = guest +
+		                     ((size_t)guest_y * ms->w + (uint32_t)left) * 4u;
+		uint8_t *dst = pixels.data() + (size_t)gl_row * upload_w * 4u;
+		for (uint32_t x = 0; x < upload_w; x++) {
+			const uint8_t a = src[x * 4u + 0u];
+			const uint8_t r = src[x * 4u + 1u];
+			const uint8_t g = src[x * 4u + 2u];
+			const uint8_t b = src[x * 4u + 3u];
+			dst[x * 4u + 0u] = b;
+			dst[x * 4u + 1u] = g;
+			dst[x * 4u + 2u] = r;
+			dst[x * 4u + 3u] = a;
+		}
+	}
+
+	unbind_fbo();
+	glBindTexture(GL_TEXTURE_2D, ms->color_tex);
+	GLint old_unpack = 4;
+	glGetIntegerv(GL_UNPACK_ALIGNMENT, &old_unpack);
+	while (glGetError() != GL_NO_ERROR) {}
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexSubImage2D(GL_TEXTURE_2D, 0, left, (GLint)ms->h - bottom,
+	                (GLsizei)upload_w, (GLsizei)upload_h,
+	                GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
+	glPixelStorei(GL_UNPACK_ALIGNMENT, old_unpack);
+	const bool uploaded = glGetError() == GL_NO_ERROR;
+	return restore_overlay_fbo(ms) && uploaded;
+}
+
+static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
+{
+	if (!priv || !priv->metal || selector >= RAVE_NUM_NOTICE_METHODS) return;
+	const uint32_t callback = priv->noticeMethods[selector].callback;
+	if (!callback) return;
+	RaveMetalState *ms = priv->metal;
+	const uint32_t refcon = priv->noticeMethods[selector].refCon;
+	static uint64_t notice_counts[RAVE_NUM_NOTICE_METHODS] = {};
+	const uint64_t notice_count = ++notice_counts[selector];
+	const bool log_notice = trace_sample(notice_count);
+	if (selector == 3u || selector == 4u) {
+		if (!copy_overlay_to_guest(ms)) {
+			QD3D_RENDER_LOG("Notice selector=%u callback=0x%08x: overlay readback failed",
+			                selector, callback);
+			return;
+		}
+		if (!ms->notice_device_mac)
+			ms->notice_device_mac = Mac_sysalloc(24);
+		if (!ms->notice_dirty_rect_mac)
+			ms->notice_dirty_rect_mac = Mac_sysalloc(16);
+		if (!ms->notice_device_mac || !ms->notice_dirty_rect_mac) return;
+		WriteMacInt32(ms->notice_device_mac + 0u, kRaveNoticeDeviceMemory);
+		WriteMacInt32(ms->notice_device_mac + 4u, ms->w * 4u);
+		WriteMacInt32(ms->notice_device_mac + 8u, kRaveNoticePixelRGB32);
+		WriteMacInt32(ms->notice_device_mac + 12u, ms->w);
+		WriteMacInt32(ms->notice_device_mac + 16u, ms->h);
+		WriteMacInt32(ms->notice_device_mac + 20u, ms->draw_cpu_mac);
+		WriteMacInt32(ms->notice_dirty_rect_mac + 0u, 0);
+		WriteMacInt32(ms->notice_dirty_rect_mac + 4u, ms->w);
+		WriteMacInt32(ms->notice_dirty_rect_mac + 8u, 0);
+		WriteMacInt32(ms->notice_dirty_rect_mac + 12u, ms->h);
+
+		ms->pass_active = false;
+		unbind_fbo();
+		call_macos4(callback, priv->drawContextAddr, ms->notice_device_mac,
+		            ms->notice_dirty_rect_mac, refcon);
+		const bool uploaded = upload_guest_to_overlay(
+		    ms, ms->notice_dirty_rect_mac);
+		const bool restored = uploaded || restore_overlay_fbo(ms);
+		ms->pass_active = restored;
+		if (log_notice || !uploaded) {
+			QD3D_RENDER_LOG("Notice selector=%u count=%llu callback=0x%08x refCon=0x%08x buffer=0x%08x dirty=0x%08x upload=%d",
+			                selector, (unsigned long long)notice_count, callback,
+			                refcon, ms->draw_cpu_mac,
+			                ms->notice_dirty_rect_mac, uploaded ? 1 : 0);
+		}
+	} else {
+		call_macos2(callback, priv->drawContextAddr, refcon);
+		if (log_notice) {
+			QD3D_RENDER_LOG("Notice selector=%u count=%llu callback=0x%08x refCon=0x%08x",
+			                selector, (unsigned long long)notice_count,
+			                callback, refcon);
+		}
+	}
 }
 
 /* ---- GL state from RAVE tags ---- */
@@ -859,7 +1052,9 @@ static void emit_v(const HostV &v, bool textured, int texture_op)
 	}
 	if (textured)
 		emit_texcoords(v);
-	glVertex3f(v.x, v.y, v.z);
+	/* Metal clamps submitted RAVE depth into [0,1]. Compatibility GL would
+	 * otherwise clip legacy negative/oversized values before depth testing. */
+	glVertex3f(v.x, v.y, RaveClampMetalDepth(v.z));
 }
 
 /* ---- Z-sorted transparency (kQATag_ZSortedHint = state[29]) ---- */
@@ -1072,6 +1267,9 @@ int32_t NativeRenderStart(uint32_t drawContextAddr, uint32_t dirtyRectAddr, uint
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
 	ms->cleared = true;
+	/* Metal fires the image-buffer initializer after the render target has
+	 * been cleared/loaded and before the first 3D draw. */
+	fire_notice_method(priv, 3);
 #if QD3D_INIT_LOGGING_ENABLED
 	if (trace_frame(priv)) {
 		int32_t dl = 0, dr = 0, dt = 0, db = 0;
@@ -1102,9 +1300,17 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 		return 1;
 	}
 	RaveMetalState *ms = priv->metal;
-	const bool wasActive = ms->pass_active;
+	if (!ms->pass_active) {
+		QD3D_RENDER_LOG("RenderEnd ignored: frame=%u ctx=0x%08x has no active pass",
+		                priv->frameCount, drawContextAddr);
+		return kQANoErr;
+	}
+	const bool wasActive = true;
+	flush_zsort_buffer(priv);
+	/* Descent II registers selector 4. It receives the rendered RGB32 image,
+	 * composites its CPU-side 2D content, and returns a dirty rectangle. */
+	fire_notice_method(priv, 4);
 	if (ms->pass_active) {
-		flush_zsort_buffer(priv);
 		glFlush();
 #if QD3D_INIT_LOGGING_ENABLED
 		trace_overlay_readback(priv, ms);
@@ -1114,6 +1320,8 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 	}
 	priv->multiTextureActive = false;
 	priv->multiTexStagingCount = 0;
+	/* Render-completion is a standard two-argument notice. */
+	fire_notice_method(priv, 0);
 
 	CompositeLayer layer = {};
 	layer.source = (void *)(uintptr_t)s_overlay_tex;
@@ -1130,15 +1338,22 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 	FrameDescriptor desc = {};
 	desc.layers = &layer;
 	desc.layer_count = 1;
+	/* Perform an ownership transition before publishing. A DSp movie may have
+	 * taken ownership after this RAVE context was created; transitioning after
+	 * SubmitFrame would make the compositor's mode-exit callback immediately
+	 * discard the frame we just cached. */
+	const int32_t ownerResult = dmc_set_active_owner(kDMCOwnerRAVE);
 	const DMCModeSnapshot *snap = dmc_current_snapshot();
 	desc.generation = snap ? snap->generation : 0;
 	int32_t submitResult = MetalCompositorSubmitFrame(&desc);
-	s_last_submitted_tex = s_overlay_tex;
+	if (submitResult == kGfxAccelNoErr) {
+		s_last_submitted_tex = s_overlay_tex;
+	}
 #if QD3D_INIT_LOGGING_ENABLED
 	GLenum glError = glGetError();
-	if (trace_frame(priv) || submitResult != 0 || glError != GL_NO_ERROR ||
+	if (trace_frame(priv) || ownerResult != 0 || submitResult != 0 || glError != GL_NO_ERROR ||
 	    ms->missing_textures != 0 || ms->dropped_draws != 0) {
-		QD3D_RENDER_LOG("RenderEnd frame=%u ctx=0x%08x active=%d modified=0x%08x draws=%llu textured=%llu vertices=%llu textureBinds=%llu missingTextures=%llu dropped=%llu zsortPending=%u submit=%d overlay=%u next=%u generation=%llu glError=0x%x",
+		QD3D_RENDER_LOG("RenderEnd frame=%u ctx=0x%08x active=%d modified=0x%08x draws=%llu textured=%llu vertices=%llu textureBinds=%llu missingTextures=%llu dropped=%llu zsortPending=%u owner=%d/%u submit=%d overlay=%u next=%u generation=%llu glError=0x%x",
 		                priv->frameCount, drawContextAddr, wasActive ? 1 : 0,
 		                modifiedRectAddr, (unsigned long long)ms->draw_calls,
 		                (unsigned long long)ms->textured_draws,
@@ -1146,6 +1361,7 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 		                (unsigned long long)ms->texture_binds,
 		                (unsigned long long)ms->missing_textures,
 		                (unsigned long long)ms->dropped_draws, priv->zsortCount,
+		                ownerResult, snap ? snap->active_owner : UINT32_MAX,
 		                submitResult, (unsigned)s_overlay_tex,
 		                (unsigned)s_overlay_pair[s_write ^ 1],
 		                (unsigned long long)desc.generation, (unsigned)glError);
@@ -1154,8 +1370,10 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 	(void)submitResult;
 #endif
 
-	s_write ^= 1;
-	s_overlay_tex = s_overlay_pair[s_write];
+	if (submitResult == kGfxAccelNoErr) {
+		s_write ^= 1;
+		s_overlay_tex = s_overlay_pair[s_write];
+	}
 	MetalCompositorSync3DFramePacingForEngine(kGfxFramePacingEngineRAVE);
 	return kQANoErr;
 }
@@ -1519,7 +1737,7 @@ int32_t NativeDrawBitmap(uint32_t drawContextAddr, uint32_t vertexAddr, uint32_t
 
 	float x = ReadMacFloat(vertexAddr + 0);
 	float y = ReadMacFloat(vertexAddr + 4);
-	float z = ReadMacFloat(vertexAddr + 8);
+	float z = RaveClampMetalDepth(ReadMacFloat(vertexAddr + 8));
 	float invW = ReadMacFloat(vertexAddr + 12);
 	float alpha = ReadMacFloat(vertexAddr + 28);
 	HostV traceFirst = {};
@@ -1647,6 +1865,8 @@ int32_t NativeSetNoticeMethod(uint32_t drawContextAddr, uint32_t method, uint32_
 	if (!c || method >= RAVE_NUM_NOTICE_METHODS) return 1;
 	c->noticeMethods[method].callback = callback;
 	c->noticeMethods[method].refCon = refCon;
+	QD3D_STATE_LOG("SetNoticeMethod(GL): ctx=0x%08x selector=%u callback=0x%08x refCon=0x%08x",
+	               drawContextAddr, method, callback, refCon);
 	return kQANoErr;
 }
 int32_t NativeGetNoticeMethod(uint32_t drawContextAddr, uint32_t method, uint32_t callbackOutPtr, uint32_t refConOutPtr)
@@ -1671,62 +1891,26 @@ int32_t NativeAccessDrawBuffer(uint32_t drawContextAddr, uint32_t bufferStructAd
 	if (!priv || !priv->metal || !bufferStructAddr) return kQAError;
 	RaveMetalState *ms = priv->metal;
 	if (!ms->pass_active || !ms->color_tex || !GfxGLDeviceMakeCurrent()) return kQAError;
-	uint32_t w = ms->w, h = ms->h;
-	uint32_t rowBytes = w * 4;
-	uint32_t bufSize = rowBytes * h;
-	if (!ms->draw_cpu_mac || ms->draw_cpu_size != bufSize) {
-		uint32 mac = Mac_sysalloc(bufSize);
-		if (!mac) return kQAError;
-		ms->draw_cpu_mac = mac;
-		ms->draw_cpu_size = bufSize;
-	}
-	/* Read FBO color into guest buffer as BE ARGB */
-	std::vector<uint8_t> host((size_t)bufSize);
-	auto &ext = gfx_gl_ext();
-	if (ext.fbo) ext.BindFramebuffer(GL_FRAMEBUFFER, ms->fbo);
-	glReadPixels(0, 0, (GLsizei)w, (GLsizei)h, GL_BGRA, GL_UNSIGNED_BYTE, host.data());
-	for (uint32_t i = 0; i < w * h; i++) {
-		uint8_t B = host[i * 4 + 0], G = host[i * 4 + 1], R = host[i * 4 + 2], A = host[i * 4 + 3];
-		WriteMacInt8(ms->draw_cpu_mac + i * 4 + 0, A);
-		WriteMacInt8(ms->draw_cpu_mac + i * 4 + 1, R);
-		WriteMacInt8(ms->draw_cpu_mac + i * 4 + 2, G);
-		WriteMacInt8(ms->draw_cpu_mac + i * 4 + 3, B);
-	}
-	WriteMacInt32(bufferStructAddr + 0, rowBytes);
+	if (!copy_overlay_to_guest(ms)) return kQAError;
+	WriteMacInt32(bufferStructAddr + 0, ms->w * 4u);
 	WriteMacInt32(bufferStructAddr + 4, kQAPixel_RGB32);
-	WriteMacInt32(bufferStructAddr + 8, w);
-	WriteMacInt32(bufferStructAddr + 12, h);
+	WriteMacInt32(bufferStructAddr + 8, ms->w);
+	WriteMacInt32(bufferStructAddr + 12, ms->h);
 	WriteMacInt32(bufferStructAddr + 16, ms->draw_cpu_mac);
 	ms->draw_accessed = true;
 	return kQANoErr;
 }
 
-int32_t NativeAccessDrawBufferEnd(uint32_t drawContextAddr, uint32_t /*dirtyRectAddr*/)
+int32_t NativeAccessDrawBufferEnd(uint32_t drawContextAddr, uint32_t dirtyRectAddr)
 {
 	RaveDrawPrivate *priv = GetContextFromDrawAddr(drawContextAddr);
 	if (!priv || !priv->metal) return kQAError;
 	RaveMetalState *ms = priv->metal;
 	if (!ms->draw_accessed || !ms->draw_cpu_mac || !GfxGLDeviceMakeCurrent()) return kQANoErr;
-	uint32_t w = ms->w, h = ms->h;
-	std::vector<uint8_t> host((size_t)w * h * 4);
-	for (uint32_t i = 0; i < w * h; i++) {
-		uint8_t A = (uint8_t)ReadMacInt8(ms->draw_cpu_mac + i * 4 + 0);
-		uint8_t R = (uint8_t)ReadMacInt8(ms->draw_cpu_mac + i * 4 + 1);
-		uint8_t G = (uint8_t)ReadMacInt8(ms->draw_cpu_mac + i * 4 + 2);
-		uint8_t B = (uint8_t)ReadMacInt8(ms->draw_cpu_mac + i * 4 + 3);
-		host[i * 4 + 0] = B; host[i * 4 + 1] = G; host[i * 4 + 2] = R; host[i * 4 + 3] = A;
-	}
-	glBindTexture(GL_TEXTURE_2D, ms->color_tex);
-	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)w, (GLsizei)h, GL_BGRA, GL_UNSIGNED_BYTE, host.data());
+	const bool uploaded = upload_guest_to_overlay(ms, dirtyRectAddr);
 	ms->draw_accessed = false;
-	/* Restart pass with existing content */
-	auto &ext = gfx_gl_ext();
-	if (ext.fbo) {
-		ext.BindFramebuffer(GL_FRAMEBUFFER, ms->fbo);
-		ext.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ms->color_tex, 0);
-	}
-	ms->pass_active = true;
-	return kQANoErr;
+	ms->pass_active = uploaded;
+	return uploaded ? kQANoErr : kQAError;
 }
 
 int32_t NativeAccessZBuffer(uint32_t drawContextAddr, uint32_t bufferStructAddr)
