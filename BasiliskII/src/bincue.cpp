@@ -241,17 +241,16 @@ static int MSFToFrames(MSF msf)
 
 static int PositionToTrack(CueSheet *cs, unsigned int position)
 {
-	int i;
-	MSF msf;
-
-	FramesToMSF(position, &msf);
-
-	for (i = 0; i < cs->tcnt; i++) {
+	for (int i = 0; i < cs->tcnt; i++) {
+		/* Track extents are half-open: the frame at the end of one track is
+		 * the first frame of the next track.  Using <= here classified an
+		 * exact track start as the preceding track.  On mixed-mode discs this
+		 * made the first audio track look like part of the data track. */
 		if ((position >= cs->tracks[i].start) &&
-			(position <= (cs->tracks[i].start + cs->tracks[i].length)))
-			break;
+			(position - cs->tracks[i].start < cs->tracks[i].length))
+			return i;
 	}
-	return i;
+	return cs->tcnt;
 }
 
 static bool AddTrack(CueSheet *cs)
@@ -606,8 +605,14 @@ void *open_bincue(const char *name)
 		player->volume_left = 0;
 		player->volume_right = 0;
 		player->volume_mono = 0;
+		player->audioposition = 0;
+		player->audiostart = 0;
+		player->audioend = 0;
+		player->silence = 0;
+		player->fileoffset = 0;
 		player->audio_enabled = false;
 		player->scanning = false;
+		player->reverse = 0;
 #ifdef OSX_CORE_AUDIO
 		player->audio_enabled = true;
 #endif
@@ -978,9 +983,11 @@ bool CDPlay_bincue(void *fh, uint8 start_m, uint8 start_s, uint8 start_f,
 				player->cs->tracks[track].number, msf.m, msf.s, msf.f,
 				player->silence/cs->raw_sector_size));
 			D(bug(" Stop %02u:%02u:%02u\n", end_m, end_s, end_f));
-		}
-		else
+		} else {
 			D(bug("CDPlay_bincue: play beyond last track !\n"));
+			UNLOCK_PLAYER;
+			return false;
+		}
 
 		if (cs->tracks[track].tcf != AUDIO) {
 			D(bug("CDPlay_bincue: not playing data track %d!\n", track));
@@ -1001,7 +1008,8 @@ bool CDScan_bincue(void *fh, uint8 start_m, uint8 start_s, uint8 start_f, bool r
 		int goto_frame = MSFToFrames(goto_msf);
 
 		int scan_starting_track = PositionToTrack(cs, goto_frame);
-		if (cs->tracks[scan_starting_track].tcf != AUDIO) {
+		if (scan_starting_track >= cs->tcnt ||
+			cs->tracks[scan_starting_track].tcf != AUDIO) {
 			D(bug(" scan starting from non-audio track\n"));
 			return false;
 		}
