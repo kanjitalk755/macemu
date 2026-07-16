@@ -106,7 +106,9 @@ static void dsp_apply_reserve_color_table(DSpContextPrivate *ctx,
 	if (table > UINT32_MAX - bytes ||
 	    !NQDMetalAddrInBuffer(table + bytes - 1u)) return;
 
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	uint32_t applied = 0;
+#endif
 	for (uint32_t i = 0; i < count; i++) {
 		const uint32_t entry = table + 8u + i * 8u;
 		const int16_t value = (int16_t)ReadMacInt16(entry);
@@ -115,7 +117,9 @@ static void dsp_apply_reserve_color_table(DSpContextPrivate *ctx,
 		ctx->clut_bytes[dst + 0] = (uint8_t)(ReadMacInt16(entry + 2u) >> 8);
 		ctx->clut_bytes[dst + 1] = (uint8_t)(ReadMacInt16(entry + 4u) >> 8);
 		ctx->clut_bytes[dst + 2] = (uint8_t)(ReadMacInt16(entry + 6u) >> 8);
+	#if QD3D_GRAPHICS_LOGGING_ENABLED
 		applied++;
+	#endif
 	}
 	std::memcpy(ctx->clut_bytes_latched, ctx->clut_bytes,
 	            sizeof(ctx->clut_bytes_latched));

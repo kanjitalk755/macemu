@@ -30,14 +30,13 @@
 #include "audio.h"
 #include "audio_defs.h"
 
-#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#if defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
 #include "qd3d_init_logging.h"
 #else
-#define QD3D_AUDIO_LOG(...) do { } while (0)
-#endif
-
 #ifndef QD3D_AUDIO_LOGGING_ENABLED
 #define QD3D_AUDIO_LOGGING_ENABLED 0
+#endif
+#define QD3D_AUDIO_LOG(...) do { } while (0)
 #endif
 
 #define DEBUG 0
@@ -505,7 +504,9 @@ void AudioInterrupt(void)
 				audio_fetch_bytes = bytes;
 			}
 		}
+#if QD3D_AUDIO_LOGGING_ENABLED
 		AudioDiagnosticPoll();
+#endif
 		D(bug(" GetSourceData() returns %08lx\n", r.d[0]));
 	} else
 		WriteMacInt32(audio_data + adatStreamInfo, 0);

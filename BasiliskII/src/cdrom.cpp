@@ -45,14 +45,13 @@ using std::vector;
 #include "prefs.h"
 #include "cdrom.h"
 
-#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#if defined(QD3D_MEDIA_LOGGING_ENABLED) && QD3D_MEDIA_LOGGING_ENABLED
 #include "qd3d_init_logging.h"
 #else
-#define QD3D_MEDIA_LOG(...) do { } while (0)
-#endif
-
 #ifndef QD3D_MEDIA_LOGGING_ENABLED
 #define QD3D_MEDIA_LOGGING_ENABLED 0
+#endif
+#define QD3D_MEDIA_LOG(...) do { } while (0)
 #endif
 
 #define DEBUG 0

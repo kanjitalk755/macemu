@@ -26,7 +26,9 @@
 #include <cassert>
 #include <algorithm>
 #include <array>
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 #include <chrono>
+#endif
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -88,6 +90,7 @@ struct RaveMetalState {
 	uint32_t draw_state_multitexture_handle = 0;
 	uint32_t draw_state_multitexture_op = 0;
 	float draw_state_multitexture_factor = 0.f;
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	/* Per-frame diagnostics. Kept here so the trace can distinguish a frame
 	 * that drew black from a frame whose draw calls were never accepted. */
 	uint64_t draw_calls = 0;
@@ -99,6 +102,7 @@ struct RaveMetalState {
 	uint64_t state_applies = 0;
 	uint64_t state_cache_hits = 0;
 	uint32_t logged_draws = 0;
+#endif
 };
 
 /* Compatibility OpenGL state is context-global, not RaveDrawPrivate-local.
@@ -131,6 +135,7 @@ static uint32_t s_ow = 0, s_oh = 0, s_write = 0;
 static int32_t s_dst_l = 0, s_dst_t = 0, s_dst_w = 0, s_dst_h = 0;
 static GLuint s_last_submitted_tex = 0;
 
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 static bool trace_sample(uint64_t count, uint64_t first = 8, uint64_t every = 120)
 {
 	return count <= first || (count != 0 && (count & (count - 1)) == 0) ||
@@ -142,9 +147,6 @@ static bool trace_frame(const RaveDrawPrivate *priv)
 	return priv && trace_sample(priv->frameCount);
 }
 
-static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector);
-
-#if QD3D_GRAPHICS_LOGGING_ENABLED
 static void trace_overlay_readback(const RaveDrawPrivate *priv,
 	                               const RaveMetalState *ms,
 	                               const char *stage)
@@ -614,9 +616,11 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 	if (!callback) return;
 	RaveMetalState *ms = priv->metal;
 	const uint32_t refcon = priv->noticeMethods[selector].refCon;
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	static uint64_t notice_counts[RAVE_NUM_NOTICE_METHODS] = {};
 	const uint64_t notice_count = ++notice_counts[selector];
 	const bool log_notice = trace_sample(notice_count);
+#endif
 	if (selector == 3u || selector == 4u) {
 #if QD3D_GRAPHICS_LOGGING_ENABLED
 		const auto notice_start = std::chrono::steady_clock::now();
@@ -676,11 +680,13 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 #endif
 	} else {
 		call_macos2(callback, priv->drawContextAddr, refcon);
+	#if QD3D_GRAPHICS_LOGGING_ENABLED
 		if (log_notice) {
 			QD3D_RENDER_LOG("Notice selector=%u count=%llu callback=0x%08x refCon=0x%08x",
 			                selector, (unsigned long long)notice_count,
 			                callback, refcon);
 		}
+	#endif
 	}
 }
 
@@ -943,28 +949,34 @@ struct HostV {
 	float u2_ow, v2_ow, invW2;
 };
 
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 static bool accept_draw(RaveDrawPrivate *priv, const char *kind, uint32_t vertices)
 {
 	if (!priv || !priv->metal) return false;
 	RaveMetalState *ms = priv->metal;
 	if (!ms->pass_active) {
-#if QD3D_GRAPHICS_LOGGING_ENABLED
 		ms->dropped_draws++;
 		if (trace_sample(ms->dropped_draws, 8, 256)) {
 			QD3D_RENDER_LOG("DROP %s: frame=%u vertices=%u render pass inactive totalDropped=%llu",
 			                kind, priv->frameCount, vertices,
 			                (unsigned long long)ms->dropped_draws);
 		}
-#endif
 		return false;
 	}
 	return true;
 }
+#else
+static bool accept_draw_without_logging(RaveDrawPrivate *priv)
+{
+	return priv && priv->metal && priv->metal->pass_active;
+}
+#define accept_draw(priv, kind, vertices) accept_draw_without_logging(priv)
+#endif
 
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 static void record_draw(RaveDrawPrivate *priv, const char *kind, uint32_t vertices,
 	                    bool textured, const HostV *first)
 {
-#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (!priv || !priv->metal) return;
 	RaveMetalState *ms = priv->metal;
 	ms->draw_calls++;
@@ -988,10 +1000,10 @@ static void record_draw(RaveDrawPrivate *priv, const char *kind, uint32_t vertic
 			                priv->state[13].i, priv->state[12].i);
 		}
 	}
-#else
-	(void)priv; (void)kind; (void)vertices; (void)textured; (void)first;
-#endif
 }
+#else
+#define record_draw(...) do { } while (0)
+#endif
 
 static HostV read_gouraud_v(uint32 addr)
 {
@@ -1702,7 +1714,9 @@ int32_t NativeDrawVGouraud(uint32_t drawContextAddr, uint32_t nVertices, uint32_
 		return kQANoErr;
 	if (!GfxGLDeviceMakeCurrent()) return 1;
 	const uint32 stride = 32;
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	HostV traceFirst = read_gouraud_v(verticesAddr);
+#endif
 	record_draw(priv, "VGouraud", nVertices, false, &traceFirst);
 	bool fan = false;
 	GLenum mode = map_vertex_mode(vertexMode, fan);
@@ -1770,7 +1784,9 @@ int32_t NativeDrawVTexture(uint32_t drawContextAddr, uint32_t nVertices, uint32_
 	if (!GfxGLDeviceMakeCurrent()) return 1;
 	const uint32 stride = 64;
 	int top = (int)priv->state[12].i;
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	HostV traceFirst = read_texture_v(verticesAddr);
+#endif
 	record_draw(priv, "VTexture", nVertices, true, &traceFirst);
 	bool fan = false;
 	GLenum mode = map_vertex_mode(vertexMode, fan);
@@ -1972,9 +1988,11 @@ int32_t NativeDrawBitmap(uint32_t drawContextAddr, uint32_t vertexAddr, uint32_t
 	float z = RaveClampMetalDepth(ReadMacFloat(vertexAddr + 8));
 	float invW = ReadMacFloat(vertexAddr + 12);
 	float alpha = ReadMacFloat(vertexAddr + 28);
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	HostV traceFirst = {};
 	traceFirst.x = x; traceFirst.y = y; traceFirst.z = z; traceFirst.invW = invW;
 	traceFirst.r = traceFirst.g = traceFirst.b = 1.f; traceFirst.a = alpha;
+#endif
 	record_draw(priv, "Bitmap", 4, true, &traceFirst);
 	float w = entry->width > 0 ? (float)entry->width : 1.f;
 	float h = entry->height > 0 ? (float)entry->height : 1.f;

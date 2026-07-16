@@ -43,7 +43,9 @@ extern void AudioExit(void);
 extern void AudioReset(void);
 
 extern void AudioInterrupt(void);
+#if defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
 extern void AudioDiagnosticPoll(void);
+#endif
 
 extern void audio_enter_stream(void);
 extern void audio_exit_stream(void);

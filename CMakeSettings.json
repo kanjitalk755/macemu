@@ -53,7 +53,7 @@
 				},
 				{
 					"name": "ENABLE_QD3D_INIT_LOGGING",
-					"value": "ON",
+					"value": "OFF",
 					"type": "BOOL"
 				},
 				{
@@ -122,7 +122,7 @@
 				},
 				{
 					"name": "ENABLE_QD3D_INIT_LOGGING",
-					"value": "ON",
+					"value": "OFF",
 					"type": "BOOL"
 				},
 				{

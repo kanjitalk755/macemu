@@ -92,7 +92,7 @@ static int bincue_core_audio_callback(void);
 
 #include "bincue.h"
 
-#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#if defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
 #include "qd3d_init_logging.h"
 #else
 #define QD3D_AUDIO_LOG(...) do { } while (0)

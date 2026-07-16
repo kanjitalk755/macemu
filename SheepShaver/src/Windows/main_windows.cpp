@@ -46,7 +46,7 @@
 #include "util_windows.h"
 //#include "kernel_windows.h"
 
-#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#if defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED
 #include "qd3d_init_logging.h"
 static bool main_windows_descent_ii_is_current_application()
 {
@@ -55,6 +55,9 @@ static bool main_windows_descent_ii_is_current_application()
 	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
 }
 #else
+#ifndef QD3D_WAIT_LOGGING_ENABLED
+#define QD3D_WAIT_LOGGING_ENABLED 0
+#endif
 #define QD3D_WAIT_LOG(...) do { } while (0)
 #endif
 
@@ -694,8 +697,10 @@ bool tick_inhibit;
 static DWORD WINAPI tick_func(void *arg)
 {
 	int tick_counter = 0;
+#if QD3D_WAIT_LOGGING_ENABLED
 	uint32 inhibited_ticks = 0;
 	uint32 irq_blocked_ticks = 0;
+#endif
 	uint64 start = GetTicks_usec();
 	int64 ticks = 0;
 	uint64 next = GetTicks_usec();
@@ -709,8 +714,8 @@ static DWORD WINAPI tick_func(void *arg)
 			Delay_usec(delay);
 		else if (delay < -16625)
 			next = GetTicks_usec();
-		const int64 wake_lateness = delay < -16625 ? -delay : GetTicks_usec() - next;
 #if QD3D_WAIT_LOGGING_ENABLED
+		const int64 wake_lateness = delay < -16625 ? -delay : GetTicks_usec() - next;
 		const bool log_descent_tick = main_windows_descent_ii_is_current_application();
 		if (log_descent_tick && wake_lateness > 25000)
 			QD3D_WAIT_LOG("60Hz producer late tick=%u latenessUsec=%lld irqNest=%d inhibited=%u",
@@ -718,22 +723,22 @@ static DWORD WINAPI tick_func(void *arg)
 			              (int32)ReadMacInt32(XLM_IRQ_NEST), tick_inhibit ? 1u : 0u);
 #endif
 		if (tick_inhibit) {
+		#if QD3D_WAIT_LOGGING_ENABLED
 			inhibited_ticks++;
-#if QD3D_WAIT_LOGGING_ENABLED
 			if (log_descent_tick && (inhibited_ticks == 2 || (inhibited_ticks % 30) == 0))
 				QD3D_WAIT_LOG("60Hz producer inhibited tick=%u consecutiveTicks=%u",
 				              ReadMacInt32(0x016a), inhibited_ticks);
-#endif
+		#endif
 			continue;
 		}
+	#if QD3D_WAIT_LOGGING_ENABLED
 		if (inhibited_ticks) {
-#if QD3D_WAIT_LOGGING_ENABLED
 			if (log_descent_tick && inhibited_ticks >= 2)
 				QD3D_WAIT_LOG("60Hz producer resumed tick=%u afterTicks=%u",
 				              ReadMacInt32(0x016a), inhibited_ticks);
-#endif
 			inhibited_ticks = 0;
 		}
+	#endif
 		ticks++;
 
 		// Pseudo Mac 1Hz interrupt, update local time
@@ -749,13 +754,13 @@ static DWORD WINAPI tick_func(void *arg)
 			if (log_descent_tick && irq_blocked_ticks >= 2)
 				QD3D_WAIT_LOG("60Hz IRQ delivery resumed tick=%u afterBlockedTicks=%u",
 				              ReadMacInt32(0x016a), irq_blocked_ticks);
-#endif
 			irq_blocked_ticks = 0;
+#endif
 			SetInterruptFlag(INTFLAG_VIA);
 			TriggerInterrupt();
 		} else {
-			irq_blocked_ticks++;
 #if QD3D_WAIT_LOGGING_ENABLED
+			irq_blocked_ticks++;
 			if (log_descent_tick && (irq_blocked_ticks == 2 || (irq_blocked_ticks % 30) == 0))
 				QD3D_WAIT_LOG("60Hz IRQ delivery blocked tick=%u consecutiveTicks=%u irqNest=%d",
 				              ReadMacInt32(0x016a), irq_blocked_ticks, irq_nest);

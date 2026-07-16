@@ -291,16 +291,22 @@ void DSpEncodeBackBufferBlit(DSpContextPrivate *ctx, void * /*encoder*/, void * 
 		layer.slot = kLayerSlotFramebuffer;
 		layer.blend = kBlendOpaque;
 		layer.alpha = 1.f;
-		int32_t submit_result = kGfxAccelNoErr;
 		const bool submitted =
 			ctx->state == (uint32_t)kDSpContextState_Active;
+#if QD3D_GRAPHICS_LOGGING_ENABLED
+		int32_t submit_result = kGfxAccelNoErr;
+#endif
 		if (submitted) {
 			FrameDescriptor desc = {};
 			desc.layers = &layer;
 			desc.layer_count = 1;
 			const DMCModeSnapshot *snap = dmc_current_snapshot();
 			desc.generation = snap ? snap->generation : 0;
+		#if QD3D_GRAPHICS_LOGGING_ENABLED
 			submit_result = MetalCompositorSubmitFrame(&desc);
+		#else
+			MetalCompositorSubmitFrame(&desc);
+		#endif
 		}
 #if QD3D_GRAPHICS_LOGGING_ENABLED
 		static uint64_t present_count = 0;
@@ -323,8 +329,6 @@ void DSpEncodeBackBufferBlit(DSpContextPrivate *ctx, void * /*encoder*/, void * 
 			                (unsigned long long)r_sum, (unsigned long long)g_sum,
 			                (unsigned long long)b_sum, submit_result, (unsigned)tex);
 		}
-#else
-		(void)submit_result;
 #endif
 	}
 

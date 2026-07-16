@@ -34,14 +34,13 @@
 #include "user_strings.h"
 #include "cdrom.h"
 
-#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#if defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
 #include "qd3d_init_logging.h"
 #else
-#define QD3D_AUDIO_LOG(...) do { } while (0)
-#endif
-
 #ifndef QD3D_AUDIO_LOGGING_ENABLED
 #define QD3D_AUDIO_LOGGING_ENABLED 0
+#endif
+#define QD3D_AUDIO_LOG(...) do { } while (0)
 #endif
 
 #define DEBUG 0
@@ -94,9 +93,9 @@ void AudioReset(void)
 }
 
 
+#if QD3D_AUDIO_LOGGING_ENABLED
 void AudioDiagnosticPoll(void)
 {
-#if QD3D_AUDIO_LOGGING_ENABLED
 	if (!diagnostic_source_pb)
 		return;
 
@@ -118,8 +117,8 @@ void AudioDiagnosticPoll(void)
 	diagnostic_pb_result = result;
 	diagnostic_pb_frames = frames;
 	diagnostic_pb_data = data;
-#endif
 }
+#endif
 
 
 /*
@@ -676,9 +675,9 @@ delegate:	// Delegate call to Apple Mixer
 				const uint32 actions = ReadMacInt32(p);
 				const uint32 pb = ReadMacInt32(p + 4);
 				const uint32 source = ReadMacInt32(p + 8);
-				const int16 initial_result = ReadMacInt16(pb + 60);
 
 #if QD3D_AUDIO_LOGGING_ENABLED
+				const int16 initial_result = ReadMacInt16(pb + 60);
 				diagnostic_source = source;
 				diagnostic_source_pb = pb;
 				diagnostic_pb_result = initial_result;

@@ -37,19 +37,19 @@ option(ENABLE_VOSF       "Video on SEGV signals" OFF)
 option(USE_SDL3          "Use SDL 3 instead of SDL 2" OFF)
 option(ENABLE_GFXACCEL   "SheepShaver graphics accel (NQD/RAVE/GL/DSp)" ON)
 option(ENABLE_QD3D_INIT_LOGGING
-  "Log focused SheepShaver QuickDraw 3D/RAVE initialization diagnostics"
+  "Compile focused SheepShaver QuickDraw 3D/RAVE initialization diagnostics"
   OFF)
 option(ENABLE_QD3D_GRAPHICS_LOGGING
-  "Enable high-volume QD3D graphics diagnostics when QD3D logging is enabled"
+  "Compile high-volume QD3D graphics diagnostics"
   OFF)
 option(ENABLE_QD3D_AUDIO_LOGGING
-  "Enable sound component and SDL audio diagnostics when QD3D logging is enabled"
+  "Compile sound component and SDL audio diagnostics"
   OFF)
 option(ENABLE_QD3D_MEDIA_LOGGING
-  "Enable CD/media I/O diagnostics when QD3D logging is enabled"
+  "Compile CD/media I/O diagnostics"
   OFF)
 option(ENABLE_QD3D_WAIT_LOGGING
-  "Enable high-volume guest timing and wait diagnostics when QD3D logging is enabled"
+  "Compile high-volume guest timing and wait diagnostics"
   OFF)
 # GFXACCEL_BACKEND: auto | opengl | metal
 # auto = Metal on Apple, OpenGL elsewhere

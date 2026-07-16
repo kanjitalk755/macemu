@@ -1,9 +1,8 @@
 /*
  * qd3d_init_logging.h - Focused QuickDraw 3D/RAVE diagnostics
  *
- * ENABLE_QD3D_INIT_LOGGING is the master switch. The audio, media, graphics,
- * and timing channels are independently selected with their corresponding
- * QD3D_*_LOGGING_ENABLED definition.
+ * Every channel is an independent compile-time switch. When a channel is
+ * disabled, its macro and all channel-specific instrumentation compile away.
  */
 
 #ifndef QD3D_INIT_LOGGING_H
@@ -29,7 +28,9 @@
 #define QD3D_WAIT_LOGGING_ENABLED 0
 #endif
 
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_INIT_LOGGING_ENABLED || QD3D_GRAPHICS_LOGGING_ENABLED || \
+    QD3D_AUDIO_LOGGING_ENABLED || QD3D_MEDIA_LOGGING_ENABLED || \
+    QD3D_WAIT_LOGGING_ENABLED
 
 #include <cstdarg>
 #include <cstdio>
@@ -87,10 +88,19 @@ static inline void log(const char *category, const char *file, int line,
 #define QD3D_WAIT_LOG(...) do { } while (0)
 #endif
 
-#if QD3D_GRAPHICS_LOGGING_ENABLED
+#if QD3D_INIT_LOGGING_ENABLED
 
 #define QD3D_INIT_LOG(...) \
 	::qd3d_init_logging::log("init", __FILE__, __LINE__, __VA_ARGS__)
+
+#else
+
+#define QD3D_INIT_LOG(...) do { } while (0)
+
+#endif
+
+#if QD3D_GRAPHICS_LOGGING_ENABLED
+
 #define QD3D_STATE_LOG(...) \
 	::qd3d_init_logging::log("state", __FILE__, __LINE__, __VA_ARGS__)
 #define QD3D_RESOURCE_LOG(...) \
@@ -100,7 +110,6 @@ static inline void log(const char *category, const char *file, int line,
 
 #else
 
-#define QD3D_INIT_LOG(...) do { } while (0)
 #define QD3D_STATE_LOG(...) do { } while (0)
 #define QD3D_RESOURCE_LOG(...) do { } while (0)
 #define QD3D_RENDER_LOG(...) do { } while (0)

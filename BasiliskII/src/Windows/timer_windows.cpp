@@ -24,7 +24,7 @@
 #include "macos_util.h"
 #include "timer.h"
 
-#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#if defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED
 #include "qd3d_init_logging.h"
 static bool timer_windows_descent_ii_is_current_application()
 {
@@ -33,6 +33,9 @@ static bool timer_windows_descent_ii_is_current_application()
 	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
 }
 #else
+#ifndef QD3D_WAIT_LOGGING_ENABLED
+#define QD3D_WAIT_LOGGING_ENABLED 0
+#endif
 #define QD3D_WAIT_LOG(...) do { } while (0)
 #endif
 
