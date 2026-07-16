@@ -283,9 +283,9 @@ static int alloc_socket()
 			// sockets[i].src_port = sockets[i].dest_port = 0;
 
 			memset( &sockets[i].overlapped_read, 0, sizeof(sockets[i].overlapped_read) );
-			sockets[i].overlapped_read.hEvent = (HANDLE)i;
+			sockets[i].overlapped_read.hEvent = (HANDLE)(INT_PTR)i;
 			memset( &sockets[i].overlapped_write, 0, sizeof(sockets[i].overlapped_write) );
-			sockets[i].overlapped_write.hEvent = (HANDLE)i;
+			sockets[i].overlapped_write.hEvent = (HANDLE)(INT_PTR)i;
 
 			sockets[i].bytes_received = 0;
 			sockets[i].bytes_written = 0;
@@ -691,7 +691,7 @@ static void CALLBACK tcp_read_completion(
 {
 	EnterCriticalSection( &tcp_section );
 
-	const int t = (int)lpOverlapped->hEvent;
+	const int t = (int)(INT_PTR)lpOverlapped->hEvent;
 
 	sockets[t].bytes_received = bytes_read;
 
@@ -775,7 +775,7 @@ static void CALLBACK tcp_write_completion(
 {
 	EnterCriticalSection( &tcp_section );
 
-	const int t = (int)lpOverlapped->hEvent;
+	const int t = (int)(INT_PTR)lpOverlapped->hEvent;
 
 	sockets[t].bytes_written = bytes_written;
 	sockets[t].bytes_remaining_to_send -= bytes_written;

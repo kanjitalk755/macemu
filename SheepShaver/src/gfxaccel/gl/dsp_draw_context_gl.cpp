@@ -22,6 +22,7 @@
 #include "dsp_main_device_redirect_policy.h"
 #include "dsp_display_mode_policy.h"
 #include "dsp_user_select_policy.h"
+#include "dsp_get_attributes_policy.h"
 #include "dsp_mode_enumerate.h"
 #include "dsp_host_bridge.h"
 #include "dsp_engine_internal.h"
@@ -42,12 +43,6 @@ static void restore_underlay_if_any(DSpContextPrivate *ctx);
 extern "C" void DSpRedirectMainDevicePixMap(DSpContextPrivate *ctx);
 extern "C" void DSpRestoreMainDevicePixMap(DSpContextPrivate *ctx);
 extern "C" void DSpHostBridge_SetActiveFullscreen(bool active);
-
-#ifndef kDSpNoErr
-#define kDSpNoErr 0
-#define kDSpInternalErr -30780
-#define kDSpContextNotFoundErr -30779
-#endif
 
 static std::map<uint32_t, DSpContextPrivate *> s_ctx;
 static uint32_t s_next_handle = 1;
@@ -901,15 +896,43 @@ int32_t DSpContext_GetCLUTEntriesHandler(uint32_t ctxRef, uint32_t entriesOutAdd
 	}
 	return kDSpNoErr;
 }
+static void DSpWriteAttributesCore(const DSpContextAttributes *attr,
+                                   uint32_t outAttrAddr)
+{
+	/* DSpContextAttributes uses the fixed 72-byte big-endian guest layout.
+	 * Copying the native C++ struct exposes little-endian fields on Windows
+	 * and also relies on host padding. */
+	WriteMacInt32(outAttrAddr +  0, 0);
+	WriteMacInt32(outAttrAddr +  4, attr->displayWidth);
+	WriteMacInt32(outAttrAddr +  8, attr->displayHeight);
+	WriteMacInt32(outAttrAddr + 12, 0);
+	WriteMacInt32(outAttrAddr + 16, 0);
+	WriteMacInt32(outAttrAddr + 20, attr->colorNeeds);
+	WriteMacInt32(outAttrAddr + 24, attr->colorTable);
+	WriteMacInt32(outAttrAddr + 28, attr->contextOptions);
+	WriteMacInt32(outAttrAddr + 32, attr->backBufferDepthMask);
+	WriteMacInt32(outAttrAddr + 36, attr->displayDepthMask);
+	WriteMacInt32(outAttrAddr + 40, attr->backBufferBestDepth);
+	WriteMacInt32(outAttrAddr + 44, attr->displayBestDepth);
+	WriteMacInt32(outAttrAddr + 48, attr->pageCount);
+	WriteMacInt8(outAttrAddr + 52, 0);
+	WriteMacInt8(outAttrAddr + 53, 0);
+	WriteMacInt8(outAttrAddr + 54, 0);
+	WriteMacInt8(outAttrAddr + 55, attr->gameMustConfirmSwitch ? 1 : 0);
+	WriteMacInt32(outAttrAddr + 56, 0);
+	WriteMacInt32(outAttrAddr + 60, 0);
+	WriteMacInt32(outAttrAddr + 64, 0);
+	WriteMacInt32(outAttrAddr + 68, 0);
+}
+
 extern "C" int32_t DSpContext_GetAttributesHandler(uint32_t ctxRef, uint32_t outAttrAddr)
 {
+	if (!outAttrAddr) return kDSpInvalidAttributesErr;
 	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
-	if (!ctx) return kDSpContextNotFoundErr;
-	if (outAttrAddr) {
-		/* Best-effort copy of attr POD into guest memory */
-		uint8 *dst = Mac2HostAddr(outAttrAddr);
-		if (dst) std::memcpy(dst, &ctx->attr, sizeof(ctx->attr));
-	}
+	if (!ctx) return kDSpInvalidContextErr;
+	DSpContextAttributes public_attr = ctx->attr;
+	DSpNormalizeGetAttributesForState(&public_attr, ctx->state);
+	DSpWriteAttributesCore(&public_attr, outAttrAddr);
 	return kDSpNoErr;
 }
 int32_t DSpGetActiveCLUTSnapshot(uint8_t out[768]) {
@@ -1104,8 +1127,6 @@ extern "C" void DSpRedirectMainDevicePixMap(DSpContextPrivate *ctx)
 	}
 	const uint32_t redirect_depth =
 	    DSpMainDevicePixMapDepth(ctx->attr.backBufferBestDepth, display_depth);
-	extern uint32 RAMBase;
-	extern uint32 RAMSize;
 	auto inrange = [&](uint32_t a) -> bool {
 		return (a < 0x3000u) || (a >= RAMBase && a < RAMBase + RAMSize);
 	};
@@ -1174,8 +1195,6 @@ extern "C" void DSpRestoreMainDevicePixMap(DSpContextPrivate *ctx)
 {
 	if (!ctx || !ctx->saved_pixmap_valid || !ctx->saved_pixmap_addr) return;
 	uint32_t pixMapPtr = ctx->saved_pixmap_addr;
-	extern uint32 RAMBase;
-	extern uint32 RAMSize;
 	if (!(pixMapPtr < 0x3000u || (pixMapPtr >= RAMBase && pixMapPtr < RAMBase + RAMSize)))
 		return;
 	WriteMacInt32(pixMapPtr + DSP_MAINDEVICE_PIXMAP_OFF_BASEADDR, ctx->saved_pixmap_baseAddr);

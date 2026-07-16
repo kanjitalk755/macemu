@@ -105,7 +105,11 @@ void SysInit(void)
 {
 	// Initialize CD-ROM driver
 	sector_buffer = (char *)VirtualAlloc(NULL, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#if !defined(_WIN64)
+	/* cdenable.sys has a 32-bit IOCTL ABI (HANDLE and buffer pointers are
+	 * passed through DWORD slots), so it cannot be called safely by x64. */
 	CdenableSysInstallStart();
+#endif
 }
 
 
@@ -282,7 +286,10 @@ static inline int cd_read_with_retry(file_handle *fh, ULONG offset, int count, c
 	if (!fh || !fh->fh)
 		return 0;
 
-	DWORD bytes_read = CdenableSysReadCdBytes(fh->fh, offset, count, buf);
+	DWORD bytes_read = 0;
+#if !defined(_WIN64)
+	bytes_read = CdenableSysReadCdBytes(fh->fh, offset, count, buf);
+#endif
 
 	if (bytes_read == 0) {
 		// fall back to logical volume handle read in the case where there's no cdenable
@@ -521,7 +528,9 @@ void *Sys_open(const char *path_name, bool read_only, bool is_cdrom)
 		 * handle and hid open_bincue failures when the cue path was wrong).
 		 */
 		{
-			void *binfd = open_bincue(path_name);
+			const char *dot = strrchr(path_name, '.');
+			const bool is_cue_path = dot && _stricmp(dot, ".cue") == 0;
+			void *binfd = is_cue_path ? open_bincue(path_name) : NULL;
 			if (binfd) {
 				fh = new file_handle;
 				fh->name = _tcsdup(name);
@@ -542,8 +551,7 @@ void *Sys_open(const char *path_name, bool read_only, bool is_cdrom)
 			}
 			/* Help diagnose prefs paths that no longer exist or fail parse. */
 			{
-				const char *dot = strrchr(path_name, '.');
-				if (dot && (_stricmp(dot, ".cue") == 0 || _stricmp(dot, ".CUE") == 0)) {
+				if (is_cue_path) {
 					fprintf(stderr,
 					        "[bincue] FAILED to open '%s' (missing cue/bin or parse error)\n",
 					        path_name);

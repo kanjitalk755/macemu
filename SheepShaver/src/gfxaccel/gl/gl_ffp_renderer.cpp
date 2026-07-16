@@ -13,6 +13,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 static GLuint s_ov[2]={0,0}; static GLuint s_cur=0; static uint32_t s_ow=0,s_oh=0,s_wr=0;
 static int32_t s_dl=0,s_dt=0,s_dw=0,s_dh=0;
@@ -337,10 +338,21 @@ void GLMetalBitmap(GLContext*ctx,int width,int height,const uint8_t*bits,int dat
   glRasterPos2i(0,0);
   glBitmap(width,height,0,0,0,0,bits);
 }
-uint8_t* GLMetalReadFramebufferRect(GLContext*,int x,int y,int w,int h,int*out_len){
-  if(out_len)*out_len=w*h*4;
-  uint8_t*p=(uint8_t*)std::malloc((size_t)w*h*4);
-  if(p&&GfxGLDeviceMakeCurrent()) glReadPixels(x,y,w,h,GL_BGRA,GL_UNSIGNED_BYTE,p);
+uint8_t* GLMetalReadFramebufferRect(GLContext*ctx,int x,int y,int w,int h,int*out_len){
+  if(out_len)*out_len=0;
+  if(!ctx||x<0||y<0||w<=0||h<=0)return nullptr;
+  const int fbw=s_ow?(int)s_ow:ctx->viewport[2];
+  const int fbh=s_oh?(int)s_oh:ctx->viewport[3];
+  if(fbw<=0||fbh<=0||x>fbw-w||y>fbh-h)return nullptr;
+  const size_t sw=(size_t)w, sh=(size_t)h;
+  if(sw>std::numeric_limits<size_t>::max()/4/sh)return nullptr;
+  const size_t bytes=sw*sh*4;
+  if(bytes>(size_t)std::numeric_limits<int>::max())return nullptr;
+  if(!GfxGLDeviceMakeCurrent())return nullptr;
+  uint8_t*p=(uint8_t*)std::malloc(bytes);
+  if(!p)return nullptr;
+  glReadPixels(x,y,w,h,GL_BGRA,GL_UNSIGNED_BYTE,p);
+  if(out_len)*out_len=(int)bytes;
   return p;
 }
 
@@ -369,7 +381,6 @@ static uint64_t gl_composite_offscreen_to_guest(uint32_t dstBase, uint32_t dstRo
                                                 int32_t dx, int32_t dy, int32_t dw, int32_t dh)
 {
   if(!s_off_latest.valid || s_off_latest.pixels.empty() || !dstBase || !dstRowBytes) return 0;
-  if(!GfxGLDeviceMakeCurrent()) gl_capture_offscreen_to_cache();
   uint8_t *dst = Mac2HostAddr(dstBase);
   if(!dst) return 0;
   int bpp = (dstDepthBits<=8)?1:(dstDepthBits<=16)?2:4;
@@ -378,10 +389,15 @@ static uint64_t gl_composite_offscreen_to_guest(uint32_t dstBase, uint32_t dstRo
   if(dx<0){ dw+=dx; dx=0; } if(dy<0){ dh+=dy; dy=0; }
   if(dx>=sw||dy>=sh||dw<=0||dh<=0) return 0;
   if(dx+dw>sw) dw=sw-dx; if(dy+dh>sh) dh=sh-dy;
+  if((uint64_t)(dx+dw)*(uint64_t)bpp>(uint64_t)dstRowBytes) return 0;
+  const uint64_t guestBegin=(uint64_t)dstBase+(uint64_t)dy*dstRowBytes+(uint64_t)dx*bpp;
+  const uint64_t guestSpan=(uint64_t)(dh-1)*dstRowBytes+(uint64_t)dw*bpp;
+  const uint64_t ramBegin=(uint64_t)RAMBase, ramEnd=ramBegin+(uint64_t)RAMSize;
+  if(guestBegin<ramBegin||guestBegin>=ramEnd||guestSpan>ramEnd-guestBegin)return 0;
   uint64_t written=0;
   for(int32_t y=0;y<dh;y++){
     const uint8_t *srow = s_off_latest.pixels.data() + (size_t)(dy+y)*s_off_latest.rowbytes + (size_t)dx*4;
-    uint8_t *drow = dst + (size_t)y*(size_t)dstRowBytes;
+    uint8_t *drow = dst + (size_t)(dy+y)*(size_t)dstRowBytes + (size_t)dx*(size_t)bpp;
     for(int32_t x=0;x<dw;x++){
       uint8_t B=srow[x*4+0], G=srow[x*4+1], R=srow[x*4+2], A=srow[x*4+3];
       if(A==0) continue; /* transparent: leave guest pixel */
@@ -477,13 +493,23 @@ static int gl_type_size(uint32_t type){
   default: return 4;
   }
 }
+static float gl_read_f32(uint32_t mac){
+  uint32_t bits=ReadMacInt32(mac); float f; std::memcpy(&f,&bits,4); return f;
+}
+static double gl_read_f64(uint32_t mac){
+  uint32_t hi=ReadMacInt32(mac), lo=ReadMacInt32(mac+4);
+  uint64_t bits=((uint64_t)hi<<32)|lo; double d; std::memcpy(&d,&bits,8); return d;
+}
+static int8_t gl_read_i8(uint32_t mac){return (int8_t)ReadMacInt8(mac);}
+static uint8_t gl_read_u8(uint32_t mac){return (uint8_t)ReadMacInt8(mac);}
+static int16_t gl_read_i16(uint32_t mac){return (int16_t)ReadMacInt16(mac);}
+static uint16_t gl_read_u16(uint32_t mac){return (uint16_t)ReadMacInt16(mac);}
+static int32_t gl_read_i32(uint32_t mac){return (int32_t)ReadMacInt32(mac);}
+static uint32_t gl_read_u32(uint32_t mac){return ReadMacInt32(mac);}
 static float gl_read_comp(uint32_t mac, uint32_t type){
   switch(type){
-  case GL_FLOAT: { uint32 bits=ReadMacInt32(mac); float f; std::memcpy(&f,&bits,4); return f; }
-  case GL_DOUBLE: {
-    uint32 hi=ReadMacInt32(mac), lo=ReadMacInt32(mac+4);
-    uint64_t bits=((uint64_t)hi<<32)|lo; double d; std::memcpy(&d,&bits,8); return (float)d;
-  }
+  case GL_FLOAT: return gl_read_f32(mac);
+  case GL_DOUBLE: return (float)gl_read_f64(mac);
   case GL_BYTE: return (float)(int8_t)ReadMacInt8(mac)/127.f;
   case GL_UNSIGNED_BYTE: return (float)ReadMacInt8(mac)/255.f;
   case GL_SHORT: return (float)(int16_t)ReadMacInt16(mac)/32767.f;
@@ -495,11 +521,8 @@ static float gl_read_comp(uint32_t mac, uint32_t type){
 }
 static float gl_read_raw(uint32_t mac, uint32_t type){
   switch(type){
-  case GL_FLOAT: { uint32 bits=ReadMacInt32(mac); float f; std::memcpy(&f,&bits,4); return f; }
-  case GL_DOUBLE: {
-    uint32 hi=ReadMacInt32(mac), lo=ReadMacInt32(mac+4);
-    uint64_t bits=((uint64_t)hi<<32)|lo; double d; std::memcpy(&d,&bits,8); return (float)d;
-  }
+  case GL_FLOAT: return gl_read_f32(mac);
+  case GL_DOUBLE: return (float)gl_read_f64(mac);
   case GL_BYTE: return (float)(int8_t)ReadMacInt8(mac);
   case GL_UNSIGNED_BYTE: return (float)ReadMacInt8(mac);
   case GL_SHORT: return (float)(int16_t)ReadMacInt16(mac);
@@ -597,47 +620,57 @@ void NativeGLColor3ui(GLContext*c,uint32_t r,uint32_t g,uint32_t b){NativeGLColo
 void NativeGLColor4ui(GLContext*c,uint32_t r,uint32_t g,uint32_t b,uint32_t a){NativeGLColor4f(c,r/4294967295.f,g/4294967295.f,b/4294967295.f,a/4294967295.f);}
 void NativeGLColor3us(GLContext*c,uint16_t r,uint16_t g,uint16_t b){NativeGLColor4f(c,r/65535.f,g/65535.f,b/65535.f,1);}
 void NativeGLColor4us(GLContext*c,uint16_t r,uint16_t g,uint16_t b,uint16_t a){NativeGLColor4f(c,r/65535.f,g/65535.f,b/65535.f,a/65535.f);}
-/* vector forms read from Mac memory — simplified no-ops if ptr invalid */
-#define V3(name, T, scale) void name(GLContext*c,uint32_t p){ if(!c||!p)return; T*h=(T*)Mac2HostAddr(p); if(h) NativeGLColor3f(c,(float)h[0]*scale,(float)h[1]*scale,(float)h[2]*scale); }
-#define V4(name, T, scale) void name(GLContext*c,uint32_t p){ if(!c||!p)return; T*h=(T*)Mac2HostAddr(p); if(h) NativeGLColor4f(c,(float)h[0]*scale,(float)h[1]*scale,(float)h[2]*scale,(float)h[3]*scale); }
-void NativeGLColor3fv(GLContext*c,uint32_t p){float*h=(float*)Mac2HostAddr(p); if(c&&h) NativeGLColor3f(c,h[0],h[1],h[2]);}
-void NativeGLColor4fv(GLContext*c,uint32_t p){float*h=(float*)Mac2HostAddr(p); if(c&&h) NativeGLColor4f(c,h[0],h[1],h[2],h[3]);}
-void NativeGLColor3bv(GLContext*c,uint32_t p){int8_t*h=(int8_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor3b(c,h[0],h[1],h[2]);}
-void NativeGLColor4bv(GLContext*c,uint32_t p){int8_t*h=(int8_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor4b(c,h[0],h[1],h[2],h[3]);}
-void NativeGLColor3ubv(GLContext*c,uint32_t p){uint8_t*h=(uint8_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor3ub(c,h[0],h[1],h[2]);}
-void NativeGLColor4ubv(GLContext*c,uint32_t p){uint8_t*h=(uint8_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor4ub(c,h[0],h[1],h[2],h[3]);}
-void NativeGLColor3dv(GLContext*c,uint32_t p){double*h=(double*)Mac2HostAddr(p); if(c&&h) NativeGLColor3d(c,h[0],h[1],h[2]);}
-void NativeGLColor4dv(GLContext*c,uint32_t p){double*h=(double*)Mac2HostAddr(p); if(c&&h) NativeGLColor4d(c,h[0],h[1],h[2],h[3]);}
-void NativeGLColor3iv(GLContext*c,uint32_t p){int32_t*h=(int32_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor3i(c,h[0],h[1],h[2]);}
-void NativeGLColor4iv(GLContext*c,uint32_t p){int32_t*h=(int32_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor4i(c,h[0],h[1],h[2],h[3]);}
-void NativeGLColor3sv(GLContext*c,uint32_t p){int16_t*h=(int16_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor3s(c,h[0],h[1],h[2]);}
-void NativeGLColor4sv(GLContext*c,uint32_t p){int16_t*h=(int16_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor4s(c,h[0],h[1],h[2],h[3]);}
-void NativeGLColor3uiv(GLContext*c,uint32_t p){uint32_t*h=(uint32_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor3ui(c,h[0],h[1],h[2]);}
-void NativeGLColor4uiv(GLContext*c,uint32_t p){uint32_t*h=(uint32_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor4ui(c,h[0],h[1],h[2],h[3]);}
-void NativeGLColor3usv(GLContext*c,uint32_t p){uint16_t*h=(uint16_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor3us(c,h[0],h[1],h[2]);}
-void NativeGLColor4usv(GLContext*c,uint32_t p){uint16_t*h=(uint16_t*)Mac2HostAddr(p); if(c&&h) NativeGLColor4us(c,h[0],h[1],h[2],h[3]);}
-void NativeGLVertex2fv(GLContext*c,uint32_t p){float*h=(float*)Mac2HostAddr(p); if(c&&h) NativeGLVertex2f(c,h[0],h[1]);}
-void NativeGLVertex3fv(GLContext*c,uint32_t p){float*h=(float*)Mac2HostAddr(p); if(c&&h) NativeGLVertex3f(c,h[0],h[1],h[2]);}
-void NativeGLVertex4fv(GLContext*c,uint32_t p){float*h=(float*)Mac2HostAddr(p); if(c&&h) NativeGLVertex4f(c,h[0],h[1],h[2],h[3]);}
-void NativeGLVertex2dv(GLContext*c,uint32_t p){double*h=(double*)Mac2HostAddr(p); if(c&&h) NativeGLVertex2d(c,h[0],h[1]);}
-void NativeGLVertex3dv(GLContext*c,uint32_t p){double*h=(double*)Mac2HostAddr(p); if(c&&h) NativeGLVertex3d(c,h[0],h[1],h[2]);}
-void NativeGLVertex4dv(GLContext*c,uint32_t p){double*h=(double*)Mac2HostAddr(p); if(c&&h) NativeGLVertex4d(c,h[0],h[1],h[2],h[3]);}
-void NativeGLVertex2iv(GLContext*c,uint32_t p){int32_t*h=(int32_t*)Mac2HostAddr(p); if(c&&h) NativeGLVertex2i(c,h[0],h[1]);}
-void NativeGLVertex3iv(GLContext*c,uint32_t p){int32_t*h=(int32_t*)Mac2HostAddr(p); if(c&&h) NativeGLVertex3i(c,h[0],h[1],h[2]);}
-void NativeGLVertex4iv(GLContext*c,uint32_t p){int32_t*h=(int32_t*)Mac2HostAddr(p); if(c&&h) NativeGLVertex4i(c,h[0],h[1],h[2],h[3]);}
-void NativeGLVertex2sv(GLContext*c,uint32_t p){int16_t*h=(int16_t*)Mac2HostAddr(p); if(c&&h) NativeGLVertex2s(c,h[0],h[1]);}
-void NativeGLVertex3sv(GLContext*c,uint32_t p){int16_t*h=(int16_t*)Mac2HostAddr(p); if(c&&h) NativeGLVertex3s(c,h[0],h[1],h[2]);}
-void NativeGLVertex4sv(GLContext*c,uint32_t p){int16_t*h=(int16_t*)Mac2HostAddr(p); if(c&&h) NativeGLVertex4s(c,h[0],h[1],h[2],h[3]);}
+/* Vector forms point into big-endian PowerPC memory. Directly casting the
+ * guest address to host float/int pointers byte-swaps every multi-byte value. */
+#define GL_GUEST_VEC2(name, scalar, read, step) \
+  void name(GLContext*c,uint32_t p){if(c&&p)scalar(c,read(p),read(p+(step)));}
+#define GL_GUEST_VEC3(name, scalar, read, step) \
+  void name(GLContext*c,uint32_t p){if(c&&p)scalar(c,read(p),read(p+(step)),read(p+2*(step)));}
+#define GL_GUEST_VEC4(name, scalar, read, step) \
+  void name(GLContext*c,uint32_t p){if(c&&p)scalar(c,read(p),read(p+(step)),read(p+2*(step)),read(p+3*(step)));}
+GL_GUEST_VEC3(NativeGLColor3fv, NativeGLColor3f, gl_read_f32, 4)
+GL_GUEST_VEC4(NativeGLColor4fv, NativeGLColor4f, gl_read_f32, 4)
+GL_GUEST_VEC3(NativeGLColor3bv, NativeGLColor3b, gl_read_i8, 1)
+GL_GUEST_VEC4(NativeGLColor4bv, NativeGLColor4b, gl_read_i8, 1)
+GL_GUEST_VEC3(NativeGLColor3ubv, NativeGLColor3ub, gl_read_u8, 1)
+GL_GUEST_VEC4(NativeGLColor4ubv, NativeGLColor4ub, gl_read_u8, 1)
+GL_GUEST_VEC3(NativeGLColor3dv, NativeGLColor3d, gl_read_f64, 8)
+GL_GUEST_VEC4(NativeGLColor4dv, NativeGLColor4d, gl_read_f64, 8)
+GL_GUEST_VEC3(NativeGLColor3iv, NativeGLColor3i, gl_read_i32, 4)
+GL_GUEST_VEC4(NativeGLColor4iv, NativeGLColor4i, gl_read_i32, 4)
+GL_GUEST_VEC3(NativeGLColor3sv, NativeGLColor3s, gl_read_i16, 2)
+GL_GUEST_VEC4(NativeGLColor4sv, NativeGLColor4s, gl_read_i16, 2)
+GL_GUEST_VEC3(NativeGLColor3uiv, NativeGLColor3ui, gl_read_u32, 4)
+GL_GUEST_VEC4(NativeGLColor4uiv, NativeGLColor4ui, gl_read_u32, 4)
+GL_GUEST_VEC3(NativeGLColor3usv, NativeGLColor3us, gl_read_u16, 2)
+GL_GUEST_VEC4(NativeGLColor4usv, NativeGLColor4us, gl_read_u16, 2)
+GL_GUEST_VEC2(NativeGLVertex2fv, NativeGLVertex2f, gl_read_f32, 4)
+GL_GUEST_VEC3(NativeGLVertex3fv, NativeGLVertex3f, gl_read_f32, 4)
+GL_GUEST_VEC4(NativeGLVertex4fv, NativeGLVertex4f, gl_read_f32, 4)
+GL_GUEST_VEC2(NativeGLVertex2dv, NativeGLVertex2d, gl_read_f64, 8)
+GL_GUEST_VEC3(NativeGLVertex3dv, NativeGLVertex3d, gl_read_f64, 8)
+GL_GUEST_VEC4(NativeGLVertex4dv, NativeGLVertex4d, gl_read_f64, 8)
+GL_GUEST_VEC2(NativeGLVertex2iv, NativeGLVertex2i, gl_read_i32, 4)
+GL_GUEST_VEC3(NativeGLVertex3iv, NativeGLVertex3i, gl_read_i32, 4)
+GL_GUEST_VEC4(NativeGLVertex4iv, NativeGLVertex4i, gl_read_i32, 4)
+GL_GUEST_VEC2(NativeGLVertex2sv, NativeGLVertex2s, gl_read_i16, 2)
+GL_GUEST_VEC3(NativeGLVertex3sv, NativeGLVertex3s, gl_read_i16, 2)
+GL_GUEST_VEC4(NativeGLVertex4sv, NativeGLVertex4s, gl_read_i16, 2)
 void NativeGLNormal3f(GLContext*c,float x,float y,float z){ if(c){c->current_normal[0]=x;c->current_normal[1]=y;c->current_normal[2]=z;} if(GfxGLDeviceMakeCurrent()) glNormal3f(x,y,z);}
 void NativeGLNormal3d(GLContext*c,double x,double y,double z){NativeGLNormal3f(c,(float)x,(float)y,(float)z);}
 void NativeGLNormal3b(GLContext*c,int8_t x,int8_t y,int8_t z){NativeGLNormal3f(c,x/127.f,y/127.f,z/127.f);}
-void NativeGLNormal3i(GLContext*c,int32_t x,int32_t y,int32_t z){NativeGLNormal3f(c,(float)x,(float)y,(float)z);}
+void NativeGLNormal3i(GLContext*c,int32_t x,int32_t y,int32_t z){
+  const float nx=(x==-2147483647-1)?-1.f:x/2147483647.f;
+  const float ny=(y==-2147483647-1)?-1.f:y/2147483647.f;
+  const float nz=(z==-2147483647-1)?-1.f:z/2147483647.f;
+  NativeGLNormal3f(c,nx,ny,nz);
+}
 void NativeGLNormal3s(GLContext*c,int16_t x,int16_t y,int16_t z){NativeGLNormal3f(c,x/32767.f,y/32767.f,z/32767.f);}
-void NativeGLNormal3fv(GLContext*c,uint32_t p){float*h=(float*)Mac2HostAddr(p); if(c&&h) NativeGLNormal3f(c,h[0],h[1],h[2]);}
-void NativeGLNormal3dv(GLContext*c,uint32_t p){double*h=(double*)Mac2HostAddr(p); if(c&&h) NativeGLNormal3d(c,h[0],h[1],h[2]);}
-void NativeGLNormal3bv(GLContext*c,uint32_t p){int8_t*h=(int8_t*)Mac2HostAddr(p); if(c&&h) NativeGLNormal3b(c,h[0],h[1],h[2]);}
-void NativeGLNormal3iv(GLContext*c,uint32_t p){int32_t*h=(int32_t*)Mac2HostAddr(p); if(c&&h) NativeGLNormal3i(c,h[0],h[1],h[2]);}
-void NativeGLNormal3sv(GLContext*c,uint32_t p){int16_t*h=(int16_t*)Mac2HostAddr(p); if(c&&h) NativeGLNormal3s(c,h[0],h[1],h[2]);}
+GL_GUEST_VEC3(NativeGLNormal3fv, NativeGLNormal3f, gl_read_f32, 4)
+GL_GUEST_VEC3(NativeGLNormal3dv, NativeGLNormal3d, gl_read_f64, 8)
+GL_GUEST_VEC3(NativeGLNormal3bv, NativeGLNormal3b, gl_read_i8, 1)
+GL_GUEST_VEC3(NativeGLNormal3iv, NativeGLNormal3i, gl_read_i32, 4)
+GL_GUEST_VEC3(NativeGLNormal3sv, NativeGLNormal3s, gl_read_i16, 2)
 void NativeGLTexCoord2f(GLContext*c,float s,float t){ if(c){c->current_texcoord[0][0]=s;c->current_texcoord[0][1]=t;c->current_texcoord[0][3]=1.f;} if(GfxGLDeviceMakeCurrent()) glTexCoord2f(s,t);}
 void NativeGLTexCoord1f(GLContext*c,float s){NativeGLTexCoord2f(c,s,0);}
 void NativeGLTexCoord4f(GLContext*c,float s,float t,float r,float q){
@@ -746,30 +779,33 @@ void NativeGLReadPixels(GLContext*ctx,int32_t x,int32_t y,int32_t w,int32_t h,ui
   for(int i=0;i<(int)host.size();i++) WriteMacInt8(pixels+(uint32_t)i, host[(size_t)i]);
 }
 void NativeGLTexCoord1d(GLContext *ctx, double s) {NativeGLTexCoord1f(ctx,(float)s);}
-void NativeGLTexCoord1dv(GLContext *ctx, uint32_t mac_ptr) {double*h=(double*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord1d(ctx,h[0]);}
-void NativeGLTexCoord1fv(GLContext *ctx, uint32_t mac_ptr) {float*h=(float*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord1f(ctx,h[0]);}
+void NativeGLTexCoord1dv(GLContext *ctx, uint32_t p) {if(ctx&&p)NativeGLTexCoord1d(ctx,gl_read_f64(p));}
+void NativeGLTexCoord1fv(GLContext *ctx, uint32_t p) {if(ctx&&p)NativeGLTexCoord1f(ctx,gl_read_f32(p));}
 void NativeGLTexCoord1i(GLContext *ctx, int32_t s) {NativeGLTexCoord1f(ctx,(float)s);}
-void NativeGLTexCoord1iv(GLContext *ctx, uint32_t mac_ptr) {int32_t*h=(int32_t*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord1i(ctx,h[0]);}
+void NativeGLTexCoord1iv(GLContext *ctx, uint32_t p) {if(ctx&&p)NativeGLTexCoord1i(ctx,gl_read_i32(p));}
 void NativeGLTexCoord1s(GLContext *ctx, int16_t s) {NativeGLTexCoord1f(ctx,(float)s);}
-void NativeGLTexCoord1sv(GLContext *ctx, uint32_t mac_ptr) {int16_t*h=(int16_t*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord1s(ctx,h[0]);}
+void NativeGLTexCoord1sv(GLContext *ctx, uint32_t p) {if(ctx&&p)NativeGLTexCoord1s(ctx,gl_read_i16(p));}
 void NativeGLTexCoord2d(GLContext *ctx, double s, double t) {NativeGLTexCoord2f(ctx,(float)s,(float)t);}
-void NativeGLTexCoord2dv(GLContext *ctx, uint32_t mac_ptr) {double*h=(double*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord2d(ctx,h[0],h[1]);}
-void NativeGLTexCoord2fv(GLContext *ctx, uint32_t mac_ptr) {float*h=(float*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord2f(ctx,h[0],h[1]);}
+GL_GUEST_VEC2(NativeGLTexCoord2dv, NativeGLTexCoord2d, gl_read_f64, 8)
+GL_GUEST_VEC2(NativeGLTexCoord2fv, NativeGLTexCoord2f, gl_read_f32, 4)
 void NativeGLTexCoord2i(GLContext *ctx, int32_t s, int32_t t) {NativeGLTexCoord2f(ctx,(float)s,(float)t);}
-void NativeGLTexCoord2iv(GLContext *ctx, uint32_t mac_ptr) {int32_t*h=(int32_t*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord2i(ctx,h[0],h[1]);}
+GL_GUEST_VEC2(NativeGLTexCoord2iv, NativeGLTexCoord2i, gl_read_i32, 4)
 void NativeGLTexCoord2s(GLContext *ctx, int16_t s, int16_t t) {NativeGLTexCoord2f(ctx,(float)s,(float)t);}
-void NativeGLTexCoord2sv(GLContext *ctx, uint32_t mac_ptr) {int16_t*h=(int16_t*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord2s(ctx,h[0],h[1]);}
+GL_GUEST_VEC2(NativeGLTexCoord2sv, NativeGLTexCoord2s, gl_read_i16, 2)
 void NativeGLTexCoord3d(GLContext *ctx, double s, double t, double r) {NativeGLTexCoord3f(ctx,(float)s,(float)t,(float)r);}
-void NativeGLTexCoord3dv(GLContext *ctx, uint32_t mac_ptr) {double*h=(double*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord3d(ctx,h[0],h[1],h[2]);}
-void NativeGLTexCoord3fv(GLContext *ctx, uint32_t mac_ptr) {float*h=(float*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord3f(ctx,h[0],h[1],h[2]);}
+GL_GUEST_VEC3(NativeGLTexCoord3dv, NativeGLTexCoord3d, gl_read_f64, 8)
+GL_GUEST_VEC3(NativeGLTexCoord3fv, NativeGLTexCoord3f, gl_read_f32, 4)
 void NativeGLTexCoord3i(GLContext *ctx, int32_t s, int32_t t, int32_t r) {NativeGLTexCoord3f(ctx,(float)s,(float)t,(float)r);}
-void NativeGLTexCoord3iv(GLContext *ctx, uint32_t mac_ptr) {int32_t*h=(int32_t*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord3i(ctx,h[0],h[1],h[2]);}
+GL_GUEST_VEC3(NativeGLTexCoord3iv, NativeGLTexCoord3i, gl_read_i32, 4)
 void NativeGLTexCoord3s(GLContext *ctx, int16_t s, int16_t t, int16_t r) {NativeGLTexCoord3f(ctx,(float)s,(float)t,(float)r);}
-void NativeGLTexCoord3sv(GLContext *ctx, uint32_t mac_ptr) {int16_t*h=(int16_t*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord3s(ctx,h[0],h[1],h[2]);}
+GL_GUEST_VEC3(NativeGLTexCoord3sv, NativeGLTexCoord3s, gl_read_i16, 2)
 void NativeGLTexCoord4d(GLContext *ctx, double s, double t, double r, double q) {NativeGLTexCoord4f(ctx,(float)s,(float)t,(float)r,(float)q);}
-void NativeGLTexCoord4dv(GLContext *ctx, uint32_t mac_ptr) {double*h=(double*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord4d(ctx,h[0],h[1],h[2],h[3]);}
-void NativeGLTexCoord4fv(GLContext *ctx, uint32_t mac_ptr) {float*h=(float*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord4f(ctx,h[0],h[1],h[2],h[3]);}
+GL_GUEST_VEC4(NativeGLTexCoord4dv, NativeGLTexCoord4d, gl_read_f64, 8)
+GL_GUEST_VEC4(NativeGLTexCoord4fv, NativeGLTexCoord4f, gl_read_f32, 4)
 void NativeGLTexCoord4i(GLContext *ctx, int32_t s, int32_t t, int32_t r, int32_t q) {NativeGLTexCoord4f(ctx,(float)s,(float)t,(float)r,(float)q);}
-void NativeGLTexCoord4iv(GLContext *ctx, uint32_t mac_ptr) {int32_t*h=(int32_t*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord4i(ctx,h[0],h[1],h[2],h[3]);}
+GL_GUEST_VEC4(NativeGLTexCoord4iv, NativeGLTexCoord4i, gl_read_i32, 4)
 void NativeGLTexCoord4s(GLContext *ctx, int16_t s, int16_t t, int16_t r, int16_t q) {NativeGLTexCoord4f(ctx,(float)s,(float)t,(float)r,(float)q);}
-void NativeGLTexCoord4sv(GLContext *ctx, uint32_t mac_ptr) {int16_t*h=(int16_t*)Mac2HostAddr(mac_ptr); if(h) NativeGLTexCoord4s(ctx,h[0],h[1],h[2],h[3]);}
+GL_GUEST_VEC4(NativeGLTexCoord4sv, NativeGLTexCoord4s, gl_read_i16, 2)
+#undef GL_GUEST_VEC2
+#undef GL_GUEST_VEC3
+#undef GL_GUEST_VEC4

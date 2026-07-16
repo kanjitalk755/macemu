@@ -1081,12 +1081,15 @@ void driver_base::init()
 	the_buffer = (uint8 *)vm_acquire_framebuffer(the_buffer_size);
 	the_buffer_copy = (uint8 *)malloc(the_buffer_size);
 	D(bug("the_buffer = %p, the_buffer_copy = %p, the_host_buffer = %p\n", the_buffer, the_buffer_copy, the_host_buffer));
-#if defined(SHEEPSHAVER) && (REAL_ADDRESSING || DIRECT_ADDRESSING)
-	if (the_buffer != VM_MAP_FAILED && the_buffer != NULL) {
-		fprintf(stderr, "[video] framebuffer host=%p mac=%08x size=%u\n",
-		        the_buffer, (unsigned)Host2MacAddr(the_buffer), (unsigned)the_buffer_size);
+	if (the_buffer == VM_MAP_FAILED || the_buffer == NULL || the_buffer_copy == NULL) {
+		if (the_buffer != VM_MAP_FAILED && the_buffer != NULL)
+			vm_release(the_buffer, the_buffer_size);
+		free(the_buffer_copy);
+		the_buffer = NULL;
+		the_buffer_copy = NULL;
+		use_vosf = false;
+		return;
 	}
-#endif
 
 	// Check whether we can initialize the VOSF subsystem and it's profitable
 	if (!video_vosf_init(monitor)) {
@@ -1109,33 +1112,21 @@ void driver_base::init()
 		the_buffer_size = (aligned_height + 2) * pitch;
 		the_buffer_copy = (uint8 *)calloc(1, the_buffer_size);
 		the_buffer = (uint8 *)vm_acquire_framebuffer(the_buffer_size);
-		if (the_buffer == VM_MAP_FAILED || the_buffer == NULL) {
-			fprintf(stderr, "[video] FATAL: framebuffer alloc failed size=%u\n",
-			        (unsigned)the_buffer_size);
-		} else {
-			memset(the_buffer, 0, the_buffer_size);
+		if (the_buffer == VM_MAP_FAILED || the_buffer == NULL || the_buffer_copy == NULL) {
+			if (the_buffer != VM_MAP_FAILED && the_buffer != NULL)
+				vm_release(the_buffer, the_buffer_size);
+			free(the_buffer_copy);
+			the_buffer = NULL;
+			the_buffer_copy = NULL;
+			return;
 		}
+		memset(the_buffer, 0, the_buffer_size);
 		D(bug("the_buffer = %p, the_buffer_copy = %p\n", the_buffer, the_buffer_copy));
-#if defined(SHEEPSHAVER) && (REAL_ADDRESSING || DIRECT_ADDRESSING)
-		if (the_buffer != VM_MAP_FAILED && the_buffer != NULL) {
-			uint32 mac = Host2MacAddr(the_buffer);
-			uint8 *roundtrip = Mac2HostAddr(mac);
-			fprintf(stderr,
-			        "[video] framebuffer host=%p mac=%08x size=%u pitch=%d roundtrip=%p %s\n",
-			        the_buffer, (unsigned)mac, (unsigned)the_buffer_size, pitch,
-			        roundtrip, (roundtrip == the_buffer) ? "OK" : "MISMATCH");
-			/* Probe store through the guest address path used by GrayPage. */
-			WriteMacInt32(mac, 0xA5A5A5A5);
-			uint32 got = ReadMacInt32(mac);
-			if (got != 0xA5A5A5A5)
-				fprintf(stderr, "[video] FATAL: framebuffer probe R/W failed got=%08x\n",
-				        (unsigned)got);
-			WriteMacInt32(mac, 0);
-		}
-#endif
 	}
 
 	set_video_mode(display_type == DISPLAY_SCREEN ? SDL_WINDOW_FULLSCREEN : 0, pitch);
+	if (s == NULL)
+		return;
 
 	// Set frame buffer base
 	set_mac_frame_buffer(monitor, VIDEO_MODE_DEPTH, true);
@@ -1274,7 +1265,7 @@ driver_base::~driver_base()
 									// instances of SDL_Surface and SDL_Texture.
 
 	// the_buffer shall always be mapped through vm_acquire_framebuffer()
-	if (the_buffer != VM_MAP_FAILED) {
+	if (the_buffer != VM_MAP_FAILED && the_buffer != NULL) {
 		D(bug(" releasing the_buffer at %p (%d bytes)\n", the_buffer, the_buffer_size));
 		vm_release_framebuffer(the_buffer, the_buffer_size);
 		the_buffer = NULL;

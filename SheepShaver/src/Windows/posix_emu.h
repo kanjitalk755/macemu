@@ -1,3 +1,3 @@
-/* Auto-fixed text-symlink stub: include the real Basilisk II file. */
+/* Forward to the canonical shared header; kept as a regular file for Windows checkouts. */
 #pragma once
 #include "../../../BasiliskII/src/Windows/posix_emu.h"

@@ -945,7 +945,10 @@ int32_t NativeSubmitVerticesGouraud(uint32_t drawContextAddr, uint32_t nVertices
 	uint32_t maxv = priv->vertexStagingCapacity ? priv->vertexStagingCapacity : 65536;
 	if (nVertices > maxv) nVertices = maxv;
 	if (!priv->vertexStagingBuffer) {
-		priv->vertexStagingBuffer = (uint8_t *)std::malloc(maxv * stride);
+		/* The guest Gouraud record is 32 bytes, but each converted HostV is
+		 * larger (currently 19 floats). Allocating by guest stride corrupts
+		 * the heap as soon as more than a fraction of the buffer is used. */
+		priv->vertexStagingBuffer = (uint8_t *)std::malloc((size_t)maxv * sizeof(HostV));
 		priv->vertexStagingCapacity = maxv;
 	}
 	if (!priv->vertexStagingBuffer) return 1;
@@ -1183,7 +1186,7 @@ int32_t NativeGetNoticeMethod(uint32_t drawContextAddr, uint32_t method, uint32_
 }
 
 #ifndef kQAPixel_RGB32
-#define kQAPixel_RGB32 5
+#define kQAPixel_RGB32 3
 #endif
 #ifndef kQAError
 #define kQAError 1

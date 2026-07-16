@@ -151,6 +151,18 @@ function(macemu_link_sdl target)
   endif()
   if(MACEMU_SDL_TARGET)
     target_link_libraries(${target} PRIVATE ${MACEMU_SDL_TARGET})
+    if(WIN32)
+      get_target_property(_macemu_sdl_type ${MACEMU_SDL_TARGET} TYPE)
+      if(_macemu_sdl_type STREQUAL "SHARED_LIBRARY" OR
+         _macemu_sdl_type STREQUAL "MODULE_LIBRARY")
+        add_custom_command(TARGET ${target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  "$<TARGET_FILE:${MACEMU_SDL_TARGET}>"
+                  "$<TARGET_FILE_DIR:${target}>"
+          COMMENT "Copy SDL runtime next to ${target}"
+          VERBATIM)
+      endif()
+    endif()
   elseif(MACEMU_SDL_PKG)
     target_include_directories(${target} PRIVATE ${SDL2_INCLUDE_DIRS})
     target_link_libraries(${target} PRIVATE ${SDL2_LIBRARIES})
@@ -291,7 +303,6 @@ function(macemu_windows_net_sources b2_src outvar)
   set(srcs
     "${b2_src}/Windows/cdenable/cache.cpp"
     "${b2_src}/Windows/cdenable/eject_nt.cpp"
-    "${b2_src}/Windows/cdenable/ntcd.cpp"
     "${b2_src}/Windows/b2ether/packet32.cpp"
     "${b2_src}/Windows/router/arp.cpp"
     "${b2_src}/Windows/router/dump.cpp"
@@ -306,6 +317,9 @@ function(macemu_windows_net_sources b2_src outvar)
     "${b2_src}/Windows/router/tcp.cpp"
     "${b2_src}/Windows/router/udp.cpp"
   )
+  if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    list(APPEND srcs "${b2_src}/Windows/cdenable/ntcd.cpp")
+  endif()
   set(${outvar} "${srcs}" PARENT_SCOPE)
 endfunction()
 

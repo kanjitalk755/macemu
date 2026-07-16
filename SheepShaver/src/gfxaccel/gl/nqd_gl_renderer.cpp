@@ -15,6 +15,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <vector>
 
 bool nqd_metal_available = false;
@@ -32,9 +33,51 @@ extern uint32 RAMSize;
 
 static uint32 nqd_ram_size = 0;
 
+static inline bool nqd_range_in_buffer(uint64 mac_addr, uint64 length)
+{
+	const uint64 begin = (uint64)RAMBase;
+	const uint64 end = begin + (uint64)nqd_ram_size;
+	return length != 0 && mac_addr >= begin && mac_addr < end && length <= end - mac_addr;
+}
+
 static inline bool nqd_addr_in_buffer(uint32 mac_addr)
 {
-	return mac_addr >= RAMBase && mac_addr < RAMBase + nqd_ram_size;
+	return nqd_range_in_buffer(mac_addr, 1);
+}
+
+static bool nqd_surface_range(uint32 base, int32 row_bytes, int x_bytes,
+	                         int width_bytes, int y, int height)
+{
+	if (row_bytes <= 0 || x_bytes < 0 || width_bytes <= 0 || y < 0 || height <= 0)
+		return false;
+	if ((uint64)x_bytes + (uint64)width_bytes > (uint64)row_bytes)
+		return false;
+	const uint64 offset = (uint64)y * (uint64)row_bytes + (uint64)x_bytes;
+	const uint64 span = (uint64)(height - 1) * (uint64)row_bytes + (uint64)width_bytes;
+	return nqd_range_in_buffer((uint64)base + offset, span);
+}
+
+static bool nqd_rect_layout(uint32 pixel_size_bits, int x, int width,
+	                       int &x_bytes, int &width_bytes)
+{
+	if (x < 0 || width <= 0)
+		return false;
+	switch (pixel_size_bits) {
+	case 1: case 2: case 4: case 8: case 16: case 32:
+		break;
+	default:
+		return false;
+	}
+	const uint64 start_bits = (uint64)x * pixel_size_bits;
+	const uint64 end_bits = (uint64)(x + width) * pixel_size_bits;
+	const uint64 xb = start_bits / 8;
+	const uint64 wb = (end_bits + 7) / 8 - xb;
+	if (xb > (uint64)std::numeric_limits<int>::max() ||
+	    wb > (uint64)std::numeric_limits<int>::max())
+		return false;
+	x_bytes = (int)xb;
+	width_bytes = (int)wb;
+	return true;
 }
 
 bool NQDMetalAddrInBuffer(uint32 mac_addr)
@@ -46,15 +89,12 @@ void NQDMetalInit(void)
 {
 	nqd_ram_size = RAMSize;
 	if (nqd_ram_size == 0) {
-		/* Fall back: allow full 32-bit guest space checks via Mac2HostAddr safety */
-		nqd_ram_size = 0x10000000;
+		NQD_ERR("NQDMetalInit: RAMSize is zero; acceleration disabled");
+		nqd_metal_available = false;
+		return;
 	}
 	nqd_metal_available = true;
 	NQD_LOG("NQDMetalInit (CPU/OpenGL backend) ram_size=0x%x", nqd_ram_size);
-	/* Compile stamp: if this line is missing from stderr, VS is not running this TU. */
-	fprintf(stderr, "[build] nqd_gl_renderer compiled %s %s (penMode fill fix)\n",
-	        __DATE__, __TIME__);
-	fflush(stderr);
 }
 
 void NQDMetalCleanup(void)
@@ -352,11 +392,15 @@ static bool decode_rect(uint32 p, bool has_src,
                         uint32 &dst_base, int32 &dst_rb,
                         uint32 &src_ps, uint32 &dst_ps, uint32 &mode)
 {
-	dx = (int16)ReadMacInt16(p + NQD_acclDestRect + 2) - (int16)ReadMacInt16(p + NQD_acclDestBoundsRect + 2);
-	dy = (int16)ReadMacInt16(p + NQD_acclDestRect + 0) - (int16)ReadMacInt16(p + NQD_acclDestBoundsRect + 0);
+	const int dst_bounds_left = (int16)ReadMacInt16(p + NQD_acclDestBoundsRect + 2);
+	const int dst_bounds_top = (int16)ReadMacInt16(p + NQD_acclDestBoundsRect + 0);
+	const int dst_bounds_width = (int16)ReadMacInt16(p + NQD_acclDestBoundsRect + 6) - dst_bounds_left;
+	const int dst_bounds_height = (int16)ReadMacInt16(p + NQD_acclDestBoundsRect + 4) - dst_bounds_top;
+	dx = (int16)ReadMacInt16(p + NQD_acclDestRect + 2) - dst_bounds_left;
+	dy = (int16)ReadMacInt16(p + NQD_acclDestRect + 0) - dst_bounds_top;
 	w  = (int16)ReadMacInt16(p + NQD_acclDestRect + 6) - (int16)ReadMacInt16(p + NQD_acclDestRect + 2);
 	h  = (int16)ReadMacInt16(p + NQD_acclDestRect + 4) - (int16)ReadMacInt16(p + NQD_acclDestRect + 0);
-	if (w <= 0 || h <= 0) return false;
+	if (w <= 0 || h <= 0 || dst_bounds_width <= 0 || dst_bounds_height <= 0) return false;
 
 	dst_base = ReadMacInt32(p + NQD_acclDestBaseAddr);
 	dst_rb = (int32)ReadMacInt32(p + NQD_acclDestRowBytes);
@@ -364,17 +408,38 @@ static bool decode_rect(uint32 p, bool has_src,
 	mode = ReadMacInt32(p + NQD_acclTransferMode);
 
 	if (has_src) {
-		sx = (int16)ReadMacInt16(p + NQD_acclSrcRect + 2) - (int16)ReadMacInt16(p + NQD_acclSrcBoundsRect + 2);
-		sy = (int16)ReadMacInt16(p + NQD_acclSrcRect + 0) - (int16)ReadMacInt16(p + NQD_acclSrcBoundsRect + 0);
+		const int src_bounds_left = (int16)ReadMacInt16(p + NQD_acclSrcBoundsRect + 2);
+		const int src_bounds_top = (int16)ReadMacInt16(p + NQD_acclSrcBoundsRect + 0);
+		const int src_bounds_width = (int16)ReadMacInt16(p + NQD_acclSrcBoundsRect + 6) - src_bounds_left;
+		const int src_bounds_height = (int16)ReadMacInt16(p + NQD_acclSrcBoundsRect + 4) - src_bounds_top;
+		if (src_bounds_width <= 0 || src_bounds_height <= 0) return false;
+		sx = (int16)ReadMacInt16(p + NQD_acclSrcRect + 2) - src_bounds_left;
+		sy = (int16)ReadMacInt16(p + NQD_acclSrcRect + 0) - src_bounds_top;
 		src_base = ReadMacInt32(p + NQD_acclSrcBaseAddr);
 		src_rb = (int32)ReadMacInt32(p + NQD_acclSrcRowBytes);
 		src_ps = ReadMacInt32(p + NQD_acclSrcPixelSize);
+
+		if (sx < 0) { const int trim = -sx; sx = 0; dx += trim; w -= trim; }
+		if (sy < 0) { const int trim = -sy; sy = 0; dy += trim; h -= trim; }
+		if (w <= 0 || h <= 0 || sx >= src_bounds_width || sy >= src_bounds_height) return false;
+		w = std::min(w, src_bounds_width - sx);
+		h = std::min(h, src_bounds_height - sy);
 	} else {
 		sx = sy = 0;
 		src_base = 0;
 		src_rb = 0;
 		src_ps = dst_ps;
 	}
+
+	if (dx < 0) { const int trim = -dx; dx = 0; sx += trim; w -= trim; }
+	if (dy < 0) { const int trim = -dy; dy = 0; sy += trim; h -= trim; }
+	if (w <= 0 || h <= 0 || dx >= dst_bounds_width || dy >= dst_bounds_height) return false;
+	w = std::min(w, dst_bounds_width - dx);
+	h = std::min(h, dst_bounds_height - dy);
+	if (w <= 0 || h <= 0 || dst_rb <= 0 || (has_src && src_rb <= 0)) return false;
+	int ignored_x, ignored_width;
+	if (!nqd_rect_layout(dst_ps, dx, w, ignored_x, ignored_width)) return false;
+	if (has_src && (!nqd_rect_layout(src_ps, sx, w, ignored_x, ignored_width) || src_ps != dst_ps)) return false;
 	return true;
 }
 
@@ -398,7 +463,6 @@ void NQDMetalBitblt(uint32 p)
 	int32 srb, drb;
 	if (!decode_rect(p, true, sx, sy, dx, dy, w, h, sb, srb, db, drb, sps, dps, mode))
 		return;
-	if (!nqd_addr_in_buffer(sb) || !nqd_addr_in_buffer(db)) return;
 
 	int bpp = bpp_bytes(dps);
 	int width_bytes = w * bpp;
@@ -407,11 +471,32 @@ void NQDMetalBitblt(uint32 p)
 		width_bytes = (w * (int)dps + 7) / 8;
 		bpp = 1;
 	}
+	int src_x_bytes, src_layout_width, dst_x_bytes, dst_layout_width;
+	if (!nqd_rect_layout(sps, sx, w, src_x_bytes, src_layout_width) ||
+	    !nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_layout_width) ||
+	    !nqd_surface_range(sb, srb, src_x_bytes, width_bytes, sy, h) ||
+	    !nqd_surface_range(db, drb, dst_x_bytes, width_bytes, dy, h))
+		return;
 
-	uint8 *src = host_ptr(sb) + sy * srb + sx * (dps < 8 ? 0 : bpp);
-	if (dps < 8)
-		src = host_ptr(sb) + sy * srb + (sx * (int)dps) / 8;
-	uint8 *dst = host_ptr(db) + dy * drb + (dps < 8 ? (dx * (int)dps) / 8 : dx * bpp);
+	uint8 *src = host_ptr(sb) + (size_t)sy * srb + src_x_bytes;
+	uint8 *dst = host_ptr(db) + (size_t)dy * drb + dst_x_bytes;
+	/* Boolean and arithmetic loops read and write sequentially. Snapshot an
+	 * overlapping source rectangle so a downward/rightward copy cannot feed
+	 * already-written destination pixels back into later source reads. */
+	std::vector<uint8> overlap_scratch;
+	const uintptr_t src_begin = (uintptr_t)src;
+	const uintptr_t src_end = src_begin + (size_t)(h - 1) * srb + width_bytes;
+	const uintptr_t dst_begin = (uintptr_t)dst;
+	const uintptr_t dst_end = dst_begin + (size_t)(h - 1) * drb + width_bytes;
+	if (src_begin < dst_end && dst_begin < src_end &&
+	    !(src_begin == dst_begin && srb == drb)) {
+		overlap_scratch.resize((size_t)width_bytes * h);
+		for (int y = 0; y < h; y++)
+			std::memcpy(overlap_scratch.data() + (size_t)y * width_bytes,
+			            src + (size_t)y * srb, (size_t)width_bytes);
+		src = overlap_scratch.data();
+		srb = width_bytes;
+	}
 
 	/* Arithmetic 32–39 / hilite 50: per-pixel ops (standard depths only). */
 	if ((mode >= 32 && mode <= 39) || mode == 50) {
@@ -484,10 +569,13 @@ void NQDMetalFillRect(uint32 p)
 	int32 srb, drb;
 	if (!decode_rect(p, false, sx, sy, dx, dy, w, h, sb, srb, db, drb, sps, dps, mode))
 		return;
-	if (!nqd_addr_in_buffer(db)) return;
 
 	int bpp = bpp_bytes(dps);
 	int width_bytes = (dps < 8) ? (w * (int)dps + 7) / 8 : w * bpp;
+	int dst_x_bytes, dst_layout_width;
+	if (!nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_layout_width) ||
+	    !nqd_surface_range(db, drb, dst_x_bytes, width_bytes, dy, h))
+		return;
 	/*
 	 * Color selection matches stock gfxaccel.cpp / PocketShaver:
 	 *   penMode == 8 (patCopy) → ForePen, else → BackPen.
@@ -498,7 +586,7 @@ void NQDMetalFillRect(uint32 p)
 	const uint32 fore_pen = ReadMacInt32(p + NQD_acclForePen);
 	const uint32 back_pen = ReadMacInt32(p + NQD_acclBackPen);
 	const uint32 pen = (pen_mode == 8) ? fore_pen : back_pen;
-	uint8 *dst = host_ptr(db) + dy * drb + (dps < 8 ? (dx * (int)dps) / 8 : dx * bpp);
+	uint8 *dst = host_ptr(db) + (size_t)dy * drb + dst_x_bytes;
 	int pb = dps < 8 ? 1 : bpp;
 	/* Arithmetic / hilite pen modes on standard depths */
 	if (((mode >= 32 && mode <= 39) || mode == 50) && dps >= 8) {
@@ -555,10 +643,13 @@ void NQDMetalInvertRect(uint32 p)
 	int32 srb, drb;
 	if (!decode_rect(p, false, sx, sy, dx, dy, w, h, sb, srb, db, drb, sps, dps, mode))
 		return;
-	if (!nqd_addr_in_buffer(db)) return;
 	int bpp = bpp_bytes(dps);
 	int width_bytes = (dps < 8) ? (w * (int)dps + 7) / 8 : w * bpp;
-	uint8 *dst = host_ptr(db) + dy * drb + (dps < 8 ? (dx * (int)dps) / 8 : dx * bpp);
+	int dst_x_bytes, dst_layout_width;
+	if (!nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_layout_width) ||
+	    !nqd_surface_range(db, drb, dst_x_bytes, width_bytes, dy, h))
+		return;
+	uint8 *dst = host_ptr(db) + (size_t)dy * drb + dst_x_bytes;
 	cpu_invert_rect(dst, drb, width_bytes, h);
 }
 
@@ -570,9 +661,8 @@ void NQDMetalBltMask(uint32 p)
 	int32 srb, drb;
 	if (!decode_rect(p, true, sx, sy, dx, dy, w, h, sb, srb, db, drb, sps, dps, mode))
 		return;
-	if (!nqd_addr_in_buffer(sb) || !nqd_addr_in_buffer(db)) return;
 	uint32 mask_addr = ReadMacInt32(p + NQD_acclMaskAddr);
-	if (!mask_addr || !nqd_addr_in_buffer(mask_addr)) {
+	if (!mask_addr) {
 		NQDMetalBitblt(p);
 		return;
 	}
@@ -580,8 +670,15 @@ void NQDMetalBltMask(uint32 p)
 	if (dps < 8) { NQDMetalBitblt(p); return; }
 	/* 1-bit mask: one bit per destination pixel, row-padded to bytes */
 	int mask_rb = (w + 7) / 8;
-	uint8 *src = host_ptr(sb) + sy * srb + sx * bpp;
-	uint8 *dst = host_ptr(db) + dy * drb + dx * bpp;
+	int src_x_bytes, src_width_bytes, dst_x_bytes, dst_width_bytes;
+	if (!nqd_rect_layout(sps, sx, w, src_x_bytes, src_width_bytes) ||
+	    !nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_width_bytes) ||
+	    !nqd_surface_range(sb, srb, src_x_bytes, src_width_bytes, sy, h) ||
+	    !nqd_surface_range(db, drb, dst_x_bytes, dst_width_bytes, dy, h) ||
+	    !nqd_range_in_buffer(mask_addr, (uint64)mask_rb * (uint64)h))
+		return;
+	uint8 *src = host_ptr(sb) + (size_t)sy * srb + src_x_bytes;
+	uint8 *dst = host_ptr(db) + (size_t)dy * drb + dst_x_bytes;
 	uint8 *mask = host_ptr(mask_addr);
 	for (int y = 0; y < h; y++) {
 		uint8 *s = src + (size_t)y * srb;
@@ -608,9 +705,8 @@ void NQDMetalFillMask(uint32 p)
 	int32 srb, drb;
 	if (!decode_rect(p, false, sx, sy, dx, dy, w, h, sb, srb, db, drb, sps, dps, mode))
 		return;
-	if (!nqd_addr_in_buffer(db)) return;
 	uint32 mask_addr = ReadMacInt32(p + NQD_acclMaskAddr);
-	if (!mask_addr || !nqd_addr_in_buffer(mask_addr)) {
+	if (!mask_addr) {
 		NQDMetalFillRect(p);
 		return;
 	}
@@ -618,7 +714,12 @@ void NQDMetalFillMask(uint32 p)
 	if (dps < 8) { NQDMetalFillRect(p); return; }
 	uint32 pen = ReadMacInt32(p + NQD_acclForePen);
 	int mask_rb = (w + 7) / 8;
-	uint8 *dst = host_ptr(db) + dy * drb + dx * bpp;
+	int dst_x_bytes, dst_width_bytes;
+	if (!nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_width_bytes) ||
+	    !nqd_surface_range(db, drb, dst_x_bytes, dst_width_bytes, dy, h) ||
+	    !nqd_range_in_buffer(mask_addr, (uint64)mask_rb * (uint64)h))
+		return;
+	uint8 *dst = host_ptr(db) + (size_t)dy * drb + dst_x_bytes;
 	uint8 *mask = host_ptr(mask_addr);
 	for (int y = 0; y < h; y++) {
 		uint8 *d = dst + (size_t)y * drb;
@@ -638,12 +739,18 @@ bool NQDMetalBitblt1to1(uint32 src_base, int32 src_row_bytes,
                         uint32 transfer_mode, uint32 src_key)
 {
 	if (!nqd_metal_available) return false;
-	if (!nqd_addr_in_buffer(src_base) || !nqd_addr_in_buffer(dst_base)) return false;
-	if (width_pixels == 0 || height == 0 || pixel_size_bytes == 0) return false;
+	if (width_pixels == 0 || height == 0 ||
+	    (pixel_size_bytes != 1 && pixel_size_bytes != 2 && pixel_size_bytes != 4) ||
+	    src_row_bytes <= 0 || dst_row_bytes <= 0 ||
+	    height > (uint32)std::numeric_limits<int>::max()) return false;
+	const uint64 width_bytes_64 = (uint64)width_pixels * pixel_size_bytes;
+	if (width_bytes_64 > (uint64)std::numeric_limits<int>::max()) return false;
+	const int width_bytes = (int)width_bytes_64;
+	if (!nqd_surface_range(src_base, src_row_bytes, 0, width_bytes, 0, (int)height) ||
+	    !nqd_surface_range(dst_base, dst_row_bytes, 0, width_bytes, 0, (int)height)) return false;
 
 	uint8 *src = host_ptr(src_base);
 	uint8 *dst = host_ptr(dst_base);
-	int width_bytes = (int)(width_pixels * pixel_size_bytes);
 
 	if (transfer_mode == 0) {
 		cpu_copy_rect(src, src_row_bytes, dst, dst_row_bytes, width_bytes, (int)height);
@@ -685,18 +792,27 @@ bool NQDMetalBitbltScaled(uint32 src_base, int32 src_row_bytes,
                           uint32 key_enable)
 {
 	if (!nqd_metal_available) return false;
-	if (!nqd_addr_in_buffer(src_base) || !nqd_addr_in_buffer(dst_base)) return false;
-	if (!src_w || !src_h || !dst_w || !dst_h || !pixel_size_bytes) return false;
+	if (!src_w || !src_h || !dst_w || !dst_h ||
+	    (pixel_size_bytes != 1 && pixel_size_bytes != 2 && pixel_size_bytes != 4) ||
+	    src_row_bytes <= 0 || dst_row_bytes <= 0 ||
+	    src_h > (uint32)std::numeric_limits<int>::max() ||
+	    dst_h > (uint32)std::numeric_limits<int>::max()) return false;
+	const uint64 src_width_bytes = (uint64)src_w * pixel_size_bytes;
+	const uint64 dst_width_bytes = (uint64)dst_w * pixel_size_bytes;
+	if (src_width_bytes > (uint64)std::numeric_limits<int>::max() ||
+	    dst_width_bytes > (uint64)std::numeric_limits<int>::max()) return false;
+	if (!nqd_surface_range(src_base, src_row_bytes, 0, (int)src_width_bytes, 0, (int)src_h) ||
+	    !nqd_surface_range(dst_base, dst_row_bytes, 0, (int)dst_width_bytes, 0, (int)dst_h)) return false;
 
 	uint8 *src = host_ptr(src_base);
 	uint8 *dst = host_ptr(dst_base);
 
 	for (uint32 y = 0; y < dst_h; y++) {
-		uint32 sy = y * src_h / dst_h;
+		uint32 sy = (uint32)((uint64)y * src_h / dst_h);
 		uint8 *srow = src + (size_t)sy * src_row_bytes;
 		uint8 *drow = dst + (size_t)y * dst_row_bytes;
 		for (uint32 x = 0; x < dst_w; x++) {
-			uint32 sx = x * src_w / dst_w;
+			uint32 sx = (uint32)((uint64)x * src_w / dst_w);
 			uint32 pix = 0;
 			if (pixel_size_bytes == 1) pix = srow[sx];
 			else if (pixel_size_bytes == 2) pix = (srow[sx * 2] << 8) | srow[sx * 2 + 1];

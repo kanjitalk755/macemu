@@ -354,6 +354,10 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 				}	
 				filename = strtok(NULL, "\"\t\n\r");
 				filetype = strtok(NULL, " \"\t\n\r");
+				if (!filename || !*filename || !filetype) {
+					D(bug("Malformed FILE token\n"));
+					goto fail;
+				}
 				if (strcmp("BINARY", filetype) && strcmp("MOTOROLA", filetype)) {
 					D(bug("Not binary file %s\n", filetype));
 					goto fail;
@@ -361,21 +365,43 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 				else {
 					if (!strcmp("MOTOROLA", filetype))
 						cs->big_endian_audio = true;
-					char *tmp = strdup(cuefile);
-					char *b = dirname(tmp);
-					cs->binfile = (char *) malloc(strlen(b) + strlen(filename) + 2);
+					bool absolute = filename[0] == '/' || filename[0] == '\\';
 #if defined(_WIN32) || defined(WIN32)
-					sprintf(cs->binfile, "%s\\%s", b, filename);
+					absolute = absolute || (isalpha((unsigned char)filename[0]) && filename[1] == ':');
+					const char separator = '\\';
 #else
-					sprintf(cs->binfile, "%s/%s", b, filename);
+					const char separator = '/';
 #endif
-					free(tmp);
+					if (absolute) {
+						cs->binfile = strdup(filename);
+					} else {
+						char *tmp = strdup(cuefile);
+						if (!tmp) goto fail;
+						char *b = dirname(tmp);
+						const size_t dir_len = strlen(b);
+						const bool has_separator = dir_len != 0 &&
+							(b[dir_len - 1] == '/' || b[dir_len - 1] == '\\');
+						cs->binfile = (char *)malloc(dir_len + strlen(filename) +
+						                                  (has_separator ? 1 : 2));
+						if (cs->binfile) {
+							if (has_separator)
+								sprintf(cs->binfile, "%s%s", b, filename);
+							else
+								sprintf(cs->binfile, "%s%c%s", b, separator, filename);
+						}
+						free(tmp);
+					}
+					if (!cs->binfile) goto fail;
 				}
 			} else if (!strcmp("TRACK", keyword)) {
 				char *field;
 				int i_track;
 
 				if (seen1st) {
+					if (cs->tcnt >= MAXTRACK - 1) {
+						D(bug("Too many tracks\n"));
+						goto fail;
+					}
 					if (!AddTrack(cs)){
 						D(bug("AddTrack failed \n"));
 						goto fail;
@@ -388,7 +414,7 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 				// parse track number
 
 				field = strtok(NULL, " \t\n\r");
-				if (1 != sscanf(field, "%d", &i_track)) {
+				if (!field || 1 != sscanf(field, "%d", &i_track)) {
 					D(bug("Expected  track number\n"));
 					goto fail;		
 				}
@@ -397,7 +423,10 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 				// parse track type and update sector size for data discs if applicable
 
 				field = strtok(NULL, " \t\n\r");
-				if (!strcmp("MODE1/2352", field)) { // red-book CD-ROM standard
+				if (!field) {
+					D(bug("Expected track type\n"));
+					goto fail;
+				} else if (!strcmp("MODE1/2352", field)) { // red-book CD-ROM standard
 					curr->tcf = DATA;
 					cs->raw_sector_size = 2352;
 					cs->cooked_sector_size = 2048;
@@ -427,7 +456,7 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 				// parse INDEX number
 
 				field = strtok(NULL, " \t\n\r");
-				if (1 != sscanf(field, "%d", &i_index)) {
+				if (!field || 1 != sscanf(field, "%d", &i_index)) {
 					D(bug("Expected index number"));
 					goto fail;
 				}
@@ -435,7 +464,7 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 				// parse INDEX start
 
 				field = strtok(NULL, " \t\n\r");
-				if (3 != sscanf(field, "%d:%d:%d", 
+				if (!field || 3 != sscanf(field, "%d:%d:%d",
 								 &msf.m, &msf.s, &msf.f)) {
 					D(bug("Expected index start frame\n"));
 					goto fail;
@@ -448,7 +477,7 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 			} else if (!strcmp("PREGAP", keyword)) {
 				MSF msf;
 				char *field = strtok(NULL, " \t\n\r");
-				if (3 != sscanf(field, "%d:%d:%d", 
+				if (!field || 3 != sscanf(field, "%d:%d:%d",
 								 &msf.m, &msf.s, &msf.f)) {
 					D(bug("Expected pregap frame\n"));
 					goto fail;	
@@ -458,7 +487,7 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 			} else if (!strcmp("POSTGAP", keyword)) {
 				MSF msf;
 				char *field = strtok(NULL, " \t\n\r");
-				if (3 != sscanf(field, "%d:%d:%d",
+				if (!field || 3 != sscanf(field, "%d:%d:%d",
 								&msf.m, &msf.s, &msf.f)) {
 					D(bug("Expected postgap frame\n"));
 					goto fail;
@@ -479,7 +508,8 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 		}
 	}
 
-	AddTrack(cs); // add final track
+	if (!seen1st || !AddTrack(cs)) // add final track
+		goto fail;
 	return true;
   fail:
 	return false;
@@ -495,15 +525,10 @@ static bool LoadCueSheet(const char *cuefile, CueSheet *cs)
 	if (cs) {
 		bzero(cs, sizeof(*cs));
 		if (!(fh = fopen(cuefile, "r"))) {
-			fprintf(stderr, "[bincue] cannot open cue '%s': %s\n",
-			        cuefile, strerror(errno));
-			fflush(stderr);
 			return false;
 		}
 
 		if (!ParseCueSheet(fh, cs, cuefile)) {
-			fprintf(stderr, "[bincue] failed to parse cue '%s'\n", cuefile);
-			fflush(stderr);
 			goto fail;
 		}
 
@@ -514,17 +539,11 @@ static bool LoadCueSheet(const char *cuefile, CueSheet *cs)
 			binfh = open(cs->binfile,O_RDONLY);
 		#endif
 		if (binfh < 0) {
-			fprintf(stderr, "[bincue] cannot open bin '%s': %s\n",
-			        cs->binfile, strerror(errno));
-			fflush(stderr);
 			D(bug("Can't read bin file %s\n", cs->binfile));
 			goto fail;
 		}
 
 		if (fstat(binfh, &buf)) {
-			fprintf(stderr, "[bincue] fstat failed on '%s': %s\n",
-			        cs->binfile, strerror(errno));
-			fflush(stderr);
 			D(bug("fstat returned error\n"));
 			goto fail;
 		}
@@ -537,9 +556,6 @@ static bool LoadCueSheet(const char *cuefile, CueSheet *cs)
 						- tlast->start + totalPregap;
 
 		if (tlast->length < 0) {
-			fprintf(stderr, "[bincue] bin too short for cue '%s' (bin=%s size=%lld)\n",
-			        cuefile, cs->binfile, (long long)buf.st_size);
-			fflush(stderr);
 			D(bug("Binary file too short \n"));
  		  	goto fail;	
    	    }
@@ -550,9 +566,6 @@ static bool LoadCueSheet(const char *cuefile, CueSheet *cs)
 		cs->binfh = binfh;
 
 		fclose(fh);
-		fprintf(stderr, "[bincue] loaded cue '%s' -> bin '%s' (%d tracks, %u frames)\n",
-		        cuefile, cs->binfile, cs->tcnt, cs->length);
-		fflush(stderr);
 		return true;
 
 	  fail:
@@ -583,6 +596,12 @@ void *open_bincue(const char *name)
 	}
 	if (LoadCueSheet(name, cs)) {
 		CDPlayer *player = (CDPlayer *) malloc(sizeof(CDPlayer));
+		if (!player) {
+			close(cs->binfh);
+			free(cs->binfile);
+			free(cs);
+			return NULL;
+		}
 		player->cs = cs;
 		player->volume_left = 0;
 		player->volume_right = 0;
@@ -597,6 +616,8 @@ void *open_bincue(const char *name)
 		else
 			player->audiostatus = CDROM_AUDIO_INVALID;
 		player->audiofh = dup(cs->binfh);
+		if (player->audiofh < 0)
+			player->audio_enabled = false;
 
 #ifdef USE_SDL_AUDIO
 		OpenPlayerStream(player);
@@ -626,10 +647,15 @@ void close_bincue(void *fh)
 
 		players.remove(player);
 
-		free(cs);
 #ifdef USE_SDL_AUDIO
 		ClosePlayerStream(player);
 #endif
+		if (player->audiofh >= 0)
+			close(player->audiofh);
+		if (cs->binfh >= 0)
+			close(cs->binfh);
+		free(cs->binfile);
+		free(cs);
 		free(player);
 	}
 }
@@ -661,7 +687,10 @@ size_t read_bincue(void *fh, void *b, loff_t offset, size_t len)
 	/* MSVC has no VLAs; raw CD sectors are at most 2352 bytes. */
 	unsigned char secbuf[2352];
 
-	if (cs == NULL || cs->raw_sector_size <= 0 ||
+	if (cs == NULL || (b == NULL && len != 0) || offset < 0 ||
+	    cs->binfh < 0 || cs->raw_sector_size <= 0 ||
+	    cs->cooked_sector_size <= 0 || cs->header_size < 0 ||
+	    cs->header_size > cs->raw_sector_size - cs->cooked_sector_size ||
 	    (size_t)cs->raw_sector_size > sizeof(secbuf))
 		return (size_t)-1;
 

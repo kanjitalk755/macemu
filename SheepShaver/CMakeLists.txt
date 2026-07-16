@@ -5,7 +5,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_C_STANDARD 99)
-  option(ENABLE_JIT "Enable PPC JIT (precompiled dyngen)" OFF)
+  option(ENABLE_JIT "Legacy default for the PPC JIT" OFF)
+  option(ENABLE_SHEEPSHAVER_JIT "Enable PPC JIT (precompiled dyngen)" ${ENABLE_JIT})
   option(ENABLE_GTK "GTK prefs UI (Unix)" OFF)
   option(ENABLE_BINCUE "BIN/CUE support" ON)
   option(ENABLE_VOSF "Video on SEGV" OFF)
@@ -34,7 +35,7 @@ set(KPX "${SS_SRC}/kpx_cpu")
 set(SS_GEN "${CMAKE_CURRENT_BINARY_DIR}/ss_gen")
 file(MAKE_DIRECTORY "${SS_GEN}")
 
-if(ENABLE_JIT)
+if(ENABLE_SHEEPSHAVER_JIT)
   set(ENABLE_DYNGEN 1)
 endif()
 
@@ -75,6 +76,34 @@ function(ss_stage_file SRC DST)
   set(SS_STAGE_OUTPUTS "${_ss_stage_acc}" PARENT_SCOPE)
 endfunction()
 
+# Build-tree include overlays must never be independent copies of editable
+# source headers. Prefer an NTFS hard link so following an include in Visual
+# Studio edits the tracked source itself. If the build and source directories
+# are on different volumes, use a forwarding header; the compiler then tracks
+# the real source header as a dependency and changes are still immediate.
+set(SS_IDE_HEADERS)
+function(ss_overlay_file SRC DST)
+  if(NOT EXISTS "${SRC}")
+    message(FATAL_ERROR "ss_overlay_file: missing source ${SRC}")
+  endif()
+  get_filename_component(_dst_dir "${DST}" DIRECTORY)
+  file(MAKE_DIRECTORY "${_dst_dir}")
+  if(EXISTS "${DST}" OR IS_SYMLINK "${DST}")
+    file(REMOVE "${DST}")
+  endif()
+  file(CREATE_LINK "${SRC}" "${DST}" RESULT _link_result)
+  if(NOT _link_result STREQUAL "0")
+    file(TO_CMAKE_PATH "${SRC}" _source_include)
+    file(WRITE "${DST}"
+      "/* Generated include overlay; edit ${_source_include}, not this file. */\n"
+      "#include \"${_source_include}\"\n")
+  endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SRC}")
+  set(_ide_headers ${SS_IDE_HEADERS})
+  list(APPEND _ide_headers "${SRC}")
+  set(SS_IDE_HEADERS "${_ide_headers}" PARENT_SCOPE)
+endfunction()
+
 function(ss_is_text_stub FPATH OUT_VAR)
   set(_stub FALSE)
   if(EXISTS "${FPATH}" AND NOT IS_DIRECTORY "${FPATH}")
@@ -91,7 +120,7 @@ function(ss_is_text_stub FPATH OUT_VAR)
 endfunction()
 
 # ---------------------------------------------------------------------------
-# Include path: stage real SS-specific headers (skip text-stubs)
+# Include overlay: expose real SS-specific headers (skip text symlinks)
 # ---------------------------------------------------------------------------
 set(SS_INC_STAGE "${CMAKE_CURRENT_BINARY_DIR}/ss_include")
 file(MAKE_DIRECTORY "${SS_INC_STAGE}")
@@ -104,13 +133,15 @@ foreach(_h IN LISTS _ss_hdrs)
     continue()
   endif()
   ss_is_text_stub("${_h}" _is_stub)
-  if(NOT _is_stub)
-    get_filename_component(_name "${_h}" NAME)
-    ss_stage_file("${_h}" "${SS_INC_STAGE}/${_name}")
+  get_filename_component(_name "${_h}" NAME)
+  if(_is_stub)
+    list(APPEND SS_IDE_HEADERS "${B2_SRC}/include/${_name}")
+  else()
+    ss_overlay_file("${_h}" "${SS_INC_STAGE}/${_name}")
     math(EXPR _ss_staged "${_ss_staged}+1")
   endif()
 endforeach()
-message(STATUS "SheepShaver: staging ${_ss_staged} real headers (skipped text-stubs)")
+message(STATUS "SheepShaver: overlaying ${_ss_staged} real headers (shared headers use BasiliskII sources)")
 
 # ---------------------------------------------------------------------------
 # Shared sources (prefer BasiliskII tree; resolve text-symlink stubs)
@@ -178,7 +209,7 @@ else()
   message(FATAL_ERROR "Missing ${PRE_PPC_IMPL}")
 endif()
 
-if(ENABLE_JIT)
+if(ENABLE_SHEEPSHAVER_JIT)
   list(APPEND SS_CPU
     "${KPX}/src/cpu/jit/jit-cache.cpp"
     "${KPX}/src/cpu/jit/basic-dyngen.cpp"
@@ -203,9 +234,11 @@ if(WIN32)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_ss_win_hdrs})
   foreach(_h IN LISTS _ss_win_hdrs)
     ss_is_text_stub("${_h}" _is_stub)
-    if(NOT _is_stub)
-      get_filename_component(_name "${_h}" NAME)
-      ss_stage_file("${_h}" "${SS_WIN_STAGE}/${_name}")
+    get_filename_component(_name "${_h}" NAME)
+    if(_is_stub)
+      list(APPEND SS_IDE_HEADERS "${B2_SRC}/Windows/${_name}")
+    else()
+      ss_overlay_file("${_h}" "${SS_WIN_STAGE}/${_name}")
     endif()
   endforeach()
 
@@ -409,6 +442,13 @@ endif()
 add_executable(SheepShaver
   ${SS_CORE} ${SS_CPU} ${SS_PLATFORM} ${SS_GFXACCEL})
 
+# Show tracked headers, rather than generated overlay paths, in IDE projects.
+if(SS_IDE_HEADERS)
+  list(REMOVE_DUPLICATES SS_IDE_HEADERS)
+  set_source_files_properties(${SS_IDE_HEADERS} PROPERTIES HEADER_FILE_ONLY TRUE)
+  target_sources(SheepShaver PRIVATE ${SS_IDE_HEADERS})
+endif()
+
 # Force staging before any compile/link (required for VS/CMake IDE + Ninja).
 # Without this, staged headers can lag source edits forever after configure.
 if(SS_STAGE_OUTPUTS)
@@ -422,21 +462,6 @@ endif()
 set_source_files_properties(
   "${KPX}/src/cpu/ppc/ppc-execute.cpp"
   PROPERTIES OBJECT_DEPENDS "${SS_GEN}/ppc-execute-impl.cpp")
-
-# Build identity next to the exe so you can tell which binary you launched
-# (VS sometimes keeps an older tree in the debugger history).
-# Use cmake -E only — never shell redirects.
-add_custom_command(TARGET SheepShaver POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E echo "[SheepShaver] built $<TARGET_FILE:SheepShaver>"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "${CMAKE_CURRENT_LIST_FILE}"
-          "$<TARGET_FILE_DIR:SheepShaver>/_cmake_SheepShaver_CMakeLists.txt.ref"
-  COMMAND ${CMAKE_COMMAND}
-          -Dexe=$<TARGET_FILE:SheepShaver>
-          -Dstamp=$<TARGET_FILE_DIR:SheepShaver>/SheepShaver.buildid
-          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake_write_buildid.cmake"
-  COMMENT "Write SheepShaver.buildid"
-  VERBATIM)
 
 target_include_directories(SheepShaver PRIVATE
   "${CMAKE_CURRENT_BINARY_DIR}"
@@ -467,7 +492,7 @@ if(MSVC AND ENABLE_GFXACCEL)
   # M_PI and other math macros from <cmath>
   target_compile_definitions(SheepShaver PRIVATE _USE_MATH_DEFINES=1)
 endif()
-if(ENABLE_JIT)
+if(ENABLE_SHEEPSHAVER_JIT)
   target_compile_definitions(SheepShaver PRIVATE USE_JIT ENABLE_DYNGEN)
 endif()
 
@@ -484,4 +509,4 @@ endif()
 
 install(TARGETS SheepShaver RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-message(STATUS "SheepShaver: JIT=${ENABLE_JIT}")
+message(STATUS "SheepShaver: JIT=${ENABLE_SHEEPSHAVER_JIT}")
