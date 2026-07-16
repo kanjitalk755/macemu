@@ -21,6 +21,9 @@
 #include "sysdeps.h"
 #include "utils/utils-cpuinfo.hpp"
 #include "utils/utils-sentinel.hpp"
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
 
 // x86 CPU features
 static uint32 x86_cpu_features = 0;
@@ -46,6 +49,17 @@ static void init_x86_cpu_features(void)
 #if defined(__i386__) || defined(__x86_64__)
 	unsigned int fl1, fl2;
 
+#if defined(_MSC_VER)
+	/* MSVC: use the __cpuid intrinsic (no GCC-style inline asm). */
+	int regs[4];
+	__cpuid(regs, 0);
+	if (regs[0] == 0)
+		return;
+	__cpuid(regs, 1);
+	fl1 = (unsigned int)regs[2]; /* ecx */
+	fl2 = (unsigned int)regs[3]; /* edx */
+	x86_cpu_features = (fl1 & HWCAP_I386_ECX_FLAGS) | (fl2 & HWCAP_I386_EDX_FLAGS);
+#else
 #ifndef __x86_64__
 	/* See if we can use cpuid. On AMD64 we always can.  */
 	__asm__ ("pushfl; pushfl; popl %0; movl %0,%1; xorl %2,%0;"
@@ -79,7 +93,8 @@ static void init_x86_cpu_features(void)
 #endif
 
 	x86_cpu_features = (fl1 & HWCAP_I386_ECX_FLAGS) | (fl2 & HWCAP_I386_EDX_FLAGS);
-#endif
+#endif /* !_MSC_VER */
+#endif /* x86 */
 }
 
 // Check for x86 feature CMOV

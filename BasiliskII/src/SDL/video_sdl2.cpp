@@ -1098,7 +1098,10 @@ void driver_base::init()
 	
 	// set default B/W palette
 	sdl_palette = SDL_AllocPalette(256);
-	sdl_palette->colors[1] = (SDL_Color){ .r = 0, .g = 0, .b = 0, .a = 255 };
+	{
+		SDL_Color black = { 0, 0, 0, 255 };
+		sdl_palette->colors[1] = black;
+	}
 	SDL_SetSurfacePalette(s, sdl_palette);
 
 	if (PrefsFindBool("init_grab") && !PrefsFindBool("hardcursor")) grab_mouse();

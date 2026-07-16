@@ -654,7 +654,7 @@ static void nvram_watchdog(void)
 	}
 }
 
-static DWORD nvram_func(void *arg)
+static DWORD WINAPI nvram_func(void *arg)
 {
 	while (!nvram_thread_cancel) {
 		for (int i=0; i<60 && !nvram_thread_cancel; i++)
@@ -670,7 +670,7 @@ static DWORD nvram_func(void *arg)
  */
 
 bool tick_inhibit;
-static DWORD tick_func(void *arg)
+static DWORD WINAPI tick_func(void *arg)
 {
 	int tick_counter = 0;
 	uint64 start = GetTicks_usec();

@@ -37,3 +37,8 @@ project.xcworkspace/
 # JetBrains IDE settings
 #
 *.idea
+.vs
+/out
+/build-x86
+/build-debug
+/build

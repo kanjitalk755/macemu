@@ -731,7 +731,7 @@ void powerpc_cpu::execute(uint32 entry)
 		if (is_logging())
 			record_step(opcode);
 #endif
-#ifdef __MINGW32__
+#if defined(__MINGW32__) || (defined(_MSC_VER) && defined(_M_IX86))
 		assert(ii->execute.default_call_conv_ptr() != 0);
 #else
 		assert(ii->execute.ptr() != 0);

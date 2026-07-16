@@ -25,7 +25,10 @@
 #error "Your compiler is not ANSI. Get a real one."
 #endif
 
-#include "config.h"
+/* Use angle brackets so CMake-generated config.h in -I paths wins over
+ * the checked-in Windows/config.h next to this file (MSVC searches the
+ * including file's directory first for #include "..."). */
+#include <config.h>
 #include "user_strings_windows.h"
 
 //#ifndef STDC_HEADERS

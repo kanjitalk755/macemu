@@ -129,7 +129,7 @@ static void disasm_translation(uint32 src_addr, uint32 src_len,
 
 #if PPC_ENABLE_JIT
 
-void 
+void
 powerpc_cpu::call_do_record_step(powerpc_cpu * cpu, uint32 param1, uint32 param2) {
 	cpu->do_record_step(param1, param2);
 }
@@ -1403,7 +1403,7 @@ powerpc_cpu::compile_block(uint32 entry_point)
 			const int vD = vD_field::extract(opcode);
 			const int vA = vA_field::extract(opcode);
 			const int vB = vB_field::extract(opcode);
-			if (!dg.gen_vector_2(ii->mnemo, vD, vA, vB))			
+			if (!dg.gen_vector_2(ii->mnemo, vD, vA, vB))
 				goto do_generic;
 			break;
 		}
@@ -1514,7 +1514,7 @@ powerpc_cpu::compile_block(uint32 entry_point)
 			typedef void (*func_t)(dyngen_cpu_base, uint32);
 			func_t func;
 		  do_generic:
-		  #ifdef __MINGW32__
+		  #if defined(__MINGW32__) || (defined(_MSC_VER) && defined(_M_IX86))
 			func = (func_t)ii->execute.default_call_conv_ptr();
 		  #else
 			func = (func_t)ii->execute.ptr();
@@ -1522,7 +1522,7 @@ powerpc_cpu::compile_block(uint32 entry_point)
 			goto do_invoke;
 		  do_illegal:
 			func = &powerpc_cpu::call_execute_illegal;
-			goto do_invoke;	
+			goto do_invoke;
 		  do_invoke:
 #if PPC_PROFILE_GENERIC_CALLS
 			if (ii->mnemo <= PPC_I(MAX)) {

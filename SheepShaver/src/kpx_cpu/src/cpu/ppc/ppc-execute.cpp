@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
-#ifdef __MINGW64__
+#if defined(__MINGW64__) || defined(_MSC_VER) || defined(__GLIBC__) || defined(__APPLE__)
 #include <fenv.h>
 #endif
 #include "cpu/vm.hpp"

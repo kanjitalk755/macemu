@@ -25,6 +25,7 @@
 #include <process.h>
 #include <windowsx.h>
 #include <winioctl.h>
+#include <ws2tcpip.h>
 #include <ctype.h>
 
 #include "cpu_emulation.h"

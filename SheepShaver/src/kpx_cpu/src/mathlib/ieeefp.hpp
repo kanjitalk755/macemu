@@ -23,7 +23,7 @@
 
 // Can we use C99 extensions in C++ mode?
 #ifdef HAVE_FENV_H
-#if defined __GNUC__
+#if defined(__GNUC__) || defined(_MSC_VER) || defined(__clang__)
 #define USE_FENV_H 1
 #endif
 #endif

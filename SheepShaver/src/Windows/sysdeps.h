@@ -21,11 +21,12 @@
 #ifndef SYSDEPS_H
 #define SYSDEPS_H
 
-#ifndef __STDC__
+#if !defined(_MSC_VER) && !defined(__STDC__)
 #error "Your compiler is not ANSI. Get a real one."
 #endif
 
-#include "config.h"
+/* Prefer CMake-generated config.h from -I over a local Windows/config.h. */
+#include <config.h>
 #include "user_strings_windows.h"
 
 //#ifndef STDC_HEADERS
@@ -40,13 +41,26 @@
 #include <tchar.h>
 #undef _TEXT
 #include <time.h>
-#ifdef __WIN32__
+#if defined(__WIN32__) || defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #include <WinSock2.h>
 #endif
 #include <sys/types.h>
 
+#ifdef _MSC_VER
+#ifdef _M_IX86
+#ifndef __i386__
+#define __i386__
+#endif
+#elif defined(_M_AMD64)
+#ifndef __x86_64__
+#define __x86_64__
+#endif
+#endif
+#endif
 
 // Define for external components
 #define SHEEPSHAVER 1
@@ -86,6 +100,10 @@
 #endif
 
 // Data types
+#ifdef _MSC_VER
+#include <stddef.h>
+typedef ptrdiff_t ssize_t;
+#endif
 typedef unsigned char uint8;
 typedef signed char int8;
 #if SIZEOF_SHORT == 2
@@ -165,26 +183,10 @@ static inline uint16 do_opt_bswap_16(uint16 x)
 #endif
 #endif
 
-#ifdef  opt_bswap_16
-#undef  bswap_16
-#define bswap_16 opt_bswap_16
-#endif
-#ifndef bswap_16
-#define bswap_16 generic_bswap_16
-#endif
-
 static inline uint16 generic_bswap_16(uint16 x)
 {
   return ((x & 0xff) << 8) | ((x >> 8) & 0xff);
 }
-
-#ifdef  opt_bswap_32
-#undef  bswap_32
-#define bswap_32 opt_bswap_32
-#endif
-#ifndef bswap_32
-#define bswap_32 generic_bswap_32
-#endif
 
 static inline uint32 generic_bswap_32(uint32 x)
 {
@@ -194,20 +196,28 @@ static inline uint32 generic_bswap_32(uint32 x)
 		  ((x & 0x000000ff) << 24) );
 }
 
+#ifdef  opt_bswap_16
+#undef  bswap_16
+#define bswap_16 opt_bswap_16
+#else
+#undef  bswap_16
+#define bswap_16 generic_bswap_16
+#endif
+
+#ifdef  opt_bswap_32
+#undef  bswap_32
+#define bswap_32 opt_bswap_32
+#else
+#undef  bswap_32
+#define bswap_32 generic_bswap_32
+#endif
+
 #if defined(__i386__)
 #define opt_bswap_64 do_opt_bswap_64
 static inline uint64 do_opt_bswap_64(uint64 x)
 {
   return (bswap_32(x >> 32) | (((uint64)bswap_32((uint32)x)) << 32));
 }
-#endif
-
-#ifdef  opt_bswap_64
-#undef  bswap_64
-#define bswap_64 opt_bswap_64
-#endif
-#ifndef bswap_64
-#define bswap_64 generic_bswap_64
 #endif
 
 static inline uint64 generic_bswap_64(uint64 x)
@@ -221,6 +231,14 @@ static inline uint64 generic_bswap_64(uint64 x)
 		  ((x & UVAL64(0x000000000000ff00)) << 40) |
 		  ((x & UVAL64(0x00000000000000ff)) << 56) );
 }
+
+#ifdef  opt_bswap_64
+#undef  bswap_64
+#define bswap_64 opt_bswap_64
+#else
+#undef  bswap_64
+#define bswap_64 generic_bswap_64
+#endif
 
 #ifdef WORDS_BIGENDIAN
 static inline uint16 tswap16(uint16 x) { return x; }
@@ -421,9 +439,17 @@ extern uint32 call_macos7(uint32 tvect, uint32 arg1, uint32 arg2, uint32 arg3, u
 #endif
 
 // Misc platform specific definitions
-#ifdef __WIN32__
+#if defined(__WIN32__) || defined(_WIN32)
 typedef int64 loff_t;
 #endif
+#ifdef _MSC_VER
+#define ATTRIBUTE_PACKED
+#define ATTRIBUTE_UNUSED
+#else
 #define ATTRIBUTE_PACKED __attribute__((__packed__))
+#ifndef ATTRIBUTE_UNUSED
+#define ATTRIBUTE_UNUSED __attribute__((__unused__))
+#endif
+#endif
 
 #endif

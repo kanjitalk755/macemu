@@ -1,4 +1,4 @@
-#include "config.h"
+#include <config.h>
 
 #if defined(USE_SDL3)
 #include <SDL3/SDL.h>

@@ -27,6 +27,9 @@
 #define PACKED__
 #elif defined __GNUC__
 #define PACKED__ __attribute__ ((packed))
+#elif defined _MSC_VER
+#define PRAGMA_PACK_SUPPORTED 1
+#define PACKED__
 #elif defined __sgi
 #define PRAGMA_PACK_SUPPORTED 1
 #define PACKED__
@@ -553,7 +556,7 @@ struct T8022AddressStruct {
 } PACKED__;
 
 #ifdef PRAGMA_PACK_SUPPORTED
-#pragma pack(0)
+#pragma pack()
 #endif
 
 #ifdef PRAGMA_ALIGN_SUPPORTED

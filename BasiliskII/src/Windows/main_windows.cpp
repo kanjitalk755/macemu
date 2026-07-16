@@ -202,7 +202,7 @@ void cpu_do_check_ticks(void)
 	if (delay < 0)
 		delay = PrefsFindInt32("delay");
 	if (delay)
-		usleep(delay);
+		Delay_usec(delay);
 }
 
 

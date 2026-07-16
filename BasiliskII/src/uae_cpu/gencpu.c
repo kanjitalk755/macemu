@@ -93,7 +93,6 @@ static void read_counts (void)
 	    opcode_next_clev[nr] = 4;
 	    opcode_last_postfix[nr] = -1;
 	    opcode_map[nr++] = opcode;
-	    counts[opcode] = count;
 	}
     }
     if (nr != nr_cpuop_funcs)
