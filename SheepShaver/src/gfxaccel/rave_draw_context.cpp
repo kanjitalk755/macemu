@@ -21,6 +21,7 @@
 #include "cpu_emulation.h"
 #include "rave_engine.h"
 #include "rave_metal_renderer.h"
+#include "qd3d_init_logging.h"
 
 #include <cstring>
 
@@ -229,6 +230,9 @@ static const int struct_field_to_subopcode[35] = {
 int32 NativeDrawPrivateNew(uint32 drawContextAddr, uint32 deviceAddr,
                            uint32 rectAddr, uint32 clipAddr, uint32 flags)
 {
+	QD3D_INIT_LOG("NativeDrawPrivateNew: ctx=0x%08x device=0x%08x rect=0x%08x clip=0x%08x flags=0x%08x contexts=%d",
+	              drawContextAddr, deviceAddr, rectAddr, clipAddr, flags,
+	              rave_context_count);
 	if (rave_logging_enabled) {
 		printf("RAVE DrawPrivateNew ENTER: ctx=0x%08x dev=0x%08x rect=0x%08x clip=0x%08x flags=0x%x\n",
 		       drawContextAddr, deviceAddr, rectAddr, clipAddr, flags);
@@ -247,6 +251,8 @@ int32 NativeDrawPrivateNew(uint32 drawContextAddr, uint32 deviceAddr,
 	int32 right  = (int32)ReadMacInt32(rectAddr + 4);
 	int32 top    = (int32)ReadMacInt32(rectAddr + 8);
 	int32 bottom = (int32)ReadMacInt32(rectAddr + 12);
+	QD3D_INIT_LOG("NativeDrawPrivateNew: rect left=%d right=%d top=%d bottom=%d size=%dx%d",
+	              left, right, top, bottom, right - left, bottom - top);
 
 	if (rave_logging_enabled)
 		printf("RAVE DrawPrivateNew: rect raw=(%d,%d,%d,%d) size=%dx%d\n",
@@ -255,6 +261,7 @@ int32 NativeDrawPrivateNew(uint32 drawContextAddr, uint32 deviceAddr,
 	// Allocate RaveDrawPrivate on native heap
 	RaveDrawPrivate *ctx = new RaveDrawPrivate();
 	if (!ctx) {
+		QD3D_INIT_LOG("NativeDrawPrivateNew: failed to allocate native context");
 		if (rave_logging_enabled)
 			printf("RAVE DrawPrivateNew: FAIL - native allocation returned null\n");
 		return kQAError;
@@ -298,6 +305,8 @@ int32 NativeDrawPrivateNew(uint32 drawContextAddr, uint32 deviceAddr,
 	// Register in context table
 	uint32_t handle = AllocContextHandle(ctx);
 	if (handle == 0) {
+		QD3D_INIT_LOG("NativeDrawPrivateNew: context table full (%d slots)",
+		              RAVE_MAX_CONTEXTS);
 		if (rave_logging_enabled)
 			printf("RAVE DrawPrivateNew: FAIL - no free context slots (all %d occupied)\n", RAVE_MAX_CONTEXTS);
 		delete ctx;
@@ -333,6 +342,8 @@ int32 NativeDrawPrivateNew(uint32 drawContextAddr, uint32 deviceAddr,
 	// gfxaccel_resources directly.
 	RaveCreateMetalOverlay(ctx->left, ctx->top, ctx->width, ctx->height);
 	RaveInitMetalResources(ctx);
+	QD3D_INIT_LOG("NativeDrawPrivateNew: renderer initialization returned; handle=%u nativeState=%p size=%dx%d",
+	              handle, (void *)ctx->metal, ctx->width, ctx->height);
 
 	RAVE_LOG("DrawPrivateNew: handle=%d size=%dx%d contexts=%d",
 	         handle, ctx->width, ctx->height, rave_context_count);
@@ -356,6 +367,8 @@ int32 NativeDrawPrivateNew(uint32 drawContextAddr, uint32 deviceAddr,
 
 	// Track the most recent draw context for EngineGestalt(kQATIGestalt_CurrentContext)
 	rave_current_draw_context_addr = drawContextAddr;
+	QD3D_INIT_LOG("NativeDrawPrivateNew: success context=0x%08x handle=%u method0=0x%08x",
+	              drawContextAddr, handle, ReadMacInt32(drawContextAddr + 8));
 
 	return kQANoErr;
 }

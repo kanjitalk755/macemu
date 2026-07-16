@@ -29,6 +29,7 @@
 #include "dsp_pixmap_offsets.h"
 #include "gfxaccel_resources.h"
 #include "metal_compositor.h"  // MetalCompositorSubmitFrame_ClearCachedOverlay
+#include "qd3d_init_logging.h"
 
 #include <cstring>
 #include <cmath>
@@ -295,16 +296,20 @@ enum {
 //   - NoClear (bit 10): Changes clear-before-draw expectation
 //   - CSG (bit 11): Constructive solid geometry we don't implement
 //   - BoundToDevice (bit 12): Would require device association we don't have
-//   - BufferComposite (bit 15): Buffer compositing we don't implement
 //   - NoDither (bit 16): We support dithering, don't claim otherwise
 static const uint32 kAllOptionalFeatures =
 	kQAOptional_DeepZ | kQAOptional_Texture | kQAOptional_TextureHQ |
 	kQAOptional_TextureColor | kQAOptional_Blend | kQAOptional_BlendAlpha |
-	// Deliberate: kQAOptional_PerspectiveZ (bit8) de-advertised — depth is always
-	// submitted as raw z (rave_metal_renderer.mm:1234); 1/invW HSR deferred (Tomb Raider 95.0
-	// out-of-[0,1] Metal clipping, :1229-1233). Capability honesty: no advertised-but-inert bit.
 	kQAOptional_Antialias | kQAOptional_ZSorted |
 	kQAOptional_CL4 | kQAOptional_CL8 |
+#if defined(GFXACCEL_USE_OPENGL)
+	// The GL overlay is composited into the emulated display at RenderEnd.
+	// Descent II 6500 OEM requires this RAVE 1.6 capability (bit 15) when
+	// selecting an engine.  Do not advertise PerspectiveZ here: the game does
+	// not require it, and the renderer does not implement RAVE's inverse-W
+	// depth convention.
+	kQAOptional_BufferComposite |
+#endif
 	kQAOptional_FogAlpha | kQAOptional_FogDepth | kQAOptional_MultiTextures |
 	kQAOptional_MipmapBias | kQAOptional_ChannelMask | kQAOptional_ZBufferMask |
 	kQAOptional_AlphaTest | kQAOptional_AccessTexture | kQAOptional_AccessBitmap |
@@ -1820,7 +1825,10 @@ static const char *gestalt_selector_names[] = {
  */
 int32 NativeEngineGetMethod(uint32 methodTag, uint32 methodPtr)
 {
+	QD3D_INIT_LOG("EngineGetMethod callback: tag=%u output=0x%08x",
+	              methodTag, methodPtr);
 	if (methodTag >= kQAEngineMethodTagCount) {
+		QD3D_INIT_LOG("EngineGetMethod callback: unsupported tag=%u", methodTag);
 		RAVE_LOG("EngineGetMethod: unknown tag %d -> kQANotSupported", methodTag);
 		return kQANotSupported;
 	}
@@ -1831,6 +1839,7 @@ int32 NativeEngineGetMethod(uint32 methodTag, uint32 methodPtr)
 	uint32 tvect_addr = rave_method_tvects[kRaveEngineDrawPrivateNew + methodTag];
 
 	if (tvect_addr == 0) {
+		QD3D_INIT_LOG("EngineGetMethod callback: tag=%u has no TVECT", methodTag);
 		RAVE_LOG("EngineGetMethod: tag %d has no TVECT -> kQANotSupported", methodTag);
 		return kQANotSupported;
 	}
@@ -1838,6 +1847,8 @@ int32 NativeEngineGetMethod(uint32 methodTag, uint32 methodPtr)
 	// Write the TVECT Mac address into the TQAEngineMethod union
 	// The union is a single function pointer (uint32 in Mac address space)
 	WriteMacInt32(methodPtr, tvect_addr);
+	QD3D_INIT_LOG("EngineGetMethod callback: tag=%u -> TVECT 0x%08x",
+	              methodTag, tvect_addr);
 
 	RAVE_LOG("EngineGetMethod: tag %d -> TVECT 0x%08x", methodTag, tvect_addr);
 	return kQANoErr;
@@ -1856,9 +1867,13 @@ int32 NativeEngineGetMethod(uint32 methodTag, uint32 methodPtr)
  */
 int32 NativeEngineGestalt(uint32 selector, uint32 responsePtr)
 {
+	QD3D_INIT_LOG("EngineGestalt callback: selector=%u response=0x%08x",
+	              selector, responsePtr);
 	switch (selector) {
 	case kQAGestalt_OptionalFeatures:
 		WriteMacInt32(responsePtr, kAllOptionalFeatures);
+		QD3D_INIT_LOG("EngineGestalt callback: OptionalFeatures -> 0x%08x",
+		              kAllOptionalFeatures);
 		RAVE_LOG("EngineGestalt: %s -> 0x%08x", gestalt_selector_names[selector], kAllOptionalFeatures);
 		break;
 
@@ -2017,6 +2032,8 @@ int32 NativeEngineCheckDevice(uint32 devicePtr)
  */
 uint32 NativeHookGetFirstEngine(uint32 device)
 {
+	QD3D_INIT_LOG("QADeviceGetFirstEngine: device=0x%08x -> sentinel=0x%08x",
+	              device, rave_sentinel_engine);
 	RaveLogDeviceSummary("HOOK: QADeviceGetFirstEngine", device);
 	RAVE_LOG("HOOK: QADeviceGetFirstEngine(device=0x%08x) -> sentinel 0x%08x",
 		   device, rave_sentinel_engine);
@@ -2035,6 +2052,8 @@ uint32 NativeHookGetFirstEngine(uint32 device)
  */
 uint32 NativeHookGetNextEngine(uint32 device, uint32 prevEngine)
 {
+	QD3D_INIT_LOG("QADeviceGetNextEngine: device=0x%08x previous=0x%08x sentinel=0x%08x",
+	              device, prevEngine, rave_sentinel_engine);
 	if (prevEngine == rave_sentinel_engine) {
 		// Previous was our sentinel -- return NULL to end enumeration.
 		//
@@ -2045,6 +2064,7 @@ uint32 NativeHookGetNextEngine(uint32 device, uint32 prevEngine)
 		// that resolves to the wrong address when relocated, causing an infinite
 		// loop where the caller keeps seeing sentinel returned.
 		RAVE_LOG("HOOK: QADeviceGetNextEngine(prev=sentinel) -> NULL (end of list)");
+		QD3D_INIT_LOG("QADeviceGetNextEngine: previous was sentinel -> NULL (end of list)");
 		return 0;
 	} else {
 		// Previous was a real engine -- chain to original GetNextEngine
@@ -2066,9 +2086,14 @@ uint32 NativeHookGetNextEngine(uint32 device, uint32 prevEngine)
  */
 uint32 NativeHookEngineGestalt(uint32 engine, uint32 selector, uint32 responsePtr)
 {
+	QD3D_INIT_LOG("QAEngineGestalt: engine=0x%08x selector=%u response=0x%08x sentinel=%d",
+	              engine, selector, responsePtr, engine == rave_sentinel_engine);
 	if (engine == rave_sentinel_engine) {
 		RAVE_LOG("HOOK: QAEngineGestalt(sentinel, sel=%d) -> native", selector);
-		return (uint32)NativeEngineGestalt(selector, responsePtr);
+		const uint32 result = (uint32)NativeEngineGestalt(selector, responsePtr);
+		QD3D_INIT_LOG("QAEngineGestalt: selector=%u native result=%d",
+		              selector, (int32)result);
+		return result;
 	} else {
 		if (rave_orig_engine_gestalt == 0) return (uint32)(int32)kQANotSupported;
 		const uint32 args[] = { engine, selector, responsePtr };
@@ -2087,6 +2112,8 @@ uint32 NativeHookEngineGestalt(uint32 engine, uint32 selector, uint32 responsePt
  */
 uint32 NativeHookEngineCheckDevice(uint32 engine, uint32 device)
 {
+	QD3D_INIT_LOG("QAEngineCheckDevice: engine=0x%08x device=0x%08x sentinel=%d",
+	              engine, device, engine == rave_sentinel_engine);
 	if (engine == rave_sentinel_engine) {
 		RAVE_LOG("HOOK: QAEngineCheckDevice(sentinel, device=0x%08x) -> kQANoErr", device);
 		return kQANoErr;
@@ -2107,6 +2134,7 @@ uint32 NativeHookEngineCheckDevice(uint32 engine, uint32 device)
  */
 uint32 NativeHookEngineEnable(uint32 vendorID, uint32 engineID)
 {
+	QD3D_INIT_LOG("QAEngineEnable: vendor=0x%08x engine=0x%08x", vendorID, engineID);
 	RAVE_LOG("HOOK: QAEngineEnable(vendor=0x%08x engine=0x%08x)", vendorID, engineID);
 	if (RaveEngineEnableHandledByNative(vendorID, engineID)) {
 		RAVE_LOG("HOOK: QAEngineEnable -> kQANoErr (native accepted)");
@@ -2176,6 +2204,8 @@ uint32 NativeHookEngineDisable(uint32 vendorID, uint32 engineID)
 uint32 NativeHookDrawContextNew(uint32 device, uint32 rect, uint32 clip,
                                  uint32 engine, uint32 flags, uint32 drawContextPtr)
 {
+	QD3D_INIT_LOG("QADrawContextNew: device=0x%08x rect=0x%08x clip=0x%08x engine=0x%08x sentinel=0x%08x flags=0x%08x output=0x%08x",
+	              device, rect, clip, engine, rave_sentinel_engine, flags, drawContextPtr);
 	RAVE_LOG("HOOK: QADrawContextNew engine=0x%08x sentinel=0x%08x device=0x%08x rect=0x%08x clip=0x%08x flags=0x%08x ctxPtr=0x%08x",
 	       engine, rave_sentinel_engine, device, rect, clip, flags, drawContextPtr);
 	if (engine == rave_sentinel_engine) {
@@ -2206,6 +2236,7 @@ uint32 NativeHookDrawContextNew(uint32 device, uint32 rect, uint32 clip,
 		RAVE_LOG("HOOK: calling NativeDrawPrivateNew(ctx=0x%08x, dev=0x%08x, rect=0x%08x, clip=0x%08x, flags=0x%08x)",
 		       ctx, device, rect, clip, flags);
 		int32 err = NativeDrawPrivateNew(ctx, device, rect, clip, flags);
+		QD3D_INIT_LOG("QADrawContextNew: NativeDrawPrivateNew(ctx=0x%08x) -> %d", ctx, err);
 		RAVE_LOG("HOOK: NativeDrawPrivateNew returned %d", err);
 		if (err != kQANoErr) {
 			RAVE_LOG("HOOK: DrawPrivateNew failed with %d", err);
@@ -2214,6 +2245,8 @@ uint32 NativeHookDrawContextNew(uint32 device, uint32 rect, uint32 clip,
 
 		// Write the draw context pointer to the output parameter
 		WriteMacInt32(drawContextPtr, ctx);
+		QD3D_INIT_LOG("QADrawContextNew: success, wrote context 0x%08x to 0x%08x",
+		              ctx, drawContextPtr);
 
 		uint32 drawPrivate = ReadMacInt32(ctx);
 		RAVE_LOG("HOOK: QADrawContextNew -> ctx=0x%08x, drawPrivate=%d",
@@ -2646,6 +2679,7 @@ static bool rave_registered = false;
 static bool rave_reg_in_progress = false;
 static int rave_reg_attempts = 0;
 static const int RAVE_REG_MAX_ATTEMPTS = 3;
+static bool rave_hooks_installed = false;
 
 bool RaveIsRegistered(void)
 {
@@ -2743,6 +2777,9 @@ static void RaveRegisterResourceHandlers(void)
 
 void RaveRegisterEngine(void)
 {
+	QD3D_INIT_LOG("RaveRegisterEngine: enter registered=%d inProgress=%d attempts=%d/%d",
+	              rave_registered, rave_reg_in_progress,
+	              rave_reg_attempts, RAVE_REG_MAX_ATTEMPTS);
 	// Guard against double registration AND re-entrancy.
 	// Two separate guards:
 	//   - rave_registered: set AFTER successful completion, prevents redundant calls
@@ -2755,12 +2792,16 @@ void RaveRegisterEngine(void)
 	// action active until registration succeeds, so PatchAfterStartup (and
 	// hence RaveRegisterEngine) is called again on subsequent ticks.
 	if (rave_registered) {
+		QD3D_INIT_LOG("RaveRegisterEngine: skipped because registered=true (hooksInstalled=%d)",
+		              rave_hooks_installed);
 		return;
 	}
 	if (rave_reg_attempts >= RAVE_REG_MAX_ATTEMPTS) {
+		QD3D_INIT_LOG("RaveRegisterEngine: skipped because retry limit is exhausted");
 		return;
 	}
 	if (rave_reg_in_progress) {
+		QD3D_INIT_LOG("RaveRegisterEngine: skipped re-entrant call");
 		RAVE_LOG("RaveRegisterEngine() skipped (re-entrant call)");
 		return;
 	}
@@ -2811,6 +2852,9 @@ void RaveRegisterEngine(void)
 		RAVE_LOG("  trying library '%s' (len %d)",
 			   rave_lib_names[i] + 1, (unsigned char)rave_lib_names[i][0]);
 		qa_register = FindLibSymbol(rave_lib_names[i], "\020QARegisterEngine");
+		QD3D_INIT_LOG("RaveRegisterEngine: QARegisterEngine lookup fragment[%d] '%.*s' -> 0x%08x",
+		              i, (unsigned char)rave_lib_names[i][0], rave_lib_names[i] + 1,
+		              qa_register);
 		if (qa_register != 0) {
 			found_rave_lib = rave_lib_names[i];
 			RAVE_LOG("QARegisterEngine found via '%s' at TVECT 0x%08x",
@@ -2823,6 +2867,8 @@ void RaveRegisterEngine(void)
 	if (qa_register == 0) {
 		rave_reg_in_progress = false;
 		rave_reg_attempts++;
+		QD3D_INIT_LOG("RaveRegisterEngine: QARegisterEngine unavailable; attempts now %d/%d",
+		              rave_reg_attempts, RAVE_REG_MAX_ATTEMPTS);
 		if (rave_reg_attempts >= RAVE_REG_MAX_ATTEMPTS)
 			RAVE_LOG("QARegisterEngine not found after %d attempts, giving up", rave_reg_attempts);
 		else
@@ -2833,6 +2879,7 @@ void RaveRegisterEngine(void)
 
 	// Cache InterfaceLib NewGestalt for post-registration Gestalt selector setup
 	uint32 new_gestalt_tvect = FindLibSymbol("\014InterfaceLib", "\012NewGestalt");
+	QD3D_INIT_LOG("RaveRegisterEngine: NewGestalt TVECT=0x%08x", new_gestalt_tvect);
 	RAVE_LOG("cached InterfaceLib: NewGestalt=0x%08x", new_gestalt_tvect);
 
 	// ---- Step 2: Registration (CallMacOS calls, no more FindLibSymbol) ----
@@ -2842,6 +2889,7 @@ void RaveRegisterEngine(void)
 	uint32 engine_get_method_tvect = rave_method_tvects[kRaveEngineDrawPrivateNew];
 
 	if (engine_get_method_tvect == 0) {
+		QD3D_INIT_LOG("RaveRegisterEngine: EngineGetMethod TVECT is zero; registration aborted");
 		RAVE_LOG("EngineGetMethod TVECT not allocated, skipping registration");
 		rave_reg_in_progress = false;
 		return;
@@ -2854,8 +2902,11 @@ void RaveRegisterEngine(void)
 	// and returns TQAError (0 = success)
 	typedef int32 (*qa_register_t)(uint32);
 	int32 err = (int32)CallMacOS1(qa_register_t, qa_register, engine_get_method_tvect);
+	QD3D_INIT_LOG("RaveRegisterEngine: QARegisterEngine(0x%08x) -> %d",
+	              engine_get_method_tvect, err);
 
 	if (err != kQANoErr) {
+		QD3D_INIT_LOG("RaveRegisterEngine: registration failed with TQAError=%d", err);
 		RAVE_LOG("engine registration failed with error %d", err);
 		rave_reg_in_progress = false;
 		return;
@@ -2873,6 +2924,8 @@ void RaveRegisterEngine(void)
 			uint32 callback = AllocateGestaltCallback(0x00010600);
 			int16 gerr = (int16)CallMacOS2(new_gestalt_t, new_gestalt_tvect,
 				0x72617665, callback);
+			QD3D_INIT_LOG("RaveRegisterEngine: NewGestalt('rave') callback=0x%08x -> %d",
+			              callback, gerr);
 			RAVE_LOG("NewGestalt('rave', 0x00010600) -> %d", gerr);
 		}
 
@@ -2881,6 +2934,8 @@ void RaveRegisterEngine(void)
 			uint32 callback = AllocateGestaltCallback(0x00000001);
 			int16 gerr = (int16)CallMacOS2(new_gestalt_t, new_gestalt_tvect,
 				0x71643378, callback);
+			QD3D_INIT_LOG("RaveRegisterEngine: NewGestalt('qd3x') callback=0x%08x -> %d",
+			              callback, gerr);
 			RAVE_LOG("NewGestalt('qd3x', 0x00000001) -> %d", gerr);
 		}
 
@@ -2889,9 +2944,12 @@ void RaveRegisterEngine(void)
 			uint32 callback = AllocateGestaltCallback(0x0120);
 			int16 gerr = (int16)CallMacOS2(new_gestalt_t, new_gestalt_tvect,
 				0x676c7320, callback);
+			QD3D_INIT_LOG("RaveRegisterEngine: NewGestalt('gls ') callback=0x%08x -> %d",
+			              callback, gerr);
 			RAVE_LOG("NewGestalt('gls ', 0x0120) -> %d", gerr);
 		}
 	} else {
+		QD3D_INIT_LOG("RaveRegisterEngine: NewGestalt unavailable; guest selectors not registered");
 		RAVE_LOG("NewGestalt not found, skipping Gestalt registration");
 	}
 
@@ -2905,10 +2963,16 @@ void RaveRegisterEngine(void)
 	// The hooks check for our sentinel TQAEngine handle and dispatch to our native
 	// handlers; for other engines, they chain to the original implementations.
 	RaveInstallHooks();
+	QD3D_INIT_LOG("RaveRegisterEngine: RaveInstallHooks returned hooksInstalled=%d",
+	              rave_hooks_installed);
 
 	// Mark permanently registered only after all registration steps succeed.
 	rave_registered = true;
 	rave_reg_in_progress = false;
+	QD3D_INIT_LOG("RaveRegisterEngine: marked registered=true hooksInstalled=%d foundFragment='%.*s'",
+	              rave_hooks_installed,
+	              found_rave_lib ? (unsigned char)found_rave_lib[0] : 0,
+	              found_rave_lib ? found_rave_lib + 1 : "");
 
 	RAVE_LOG("init complete -- waiting for QD3D IR calls");
 }
@@ -2929,6 +2993,8 @@ void RaveRegisterEngine(void)
  */
 void RaveInstallHooks(void)
 {
+	rave_hooks_installed = false;
+	QD3D_INIT_LOG("RaveInstallHooks: begin; resolving all 22 manager APIs");
 	RAVE_LOG("installing enumeration hooks");
 
 	// Find the RAVE library fragment name we already determined works.
@@ -2979,12 +3045,19 @@ void RaveInstallHooks(void)
 	// Try each library name
 	bool all_found = false;
 	for (int lib = 0; rave_lib_names[lib] != NULL; lib++) {
+		QD3D_INIT_LOG("RaveInstallHooks: trying fragment[%d] '%.*s'",
+		              lib, (unsigned char)rave_lib_names[lib][0],
+		              rave_lib_names[lib] + 1);
 		RAVE_LOG("  trying library '%s' for hooks", rave_lib_names[lib] + 1);
 
 		bool found_all = true;
 		for (int i = 0; i < num_apis; i++) {
 			uint32 tvect = FindLibSymbol(rave_lib_names[lib], apis[i].sym);
+			QD3D_INIT_LOG("RaveInstallHooks: fragment[%d] api[%d]=%s -> TVECT 0x%08x",
+			              lib, i, apis[i].name, tvect);
 			if (tvect == 0) {
+				QD3D_INIT_LOG("RaveInstallHooks: mandatory all-symbol scan stopped at missing %s",
+				              apis[i].name);
 				RAVE_LOG("    %s not found", apis[i].name);
 				found_all = false;
 				break;
@@ -3000,6 +3073,8 @@ void RaveInstallHooks(void)
 	}
 
 	if (!all_found) {
+		QD3D_INIT_LOG("RaveInstallHooks: FAILED; no fragment exported all %d APIs; no patches applied",
+		              num_apis);
 		RAVE_LOG("FAILED to find all enumeration APIs, hooks NOT installed");
 		return;
 	}
@@ -3037,6 +3112,8 @@ void RaveInstallHooks(void)
 		uint32 hook_tvect = rave_method_tvects[apis[i].hook_id];
 
 		if (hook_tvect == 0) {
+			QD3D_INIT_LOG("RaveInstallHooks: %s has no allocated hook TVECT; skipped",
+			              apis[i].name);
 			RAVE_LOG("  hook TVECT for %s not allocated!", apis[i].name);
 			continue;
 		}
@@ -3046,6 +3123,8 @@ void RaveInstallHooks(void)
 
 		// Read the hook thunk's code pointer (from hook TVECT)
 		uint32 hook_code = ReadMacInt32(hook_tvect);
+		QD3D_INIT_LOG("RaveInstallHooks: patching %s origTVECT=0x%08x origCode=0x%08x hookTVECT=0x%08x hookCode=0x%08x",
+		              apis[i].name, orig_tvect, orig_code, hook_tvect, hook_code);
 
 		// Step 1: Save the first 4 instructions (16 bytes) from the original code
 		uint32 saved_instr[4];
@@ -3104,6 +3183,9 @@ void RaveInstallHooks(void)
 
 	RAVE_LOG("enumeration hooks installed, sentinel engine at 0x%08x",
 		   rave_sentinel_engine);
+	rave_hooks_installed = true;
+	QD3D_INIT_LOG("RaveInstallHooks: SUCCESS; %d APIs patched; sentinel=0x%08x",
+	              num_apis, rave_sentinel_engine);
 }
 
 

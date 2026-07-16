@@ -4,6 +4,7 @@
 
 #include "sysdeps.h"
 #include "gl_device.h"
+#include "qd3d_init_logging.h"
 
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -22,10 +23,16 @@ static char s_queue_sentinel = 1;
 
 bool GfxGLDeviceInit(void)
 {
+	QD3D_INIT_LOG("GfxGLDeviceInit: ready=%d context=%p window=%p",
+	              s_ready, s_gl_ctx, (void *)sdl_window);
 	if (s_ready && s_gl_ctx)
+	{
+		QD3D_INIT_LOG("GfxGLDeviceInit: reusing existing context");
 		return true;
+	}
 
 	if (!sdl_window) {
+		QD3D_INIT_LOG("GfxGLDeviceInit: FAILED because SDL window is null");
 		fprintf(stderr, "[gfxaccel-gl] GfxGLDeviceInit: sdl_window is NULL\n");
 		return false;
 	}
@@ -47,12 +54,14 @@ bool GfxGLDeviceInit(void)
 
 	s_gl_ctx = SDL_GL_CreateContext(sdl_window);
 	if (!s_gl_ctx) {
+		QD3D_INIT_LOG("GfxGLDeviceInit: SDL_GL_CreateContext FAILED: %s", SDL_GetError());
 		fprintf(stderr, "[gfxaccel-gl] SDL_GL_CreateContext failed: %s\n", SDL_GetError());
 		s_ready = false;
 		return false;
 	}
 
 	if (SDL_GL_MakeCurrent(sdl_window, s_gl_ctx) != 0) {
+		QD3D_INIT_LOG("GfxGLDeviceInit: SDL_GL_MakeCurrent FAILED: %s", SDL_GetError());
 		fprintf(stderr, "[gfxaccel-gl] SDL_GL_MakeCurrent failed: %s\n", SDL_GetError());
 		SDL_GL_DeleteContext(s_gl_ctx);
 		s_gl_ctx = nullptr;
@@ -74,6 +83,9 @@ bool GfxGLDeviceInit(void)
 	        version ? version : "?");
 
 	s_ready = true;
+	QD3D_INIT_LOG("GfxGLDeviceInit: SUCCESS context=%p vendor='%s' renderer='%s' version='%s'",
+	              s_gl_ctx, vendor ? vendor : "?", renderer ? renderer : "?",
+	              version ? version : "?");
 	return true;
 }
 

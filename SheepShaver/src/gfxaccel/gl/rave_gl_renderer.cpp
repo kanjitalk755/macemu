@@ -20,6 +20,7 @@
 #include "gl_ext.h"
 #include "gfxaccel_backend.h"
 #include "macos_util.h"
+#include "qd3d_init_logging.h"
 
 #include <SDL_opengl.h>
 #include <vector>
@@ -121,9 +122,14 @@ static GLuint acquire_overlay(uint32_t w, uint32_t h)
 
 void RaveCreateMetalOverlay(int32_t left, int32_t top, int32_t width, int32_t height)
 {
+	QD3D_INIT_LOG("RaveCreateMetalOverlay(GL): destination=(%d,%d) size=%dx%d",
+	              left, top, width, height);
 	s_dst_l = left; s_dst_t = top; s_dst_w = width; s_dst_h = height;
 	if (width > 0 && height > 0)
 		acquire_overlay((uint32_t)width, (uint32_t)height);
+	QD3D_INIT_LOG("RaveCreateMetalOverlay(GL): texture=%u pair=(%u,%u) allocated=%ux%u",
+	              (unsigned)s_overlay_tex, (unsigned)s_overlay_pair[0],
+	              (unsigned)s_overlay_pair[1], s_ow, s_oh);
 }
 
 extern "C" int rave_has_active_overlay(void)
@@ -143,8 +149,13 @@ extern "C" void rave_release_overlay_for_detach(void)
 
 void RaveInitMetalResources(RaveDrawPrivate *priv)
 {
-	if (!priv) return;
+	QD3D_INIT_LOG("RaveInitMetalResources(GL): priv=%p", (void *)priv);
+	if (!priv) {
+		QD3D_INIT_LOG("RaveInitMetalResources(GL): rejected null context");
+		return;
+	}
 	if (!GfxGLDeviceInit() || !GfxGLDeviceMakeCurrent()) {
+		QD3D_INIT_LOG("RaveInitMetalResources(GL): GL device/current failed; returning without native state");
 		RAVE_LOG("RaveInitMetalResources: GL device failed");
 		return;
 	}
@@ -154,9 +165,12 @@ void RaveInitMetalResources(RaveDrawPrivate *priv)
 	}
 	auto *ms = new RaveMetalState();
 	priv->metal = ms;
+	QD3D_INIT_LOG("RaveInitMetalResources(GL): allocated state=%p", (void *)ms);
 	if (priv->width > 0 && priv->height > 0)
 		RaveCreateMetalOverlay(priv->left, priv->top, priv->width, priv->height);
 	RAVE_LOG("RaveInitMetalResources ok %dx%d", priv->width, priv->height);
+	QD3D_INIT_LOG("RaveInitMetalResources(GL): success size=%dx%d overlay=%u",
+	              priv->width, priv->height, (unsigned)s_overlay_tex);
 }
 
 void RaveReleaseMetalResources(RaveDrawPrivate *priv)

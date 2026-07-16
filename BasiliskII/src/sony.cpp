@@ -45,6 +45,12 @@ using std::vector;
 #include "prefs.h"
 #include "sony.h"
 
+#if defined(SHEEPSHAVER) && defined(ENABLE_GFXACCEL)
+#include "qd3d_init_logging.h"
+#else
+#define QD3D_INIT_LOG(...) do { } while (0)
+#endif
+
 #define DEBUG 0
 #include "debug.h"
 
@@ -394,8 +400,11 @@ int16 SonyControl(uint32 pb, uint32 dce)
 			return set_dsk_err(noErr);
 
 		case 65:	// Periodic action (accRun, "insert" disks on startup)
+			QD3D_INIT_LOG("SonyControl(accRun): startup patch pass beginning; dCtlFlags=0x%04x",
+			              ReadMacInt16(dce + dCtlFlags));
 			mount_mountable_volumes();
 			PatchAfterStartup();		// Install patches after system startup
+			QD3D_INIT_LOG("SonyControl(accRun): startup patch pass returned; disabling periodic action");
 			WriteMacInt16(dce + dCtlFlags, ReadMacInt16(dce + dCtlFlags) & ~0x2000);	// Disable periodic action
 			acc_run_called = true;
 			return noErr;

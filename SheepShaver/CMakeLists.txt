@@ -10,6 +10,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   option(ENABLE_GTK "GTK prefs UI (Unix)" OFF)
   option(ENABLE_BINCUE "BIN/CUE support" ON)
   option(ENABLE_VOSF "Video on SEGV" OFF)
+  option(ENABLE_QD3D_INIT_LOGGING
+    "Log focused QuickDraw 3D/RAVE initialization diagnostics" OFF)
   option(USE_SDL3 "Use SDL3" OFF)
   set(MACEMU_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
   list(APPEND CMAKE_MODULE_PATH "${MACEMU_CMAKE_DIR}")
@@ -495,6 +497,9 @@ endif()
 if(ENABLE_SHEEPSHAVER_JIT)
   target_compile_definitions(SheepShaver PRIVATE USE_JIT ENABLE_DYNGEN)
 endif()
+if(ENABLE_QD3D_INIT_LOGGING)
+  target_compile_definitions(SheepShaver PRIVATE QD3D_INIT_LOGGING_ENABLED=1)
+endif()
 
 macemu_apply_common(SheepShaver)
 
@@ -510,3 +515,4 @@ endif()
 install(TARGETS SheepShaver RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 message(STATUS "SheepShaver: JIT=${ENABLE_SHEEPSHAVER_JIT}")
+message(STATUS "SheepShaver: QD3D init logging=${ENABLE_QD3D_INIT_LOGGING}")

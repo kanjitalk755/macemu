@@ -27,6 +27,7 @@
 #include "gl_engine.h"
 #include "dsp_engine.h"
 #include "nqd_accel.h"
+#include "qd3d_init_logging.h"
 
 #define DEBUG 0
 #include "debug.h"
@@ -727,6 +728,10 @@ bool NQD_sync_hook(uint32 arg)
 
 void VideoInstallAccel(void)
 {
+	QD3D_INIT_LOG("VideoInstallAccel: gfx=%d nqd=%d rave=%d gl=%d dsp=%d registered=%d",
+	              PrefsFindBool("gfxaccel"), PrefsFindBool("nqdaccel"),
+	              PrefsFindBool("raveaccel"), PrefsFindBool("glaccel"),
+	              PrefsFindBool("dspaccel"), RaveIsRegistered());
 	// Install NQD acceleration hooks (one-time only)
 	static bool nqd_hooks_installed = false;
 	if (!nqd_hooks_installed && PrefsFindBool("nqdaccel")) {
@@ -796,8 +801,14 @@ void VideoInstallAccel(void)
 	// RaveRegisterEngine has its own guards (rave_registered, rave_reg_in_progress)
 	// and returns immediately if already registered. May be called multiple times
 	// from accRun periodic action until RAVE library is available.
-	if (PrefsFindBool("raveaccel"))
+	if (PrefsFindBool("raveaccel")) {
+		QD3D_INIT_LOG("VideoInstallAccel: calling RaveRegisterEngine");
 		RaveRegisterEngine();
+		QD3D_INIT_LOG("VideoInstallAccel: RaveRegisterEngine returned, registered=%d",
+		              RaveIsRegistered());
+	} else {
+		QD3D_INIT_LOG("VideoInstallAccel: RAVE disabled by preference");
+	}
 
 	// Install OpenGL hooks for GL/AGL/GLU/GLUT function interception.
 	// GLInstallHooks has its own guards and returns immediately if already installed.

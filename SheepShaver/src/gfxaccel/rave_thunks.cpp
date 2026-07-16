@@ -16,6 +16,7 @@
 #include "cpu_emulation.h"
 #include "thunks.h"
 #include "rave_engine.h"
+#include "qd3d_init_logging.h"
 
 // Storage for TVECT addresses and scratch word
 uint32_t rave_method_tvects[RAVE_MAX_SUBOPCODE];
@@ -115,6 +116,7 @@ static uint32 AllocateRaveTVECT(int method_id, uint32 rave_opcode)
  */
 void RaveThunksInit(void)
 {
+	QD3D_INIT_LOG("RaveThunksInit: begin");
 	// Allocate 32 bytes for the scratch word + diagnostic buffers
 	// Layout: [0..3] sub-opcode scratch, [4..7] spare,
 	//         [8..15] TQADevice struct, [16..19] gestalt response
@@ -212,6 +214,10 @@ void RaveThunksInit(void)
 
 	RAVE_LOG("RaveThunksInit: allocated %d TVECTs, scratch at 0x%08x, sentinel at 0x%08x",
 			 tvect_count, rave_scratch_addr, rave_sentinel_engine);
+	QD3D_INIT_LOG("RaveThunksInit: allocated=%d opcode=0x%08x scratch=0x%08x sentinel=0x%08x getMethod=0x%08x getFirstHook=0x%08x",
+	              tvect_count, rave_opcode, rave_scratch_addr, rave_sentinel_engine,
+	              rave_method_tvects[kRaveEngineDrawPrivateNew],
+	              rave_method_tvects[kRaveHookGetFirstEngine]);
 
 	// TVECT diagnostic dump gated by rave_logging_enabled. Test: RAVEABITests.testTVECT_loggingGate
 	if (rave_logging_enabled) {

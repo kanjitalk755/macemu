@@ -47,6 +47,7 @@
 #include "vm_alloc.h"
 #include "sigsegv.h"
 #include "thunks.h"
+#include "qd3d_init_logging.h"
 
 #define DEBUG 0
 #include "debug.h"
@@ -331,6 +332,7 @@ void ExitAll(void)
 
 void PatchAfterStartup(void)
 {
+	QD3D_INIT_LOG("PatchAfterStartup: invoked");
 	// One-time patches: NQD acceleration hooks and ExtFS.
 	// These are idempotent but wasteful to repeat, so guard them.
 	static bool one_time_done = false;
@@ -344,4 +346,5 @@ void PatchAfterStartup(void)
 	// VideoInstallAccel -> RaveRegisterEngine has its own guards and will
 	// return quickly if already registered.
 	ExecuteNative(NATIVE_VIDEO_INSTALL_ACCEL);
+	QD3D_INIT_LOG("PatchAfterStartup: native video acceleration install returned");
 }

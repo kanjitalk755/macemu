@@ -402,7 +402,7 @@ int main(int argc, char **argv)
 	rom_tmp = new uint8[ROM_SIZE];
 	ReadFile(rom_fh, (void *)rom_tmp, ROM_SIZE, &actual, NULL);
 	CloseHandle(rom_fh);
-	
+
 	// Decode Mac ROM
 	if (!DecodeROM(rom_tmp, actual)) {
 		if (rom_size != 4*1024*1024) {
@@ -414,7 +414,7 @@ int main(int argc, char **argv)
 		}
 	}
 	delete[] rom_tmp;
-	
+
 	// Initialize native timers
 	timer_init();
 
