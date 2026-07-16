@@ -1381,7 +1381,7 @@ static void keycode_init(void)
 		if (f == NULL) {
 			char str[256];
 			snprintf(str, sizeof(str), GetString(STR_KEYCODE_FILE_WARN), kc_path ? kc_path : KEYCODE_FILE_NAME, strerror(errno));
-			WarningAlert(str);
+			fprintf(stderr, "%s\n", str);
 			return;
 		}
 
