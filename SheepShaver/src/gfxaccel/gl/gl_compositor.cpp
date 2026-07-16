@@ -351,6 +351,43 @@ static void draw_textured_quad(void)
 	glEnd();
 }
 
+/*
+ * RAVE and the compositor intentionally share one compatibility-profile GL
+ * context.  State set while an overlay FBO is bound therefore survives after
+ * the FBO is unbound.  In particular, a 960x720 RAVE scissor clips a
+ * 1920x1440 window to its lower-left quarter, and a channel write mask such as
+ * red-only also applies to the window back buffer.  Establish a complete
+ * presentation boundary before clearing or drawing the classic framebuffer.
+ */
+static void prepare_present_state(void)
+{
+	auto &ext = gfx_gl_ext();
+	if (ext.fbo)
+		ext.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	/* A multi-textured RAVE draw may leave texture unit 1 active/enabled. */
+	if (ext.multitex && ext.ActiveTexture) {
+		ext.ActiveTexture(GL_TEXTURE1);
+		glDisable(GL_TEXTURE_2D);
+		ext.ActiveTexture(GL_TEXTURE0);
+	}
+
+	glDrawBuffer(GL_BACK);
+	glDisable(GL_SCISSOR_TEST);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_STENCIL_TEST);
+	glDisable(GL_ALPHA_TEST);
+	glDisable(GL_FOG);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_LIGHTING);
+	glDisable(GL_COLOR_SUM);
+	glDisable(GL_BLEND);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	glDepthMask(GL_TRUE);
+	glStencilMask(~0u);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+}
+
 static void draw_overlay_layer(const CompositeLayer *layer)
 {
 	if (!layer || !layer->source) return;
@@ -506,6 +543,15 @@ void MetalCompositorPresent(void)
 		return;
 	s_last_present_ms = now_ms;
 
+#if QD3D_INIT_LOGGING_ENABLED
+	GLboolean inherited_color_mask[4] = {};
+	GLint inherited_scissor_box[4] = {};
+	const GLboolean inherited_scissor = glIsEnabled(GL_SCISSOR_TEST);
+	glGetBooleanv(GL_COLOR_WRITEMASK, inherited_color_mask);
+	glGetIntegerv(GL_SCISSOR_BOX, inherited_scissor_box);
+#endif
+	prepare_present_state();
+
 	int dw = 0, dh = 0;
 	GfxGLDeviceGetDrawableSize(&dw, &dh);
 	if (dw <= 0 || dh <= 0) {
@@ -543,12 +589,18 @@ void MetalCompositorPresent(void)
 #if QD3D_INIT_LOGGING_ENABLED
 	s_present_count++;
 	if (compositor_trace_sample(s_present_count)) {
-		QD3D_RENDER_LOG("CompositorPresent count=%llu drawable=%dx%d guest=%dx%d overlayValid=%d overlay=%u dst=%.1f,%.1f %.1fx%.1f glError=0x%x",
+		QD3D_RENDER_LOG("CompositorPresent count=%llu drawable=%dx%d guest=%dx%d overlayValid=%d overlay=%u dst=%.1f,%.1f %.1fx%.1f inheritedScissor=%d[%d,%d %dx%d] inheritedMask=%d%d%d%d glError=0x%x",
 		                (unsigned long long)s_present_count, dw, dh, s_width,
 		                s_height, s_overlay_valid ? 1 : 0,
 		                (unsigned)s_overlay_tex_cache,
 		                s_overlay_cache.dst_origin_x, s_overlay_cache.dst_origin_y,
 		                s_overlay_cache.dst_size_w, s_overlay_cache.dst_size_h,
+		                inherited_scissor ? 1 : 0, inherited_scissor_box[0],
+		                inherited_scissor_box[1], inherited_scissor_box[2],
+		                inherited_scissor_box[3], inherited_color_mask[0] ? 1 : 0,
+		                inherited_color_mask[1] ? 1 : 0,
+		                inherited_color_mask[2] ? 1 : 0,
+		                inherited_color_mask[3] ? 1 : 0,
 		                (unsigned)glGetError());
 	}
 #endif
