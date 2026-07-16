@@ -21,6 +21,8 @@
 #include "cpu_emulation.h"
 #include "rave_engine.h"
 #include "rave_metal_renderer.h"
+#include "rave_device_summary.h"
+#include "dsp_pixmap_offsets.h"
 #include "qd3d_init_logging.h"
 
 #include <cstring>
@@ -76,6 +78,39 @@ static void FreeContextHandle(uint32_t handle)
 	if (handle > 0 && handle <= RAVE_MAX_CONTEXTS) {
 		context_table[handle - 1] = nullptr;
 	}
+}
+
+uint32_t RaveDeviceDrawBufferPixelType(uint32_t deviceAddr)
+{
+	/* RAVE pixel types: RGB16=1 and RGB32=3. A GDevice's QuickDraw
+	 * pixelType field describes direct/indexed organization, while pixelSize
+	 * is the actual bit depth needed by the CPU image-buffer contract. */
+	const uint32_t kRGB16 = 1;
+	const uint32_t kRGB32 = 3;
+	if (!deviceAddr)
+		return kRGB32;
+
+	const uint32_t deviceType = ReadMacInt32(deviceAddr + kRaveDeviceOff_Type);
+	if (deviceType == kRaveDeviceTypeMemory) {
+		const uint32_t pixelType = ReadMacInt32(
+		    deviceAddr + kRaveDeviceOff_MemoryPixelType);
+		return pixelType == kRGB16 ? kRGB16 : kRGB32;
+	}
+	if (deviceType != kRaveDeviceTypeGDevice)
+		return kRGB32;
+
+	const uint32_t gdeviceH = ReadMacInt32(
+	    deviceAddr + kRaveDeviceOff_GDeviceHandle);
+	const uint32_t gdevice = gdeviceH ? ReadMacInt32(gdeviceH) : 0;
+	const uint32_t pixMapH = gdevice
+	    ? ReadMacInt32(gdevice + GDEVICE_OFF_PMAP) : 0;
+	const uint32_t pixMap = pixMapH ? ReadMacInt32(pixMapH) : 0;
+	if (!pixMap)
+		return kRGB32;
+
+	const uint16_t pixelSize = (uint16_t)ReadMacInt16(
+	    pixMap + DSP_MAINDEVICE_PIXMAP_OFF_PIXELSIZE);
+	return pixelSize == 16 ? kRGB16 : kRGB32;
 }
 
 /*
@@ -277,6 +312,9 @@ int32 NativeDrawPrivateNew(uint32 drawContextAddr, uint32 deviceAddr,
 	ctx->height = bottom - top;
 	ctx->flags  = flags;
 	ctx->drawContextAddr = drawContextAddr;
+	ctx->deviceAddr = deviceAddr;
+	QD3D_INIT_LOG("NativeDrawPrivateNew: device draw-buffer pixelType=%u",
+	              RaveDeviceDrawBufferPixelType(deviceAddr));
 
 	// Initialize state defaults per RAVE spec
 	InitStateDefaults(ctx, flags);

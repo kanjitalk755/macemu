@@ -62,6 +62,13 @@ static bool s_gamma_is_identity = true;
 static CompositeLayer s_overlay_cache;
 static bool s_overlay_valid = false;
 static GLuint s_overlay_tex_cache = 0; /* GL name retained as GLuint in void* */
+/*
+ * Some RAVE applications keep their draw context allocated when returning to
+ * a QuickDraw menu.  Remember the guest framebuffer as it stood when the last
+ * RAVE frame was submitted: a later write to it is an implicit ownership
+ * handoff even if the application never calls QAEngineDisable.
+ */
+static std::vector<uint8_t> s_overlay_fb_baseline;
 static CompositeLayer s_framebuffer_cache;
 static bool s_framebuffer_valid = false;
 static GLuint s_framebuffer_tex_cache = 0;
@@ -82,6 +89,46 @@ static std::atomic<uint64_t> s_present_size{0};
 
 /* Framebuffer texture handle exported to DSp as void*. */
 static GLuint s_fb_tex_export = 0;
+
+static size_t visible_framebuffer_bytes(void)
+{
+	if (!s_buffer || s_row_bytes <= 0 || s_height <= 0)
+		return 0;
+	const size_t visible = (size_t)s_row_bytes * (size_t)s_height;
+	return visible < (size_t)s_buffer_size ? visible : (size_t)s_buffer_size;
+}
+
+static void remember_overlay_framebuffer_baseline(void)
+{
+	const size_t bytes = visible_framebuffer_bytes();
+	if (bytes == 0) {
+		s_overlay_fb_baseline.clear();
+		return;
+	}
+	const uint8_t *src = static_cast<const uint8_t *>(s_buffer);
+	s_overlay_fb_baseline.assign(src, src + bytes);
+}
+
+static void detect_implicit_quickdraw_handoff(void)
+{
+	if (!s_overlay_valid || s_overlay_fb_baseline.empty())
+		return;
+
+	const DMCModeSnapshot *snap = dmc_current_snapshot();
+	if (!snap || snap->active_owner != (uint32_t)kDMCOwnerRAVE)
+		return;
+
+	const size_t bytes = visible_framebuffer_bytes();
+	if (bytes != s_overlay_fb_baseline.size())
+		return;
+	if (std::memcmp(s_buffer, s_overlay_fb_baseline.data(), bytes) == 0)
+		return;
+
+	QD3D_RENDER_LOG("CompositorQuickDrawHandoff: guest framebuffer changed after the last RAVE frame; restoring QuickDraw owner");
+	/* The compositor's DMC exit callback clears both the cached overlay and
+	 * this baseline before the next present. */
+	(void)dmc_set_active_owner((uint32_t)kDMCOwnerQuickDraw);
+}
 
 // ---------------------------------------------------------------------------
 // Shaders (GLSL 1.20 compatibility)
@@ -548,6 +595,7 @@ void MetalCompositorPresent(void)
 	/* Drive VBL secondary callbacks (DSp drains etc.) every call. */
 	vbl_source_sdl_tick(0.0);
 	MetalCompositorPaletteLatch();
+	detect_implicit_quickdraw_handoff();
 
 	if (!do_draw)
 		return;
@@ -682,6 +730,7 @@ int32_t MetalCompositorSubmitFrame(const struct FrameDescriptor *desc)
 	if (snap && desc->generation != 0 && desc->generation != snap->generation)
 		return kGfxAccelErrStaleGeneration;
 
+	bool submitted_overlay = false;
 	/* Keep DSp's framebuffer separate from the single RAVE overlay mailbox. */
 	for (uint32_t i = 0; i < desc->layer_count; i++) {
 		const CompositeLayer *L = &desc->layers[i];
@@ -689,12 +738,15 @@ int32_t MetalCompositorSubmitFrame(const struct FrameDescriptor *desc)
 			s_overlay_cache = *L;
 			s_overlay_valid = true;
 			s_overlay_tex_cache = (GLuint)(uintptr_t)L->source;
+			submitted_overlay = true;
 		} else if (L->slot == kLayerSlotFramebuffer && L->source) {
 			s_framebuffer_cache = *L;
 			s_framebuffer_valid = true;
 			s_framebuffer_tex_cache = (GLuint)(uintptr_t)L->source;
 		}
 	}
+	if (submitted_overlay)
+		remember_overlay_framebuffer_baseline();
 #if QD3D_INIT_LOGGING_ENABLED
 	s_overlay_submit_count++;
 	if (compositor_trace_sample(s_overlay_submit_count)) {
@@ -742,6 +794,7 @@ void MetalCompositorSubmitFrame_ClearCachedOverlay(void)
 	s_overlay_valid = false;
 	std::memset(&s_overlay_cache, 0, sizeof(s_overlay_cache));
 	s_overlay_tex_cache = 0;
+	s_overlay_fb_baseline.clear();
 }
 
 void MetalCompositorSubmitFrame_ClearCachedFramebuffer(void)

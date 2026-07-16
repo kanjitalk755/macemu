@@ -301,6 +301,7 @@ struct RaveDrawPrivate {
 	int32_t        width, height;
 	int32_t        left, top;
 	uint32_t       drawContextAddr; // Mac address of TQADrawContext
+	uint32_t       deviceAddr;      // Mac address of the context's TQADevice
 	struct RaveMetalState *metal;   // Metal resources, opaque to .cpp
 
 	// Vertex staging buffer for geometry submission
@@ -470,6 +471,10 @@ extern uint32_t rave_scratch_addr;
 extern int32_t NativeDrawPrivateNew(uint32_t drawContextAddr, uint32_t deviceAddr,
                                     uint32_t rectAddr, uint32_t clipAddr, uint32_t flags);
 extern int32_t NativeDrawPrivateDelete(uint32_t drawPrivateHandle);
+
+// Return kQAPixel_RGB16 or kQAPixel_RGB32 for a context device. This follows
+// a live GDevice/PixMap so display-depth changes are reflected in CPU notices.
+extern uint32_t RaveDeviceDrawBufferPixelType(uint32_t deviceAddr);
 
 extern int32_t NativeSetFloat(uint32_t drawContextAddr, uint32_t tag, uint32_t valueBits);
 extern int32_t NativeSetInt(uint32_t drawContextAddr, uint32_t tag, uint32_t value);

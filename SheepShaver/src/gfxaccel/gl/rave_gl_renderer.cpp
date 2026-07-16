@@ -64,6 +64,8 @@ struct RaveMetalState {
 	/* AccessDrawBuffer / AccessZBuffer CPU maps (guest-visible) */
 	uint32_t draw_cpu_mac = 0;
 	uint32_t draw_cpu_size = 0;
+	uint32_t draw_cpu_row_bytes = 0;
+	uint32_t draw_cpu_pixel_type = 3; /* kQAPixel_RGB32 */
 	bool draw_accessed = false;
 	uint32_t notice_device_mac = 0;
 	uint32_t notice_dirty_rect_mac = 0;
@@ -104,7 +106,8 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector);
 
 #if QD3D_INIT_LOGGING_ENABLED
 static void trace_overlay_readback(const RaveDrawPrivate *priv,
-	                               const RaveMetalState *ms)
+	                               const RaveMetalState *ms,
+	                               const char *stage)
 {
 	if (!priv || !ms || !trace_frame(priv) || !ms->w || !ms->h) return;
 	const uint64_t byte_count = (uint64_t)ms->w * ms->h * 4u;
@@ -131,8 +134,8 @@ static void trace_overlay_readback(const RaveDrawPrivate *priv,
 		if (!a) alpha_zero++;
 		if (a == 255) alpha_full++;
 	}
-	QD3D_RENDER_LOG("RAVEOverlayPixels frame=%u size=%ux%u draws=%llu textured=%llu nonblack=%llu alphaZero=%llu alphaFull=%llu sums=%llu/%llu/%llu/%llu max=%u/%u/%u/%u readError=0x%x",
-	                priv->frameCount, ms->w, ms->h,
+	QD3D_RENDER_LOG("RAVEOverlayPixels frame=%u stage=%s size=%ux%u draws=%llu textured=%llu nonblack=%llu alphaZero=%llu alphaFull=%llu sums=%llu/%llu/%llu/%llu max=%u/%u/%u/%u readError=0x%x",
+	                priv->frameCount, stage ? stage : "unknown", ms->w, ms->h,
 	                (unsigned long long)ms->draw_calls,
 	                (unsigned long long)ms->textured_draws,
 	                (unsigned long long)nonblack,
@@ -309,9 +312,10 @@ static bool bind_overlay_fbo(RaveMetalState *ms, uint32_t w, uint32_t h)
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 	/* RAVE screen space: origin top-left, Y down */
-	/* RAVE submits normalized depth with 0 near and 1 far.  Reversing the
-	 * glOrtho near/far arguments preserves that direction in window depth. */
-	glOrtho(0, (GLdouble)w, (GLdouble)h, 0, 1, 0);
+	/* RAVE submits window-space depth in [0,1]. OpenGL clips against [-1,1],
+	 * so near=0/far=-1 produces clipZ=2*z-1 and preserves RAVE depth. The
+	 * old (1,0) pair produced clipZ=2*z+1, clipping every vertex with z>0. */
+	glOrtho(0, (GLdouble)w, (GLdouble)h, 0, 0, -1);
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 	glEnable(GL_DEPTH_TEST);
@@ -344,7 +348,7 @@ static bool restore_overlay_fbo(RaveMetalState *ms)
 	glViewport(0, 0, (GLsizei)ms->w, (GLsizei)ms->h);
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-	glOrtho(0, (GLdouble)ms->w, (GLdouble)ms->h, 0, 1, 0);
+	glOrtho(0, (GLdouble)ms->w, (GLdouble)ms->h, 0, 0, -1);
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 	return true;
@@ -352,29 +356,65 @@ static bool restore_overlay_fbo(RaveMetalState *ms)
 
 enum {
 	kRaveNoticeDeviceMemory = 0,
+	kRaveNoticePixelRGB16 = 1,
 	kRaveNoticePixelRGB32 = 3
 };
 
-static bool ensure_draw_buffer_cpu(RaveMetalState *ms)
+static uint32_t notice_pixel_type(const RaveDrawPrivate *priv)
+{
+	/* The image-buffer callback is part of the display-device contract. Some
+	 * classic clients (notably Descent II 6500 OEM) draw according to the
+	 * active GDevice depth even though they are also given pixelType. Follow
+	 * the context's live device instead of always exposing the Metal backend's
+	 * RGB32 staging format. Fall back to DMC for malformed devices. */
+	if (priv && priv->deviceAddr) {
+		const uint32_t pixel_type = RaveDeviceDrawBufferPixelType(priv->deviceAddr);
+		if (pixel_type == kRaveNoticePixelRGB16 ||
+		    pixel_type == kRaveNoticePixelRGB32)
+			return pixel_type;
+	}
+	const DMCModeSnapshot *snap = dmc_current_snapshot();
+	return snap && snap->depth == 16 ? kRaveNoticePixelRGB16
+	                                 : kRaveNoticePixelRGB32;
+}
+
+static uint32_t notice_bytes_per_pixel(uint32_t pixel_type)
+{
+	return pixel_type == kRaveNoticePixelRGB16 ? 2u : 4u;
+}
+
+static bool ensure_draw_buffer_cpu(RaveMetalState *ms, uint32_t pixel_type)
 {
 	if (!ms || !ms->w || !ms->h) return false;
-	const uint64_t size64 = (uint64_t)ms->w * ms->h * 4u;
+	const uint32_t bytes_per_pixel = notice_bytes_per_pixel(pixel_type);
+	const uint64_t row_bytes64 = (uint64_t)ms->w * bytes_per_pixel;
+	const uint64_t size64 = row_bytes64 * ms->h;
 	if (size64 > UINT32_MAX) return false;
 	const uint32_t size = (uint32_t)size64;
-	if (!ms->draw_cpu_mac || ms->draw_cpu_size != size) {
-		const uint32_t mac = Mac_sysalloc(size);
+	if (!ms->draw_cpu_mac) {
+		/* Reserve the largest supported representation once. A live GDevice
+		 * can change between 16 and 32 bits while the context survives; repeated
+		 * Mac_sysalloc calls cannot be reclaimed individually here. */
+		const uint64_t capacity64 = (uint64_t)ms->w * ms->h * 4u;
+		if (capacity64 > UINT32_MAX) return false;
+		const uint32_t mac = Mac_sysalloc((uint32_t)capacity64);
 		if (!mac || !Mac2HostAddr(mac)) return false;
 		ms->draw_cpu_mac = mac;
-		ms->draw_cpu_size = size;
 	}
+	ms->draw_cpu_size = size;
+	ms->draw_cpu_row_bytes = (uint32_t)row_bytes64;
+	ms->draw_cpu_pixel_type = pixel_type;
 	return true;
 }
 
 /* GL render targets are bottom-up. RAVE's CPU image-buffer contract is a
- * top-down big-endian RGB32/ARGB byte stream. */
-static bool copy_overlay_to_guest(RaveMetalState *ms)
+ * top-down big-endian RGB16 or RGB32 byte stream matching the display. */
+static bool copy_overlay_to_guest(const RaveDrawPrivate *priv,
+	                              RaveMetalState *ms)
 {
-	if (!ensure_draw_buffer_cpu(ms) || !GfxGLDeviceMakeCurrent()) return false;
+	const uint32_t pixel_type = notice_pixel_type(priv);
+	if (!ensure_draw_buffer_cpu(ms, pixel_type) || !GfxGLDeviceMakeCurrent())
+		return false;
 	auto &ext = gfx_gl_ext();
 	if (!ext.fbo || !ms->fbo) return false;
 	ext.BindFramebuffer(GL_FRAMEBUFFER, ms->fbo);
@@ -392,16 +432,24 @@ static bool copy_overlay_to_guest(RaveMetalState *ms)
 	if (!guest) return false;
 	for (uint32_t guest_y = 0; guest_y < h; guest_y++) {
 		const uint8_t *src = pixels.data() + (size_t)(h - 1u - guest_y) * w * 4u;
-		uint8_t *dst = guest + (size_t)guest_y * w * 4u;
+		uint8_t *dst = guest + (size_t)guest_y * ms->draw_cpu_row_bytes;
 		for (uint32_t x = 0; x < w; x++) {
 			const uint8_t b = src[x * 4u + 0u];
 			const uint8_t g = src[x * 4u + 1u];
 			const uint8_t r = src[x * 4u + 2u];
 			const uint8_t a = src[x * 4u + 3u];
-			dst[x * 4u + 0u] = a;
-			dst[x * 4u + 1u] = r;
-			dst[x * 4u + 2u] = g;
-			dst[x * 4u + 3u] = b;
+			if (pixel_type == kRaveNoticePixelRGB16) {
+				const uint16_t rgb555 = (uint16_t)(((uint16_t)(r >> 3) << 10) |
+				                                   ((uint16_t)(g >> 3) << 5) |
+				                                   (uint16_t)(b >> 3));
+				dst[x * 2u + 0u] = (uint8_t)(rgb555 >> 8);
+				dst[x * 2u + 1u] = (uint8_t)rgb555;
+			} else {
+				dst[x * 4u + 0u] = a;
+				dst[x * 4u + 1u] = r;
+				dst[x * 4u + 2u] = g;
+				dst[x * 4u + 3u] = b;
+			}
 		}
 	}
 	return true;
@@ -427,19 +475,33 @@ static bool upload_guest_to_overlay(RaveMetalState *ms, uint32_t rect_addr)
 
 	const uint32_t upload_w = (uint32_t)(right - left);
 	const uint32_t upload_h = (uint32_t)(bottom - top);
+	const uint32_t pixel_type = ms->draw_cpu_pixel_type;
+	const uint32_t bytes_per_pixel = notice_bytes_per_pixel(pixel_type);
 	std::vector<uint8_t> pixels((size_t)upload_w * upload_h * 4u);
 	const uint8_t *guest = Mac2HostAddr(ms->draw_cpu_mac);
 	if (!guest) return false;
 	for (uint32_t gl_row = 0; gl_row < upload_h; gl_row++) {
 		const uint32_t guest_y = (uint32_t)bottom - 1u - gl_row;
-		const uint8_t *src = guest +
-		                     ((size_t)guest_y * ms->w + (uint32_t)left) * 4u;
+		const uint8_t *src = guest + (size_t)guest_y * ms->draw_cpu_row_bytes +
+		                     (size_t)(uint32_t)left * bytes_per_pixel;
 		uint8_t *dst = pixels.data() + (size_t)gl_row * upload_w * 4u;
 		for (uint32_t x = 0; x < upload_w; x++) {
-			const uint8_t a = src[x * 4u + 0u];
-			const uint8_t r = src[x * 4u + 1u];
-			const uint8_t g = src[x * 4u + 2u];
-			const uint8_t b = src[x * 4u + 3u];
+			uint8_t a = 255, r, g, b;
+			if (pixel_type == kRaveNoticePixelRGB16) {
+				const uint16_t rgb555 = (uint16_t)(((uint16_t)src[x * 2u] << 8) |
+				                                   src[x * 2u + 1u]);
+				const uint8_t r5 = (uint8_t)((rgb555 >> 10) & 0x1f);
+				const uint8_t g5 = (uint8_t)((rgb555 >> 5) & 0x1f);
+				const uint8_t b5 = (uint8_t)(rgb555 & 0x1f);
+				r = (uint8_t)((r5 << 3) | (r5 >> 2));
+				g = (uint8_t)((g5 << 3) | (g5 >> 2));
+				b = (uint8_t)((b5 << 3) | (b5 >> 2));
+			} else {
+				a = src[x * 4u + 0u];
+				r = src[x * 4u + 1u];
+				g = src[x * 4u + 2u];
+				b = src[x * 4u + 3u];
+			}
 			dst[x * 4u + 0u] = b;
 			dst[x * 4u + 1u] = g;
 			dst[x * 4u + 2u] = r;
@@ -472,7 +534,7 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 	const uint64_t notice_count = ++notice_counts[selector];
 	const bool log_notice = trace_sample(notice_count);
 	if (selector == 3u || selector == 4u) {
-		if (!copy_overlay_to_guest(ms)) {
+		if (!copy_overlay_to_guest(priv, ms)) {
 			QD3D_RENDER_LOG("Notice selector=%u callback=0x%08x: overlay readback failed",
 			                selector, callback);
 			return;
@@ -483,8 +545,8 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 			ms->notice_dirty_rect_mac = Mac_sysalloc(16);
 		if (!ms->notice_device_mac || !ms->notice_dirty_rect_mac) return;
 		WriteMacInt32(ms->notice_device_mac + 0u, kRaveNoticeDeviceMemory);
-		WriteMacInt32(ms->notice_device_mac + 4u, ms->w * 4u);
-		WriteMacInt32(ms->notice_device_mac + 8u, kRaveNoticePixelRGB32);
+		WriteMacInt32(ms->notice_device_mac + 4u, ms->draw_cpu_row_bytes);
+		WriteMacInt32(ms->notice_device_mac + 8u, ms->draw_cpu_pixel_type);
 		WriteMacInt32(ms->notice_device_mac + 12u, ms->w);
 		WriteMacInt32(ms->notice_device_mac + 16u, ms->h);
 		WriteMacInt32(ms->notice_device_mac + 20u, ms->draw_cpu_mac);
@@ -502,9 +564,10 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 		const bool restored = uploaded || restore_overlay_fbo(ms);
 		ms->pass_active = restored;
 		if (log_notice || !uploaded) {
-			QD3D_RENDER_LOG("Notice selector=%u count=%llu callback=0x%08x refCon=0x%08x buffer=0x%08x dirty=0x%08x upload=%d",
+			QD3D_RENDER_LOG("Notice selector=%u count=%llu callback=0x%08x refCon=0x%08x buffer=0x%08x pixelType=%u rowBytes=%u dirty=0x%08x upload=%d",
 			                selector, (unsigned long long)notice_count, callback,
 			                refcon, ms->draw_cpu_mac,
+			                ms->draw_cpu_pixel_type, ms->draw_cpu_row_bytes,
 			                ms->notice_dirty_rect_mac, uploaded ? 1 : 0);
 		}
 	} else {
@@ -1307,13 +1370,18 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 	}
 	const bool wasActive = true;
 	flush_zsort_buffer(priv);
-	/* Descent II registers selector 4. It receives the rendered RGB32 image,
-	 * composites its CPU-side 2D content, and returns a dirty rectangle. */
+	/* Descent II registers selector 4. It receives the rendered image in the
+	 * active display format, composites its CPU-side 2D content, and returns a
+	 * dirty rectangle. Keep both trace stages so callback vs 3D failures are
+	 * distinguishable in one log. */
+#if QD3D_INIT_LOGGING_ENABLED
+	trace_overlay_readback(priv, ms, "pre-notice");
+#endif
 	fire_notice_method(priv, 4);
 	if (ms->pass_active) {
 		glFlush();
 #if QD3D_INIT_LOGGING_ENABLED
-		trace_overlay_readback(priv, ms);
+		trace_overlay_readback(priv, ms, "post-notice");
 #endif
 		unbind_fbo();
 		ms->pass_active = false;
@@ -1878,9 +1946,6 @@ int32_t NativeGetNoticeMethod(uint32_t drawContextAddr, uint32_t method, uint32_
 	return kQANoErr;
 }
 
-#ifndef kQAPixel_RGB32
-#define kQAPixel_RGB32 3
-#endif
 #ifndef kQAError
 #define kQAError 1
 #endif
@@ -1891,9 +1956,9 @@ int32_t NativeAccessDrawBuffer(uint32_t drawContextAddr, uint32_t bufferStructAd
 	if (!priv || !priv->metal || !bufferStructAddr) return kQAError;
 	RaveMetalState *ms = priv->metal;
 	if (!ms->pass_active || !ms->color_tex || !GfxGLDeviceMakeCurrent()) return kQAError;
-	if (!copy_overlay_to_guest(ms)) return kQAError;
-	WriteMacInt32(bufferStructAddr + 0, ms->w * 4u);
-	WriteMacInt32(bufferStructAddr + 4, kQAPixel_RGB32);
+	if (!copy_overlay_to_guest(priv, ms)) return kQAError;
+	WriteMacInt32(bufferStructAddr + 0, ms->draw_cpu_row_bytes);
+	WriteMacInt32(bufferStructAddr + 4, ms->draw_cpu_pixel_type);
 	WriteMacInt32(bufferStructAddr + 8, ms->w);
 	WriteMacInt32(bufferStructAddr + 12, ms->h);
 	WriteMacInt32(bufferStructAddr + 16, ms->draw_cpu_mac);
