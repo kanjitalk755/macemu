@@ -306,6 +306,11 @@ void MetalCompositorSubmitFrame_EncodeCachedOverlay(void *render_encoder,
                                                     void *display_gamma_lut);
 void MetalCompositorSubmitFrame_ClearCachedOverlay(void);
 
+/* Desktop OpenGL uses the framebuffer slot to mirror Metal's DSp
+ * back-texture -> compositor-framebuffer copy without consuming the RAVE
+ * overlay mailbox. Metal has no persistent framebuffer-slot cache. */
+void MetalCompositorSubmitFrame_ClearCachedFramebuffer(void);
+
 
 /*
  * MetalCompositorGetLayer.

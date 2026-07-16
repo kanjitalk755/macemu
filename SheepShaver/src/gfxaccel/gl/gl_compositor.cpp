@@ -62,6 +62,9 @@ static bool s_gamma_is_identity = true;
 static CompositeLayer s_overlay_cache;
 static bool s_overlay_valid = false;
 static GLuint s_overlay_tex_cache = 0; /* GL name retained as GLuint in void* */
+static CompositeLayer s_framebuffer_cache;
+static bool s_framebuffer_valid = false;
+static GLuint s_framebuffer_tex_cache = 0;
 #if QD3D_INIT_LOGGING_ENABLED
 static uint64_t s_overlay_submit_count = 0;
 static uint64_t s_present_count = 0;
@@ -427,13 +430,21 @@ static void draw_overlay_layer(const CompositeLayer *layer)
 	float ny1 = 1.f - (y0 / (float)s_height) * 2.f;
 
 	glBegin(GL_QUADS);
-	/* RAVE renders y=0 at the top of an OpenGL render target, which lands at
-	 * texture t=1. Flip only the render-target overlay; the uploaded classic
-	 * framebuffer has its own top-down upload mapping. */
-	glTexCoord2f(0.f, 1.f); glVertex2f(nx0, ny1);
-	glTexCoord2f(1.f, 1.f); glVertex2f(nx1, ny1);
-	glTexCoord2f(1.f, 0.f); glVertex2f(nx1, ny0);
-	glTexCoord2f(0.f, 0.f); glVertex2f(nx0, ny0);
+	if (layer->slot == kLayerSlotFramebuffer) {
+		/* CPU-expanded DSp pixels are uploaded top row first, like the classic
+		 * framebuffer upload. */
+		glTexCoord2f(0.f, 0.f); glVertex2f(nx0, ny1);
+		glTexCoord2f(1.f, 0.f); glVertex2f(nx1, ny1);
+		glTexCoord2f(1.f, 1.f); glVertex2f(nx1, ny0);
+		glTexCoord2f(0.f, 1.f); glVertex2f(nx0, ny0);
+	} else {
+		/* RAVE renders y=0 at the top of an OpenGL render target, which lands
+		 * at texture t=1. */
+		glTexCoord2f(0.f, 1.f); glVertex2f(nx0, ny1);
+		glTexCoord2f(1.f, 1.f); glVertex2f(nx1, ny1);
+		glTexCoord2f(1.f, 0.f); glVertex2f(nx1, ny0);
+		glTexCoord2f(0.f, 0.f); glVertex2f(nx0, ny0);
+	}
 	glEnd();
 
 	glColor4f(1.f, 1.f, 1.f, 1.f);
@@ -447,6 +458,7 @@ static int32_t Compositor_OnModeExit(const struct DMCModeSnapshot *outgoing, voi
 {
 	(void)outgoing; (void)ctx;
 	MetalCompositorSubmitFrame_ClearCachedOverlay();
+	MetalCompositorSubmitFrame_ClearCachedFramebuffer();
 	return 0;
 }
 
@@ -583,15 +595,19 @@ void MetalCompositorPresent(void)
 	glColor4f(1.f, 1.f, 1.f, 1.f);
 	draw_textured_quad();
 
-	/* Cached overlay on top */
+	/* DSp page-flipped framebuffer, then the independent RAVE overlay. */
+	if (s_framebuffer_valid)
+		draw_overlay_layer(&s_framebuffer_cache);
 	if (s_overlay_valid)
 		draw_overlay_layer(&s_overlay_cache);
 #if QD3D_INIT_LOGGING_ENABLED
 	s_present_count++;
 	if (compositor_trace_sample(s_present_count)) {
-		QD3D_RENDER_LOG("CompositorPresent count=%llu drawable=%dx%d guest=%dx%d overlayValid=%d overlay=%u dst=%.1f,%.1f %.1fx%.1f inheritedScissor=%d[%d,%d %dx%d] inheritedMask=%d%d%d%d glError=0x%x",
+		QD3D_RENDER_LOG("CompositorPresent count=%llu drawable=%dx%d guest=%dx%d framebufferValid=%d framebuffer=%u overlayValid=%d overlay=%u dst=%.1f,%.1f %.1fx%.1f inheritedScissor=%d[%d,%d %dx%d] inheritedMask=%d%d%d%d glError=0x%x",
 		                (unsigned long long)s_present_count, dw, dh, s_width,
-		                s_height, s_overlay_valid ? 1 : 0,
+		                s_height, s_framebuffer_valid ? 1 : 0,
+		                (unsigned)s_framebuffer_tex_cache,
+		                s_overlay_valid ? 1 : 0,
 		                (unsigned)s_overlay_tex_cache,
 		                s_overlay_cache.dst_origin_x, s_overlay_cache.dst_origin_y,
 		                s_overlay_cache.dst_size_w, s_overlay_cache.dst_size_h,
@@ -618,6 +634,7 @@ void MetalCompositorShutdown(void)
 	if (!s_init) return;
 	if (GfxGLDeviceMakeCurrent()) {
 		MetalCompositorSubmitFrame_ClearCachedOverlay();
+		MetalCompositorSubmitFrame_ClearCachedFramebuffer();
 		destroy_textures();
 		destroy_programs();
 	}
@@ -638,6 +655,7 @@ int MetalCompositorResize(int width, int height, int depth, int row_bytes,
 		return -1;
 
 	MetalCompositorSubmitFrame_ClearCachedOverlay();
+	MetalCompositorSubmitFrame_ClearCachedFramebuffer();
 	s_width = width;
 	s_height = height;
 	s_depth = depth;
@@ -664,13 +682,17 @@ int32_t MetalCompositorSubmitFrame(const struct FrameDescriptor *desc)
 	if (snap && desc->generation != 0 && desc->generation != snap->generation)
 		return kGfxAccelErrStaleGeneration;
 
-	/* Cache last overlay layer only (production semantics). */
+	/* Keep DSp's framebuffer separate from the single RAVE overlay mailbox. */
 	for (uint32_t i = 0; i < desc->layer_count; i++) {
 		const CompositeLayer *L = &desc->layers[i];
 		if (L->slot == kLayerSlotOverlay && L->source) {
 			s_overlay_cache = *L;
 			s_overlay_valid = true;
 			s_overlay_tex_cache = (GLuint)(uintptr_t)L->source;
+		} else if (L->slot == kLayerSlotFramebuffer && L->source) {
+			s_framebuffer_cache = *L;
+			s_framebuffer_valid = true;
+			s_framebuffer_tex_cache = (GLuint)(uintptr_t)L->source;
 		}
 	}
 #if QD3D_INIT_LOGGING_ENABLED
@@ -720,6 +742,13 @@ void MetalCompositorSubmitFrame_ClearCachedOverlay(void)
 	s_overlay_valid = false;
 	std::memset(&s_overlay_cache, 0, sizeof(s_overlay_cache));
 	s_overlay_tex_cache = 0;
+}
+
+void MetalCompositorSubmitFrame_ClearCachedFramebuffer(void)
+{
+	s_framebuffer_valid = false;
+	std::memset(&s_framebuffer_cache, 0, sizeof(s_framebuffer_cache));
+	s_framebuffer_tex_cache = 0;
 }
 
 void *MetalCompositorGetLayer(void)

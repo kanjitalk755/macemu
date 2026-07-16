@@ -485,6 +485,12 @@ extern "C" void MetalCompositorSubmitFrame_ClearCachedOverlay(void)
     os_unfair_lock_unlock(&s_overlay_cache_lock);
 }
 
+extern "C" void MetalCompositorSubmitFrame_ClearCachedFramebuffer(void)
+{
+	/* Metal copies DSp directly into its framebuffer texture and therefore
+	 * has no persistent framebuffer-slot cache to invalidate. */
+}
+
 // ---------------------------------------------------------------------------
 // VBL-paced present + 3D pacing API
 // ---------------------------------------------------------------------------

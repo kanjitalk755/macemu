@@ -13,6 +13,7 @@
 #include "rave_blend_policy.h"
 #include "rave_depth_policy.h"
 #include "rave_ati_tag_policy.h"
+#include "rave_overlay_clear_policy.h"
 #include "metal_compositor.h"
 #include "gfxaccel_resources.h"
 #include "display_mode_controller.h"
@@ -97,6 +98,51 @@ static bool trace_frame(const RaveDrawPrivate *priv)
 	return priv && trace_sample(priv->frameCount);
 }
 
+#if QD3D_INIT_LOGGING_ENABLED
+static void trace_overlay_readback(const RaveDrawPrivate *priv,
+	                               const RaveMetalState *ms)
+{
+	if (!priv || !ms || !trace_frame(priv) || !ms->w || !ms->h) return;
+	const uint64_t byte_count = (uint64_t)ms->w * ms->h * 4u;
+	if (byte_count > 64u * 1024u * 1024u) return;
+	std::vector<uint8_t> pixels((size_t)byte_count);
+	GLint old_pack = 4;
+	glGetIntegerv(GL_PACK_ALIGNMENT, &old_pack);
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	glReadPixels(0, 0, (GLsizei)ms->w, (GLsizei)ms->h,
+	             GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+	glPixelStorei(GL_PACK_ALIGNMENT, old_pack);
+	const GLenum read_error = glGetError();
+
+	uint64_t nonblack = 0, alpha_zero = 0, alpha_full = 0;
+	uint64_t r_sum = 0, g_sum = 0, b_sum = 0, a_sum = 0;
+	uint8_t r_max = 0, g_max = 0, b_max = 0, a_max = 0;
+	for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+		const uint8_t r = pixels[i + 0], g = pixels[i + 1];
+		const uint8_t b = pixels[i + 2], a = pixels[i + 3];
+		r_sum += r; g_sum += g; b_sum += b; a_sum += a;
+		r_max = std::max(r_max, r); g_max = std::max(g_max, g);
+		b_max = std::max(b_max, b); a_max = std::max(a_max, a);
+		if (r || g || b) nonblack++;
+		if (!a) alpha_zero++;
+		if (a == 255) alpha_full++;
+	}
+	QD3D_RENDER_LOG("RAVEOverlayPixels frame=%u size=%ux%u draws=%llu textured=%llu nonblack=%llu alphaZero=%llu alphaFull=%llu sums=%llu/%llu/%llu/%llu max=%u/%u/%u/%u readError=0x%x",
+	                priv->frameCount, ms->w, ms->h,
+	                (unsigned long long)ms->draw_calls,
+	                (unsigned long long)ms->textured_draws,
+	                (unsigned long long)nonblack,
+	                (unsigned long long)alpha_zero,
+	                (unsigned long long)alpha_full,
+	                (unsigned long long)r_sum,
+	                (unsigned long long)g_sum,
+	                (unsigned long long)b_sum,
+	                (unsigned long long)a_sum,
+	                (unsigned)r_max, (unsigned)g_max, (unsigned)b_max,
+	                (unsigned)a_max, (unsigned)read_error);
+}
+#endif
+
 extern RaveDrawPrivate *RaveGetContext(uint32 handle);
 
 static RaveDrawPrivate *GetContextFromDrawAddr(uint32 drawContextAddr)
@@ -108,6 +154,9 @@ static RaveDrawPrivate *GetContextFromDrawAddr(uint32 drawContextAddr)
 
 static void release_overlay(void)
 {
+	// The compositor mailbox may still point at the last submitted texture.
+	// Drop that reference before returning either texture to the resource pool.
+	MetalCompositorSubmitFrame_ClearCachedOverlay();
 	for (int i = 0; i < 2; i++) {
 		if (s_overlay_pair[i]) {
 			gfxaccel_resources_release_overlay_texture(kGfxEngineRAVE,
@@ -1000,8 +1049,17 @@ int32_t NativeRenderStart(uint32_t drawContextAddr, uint32_t dirtyRectAddr, uint
 	ms->logged_draws = 0;
 #endif
 
-	/* Clear color from RAVE clear tags unless an initial buffer was supplied. */
-	float cr = priv->state[1].f, cg = priv->state[2].f, cb = priv->state[3].f, ca = priv->state[4].f;
+	/* RAVE clear state is alpha at tag 1 and RGB at tags 2/3/4. The overlay
+	 * mailbox is premultiplied, matching the Metal render pass. */
+	const DMCModeSnapshot *clear_snap = dmc_current_snapshot();
+	const float ca = RaveOverlayEffectiveClearAlpha(
+	    priv->state[2].f, priv->state[3].f, priv->state[4].f,
+	    priv->state[1].f, w, h,
+	    clear_snap ? clear_snap->width : 0,
+	    clear_snap ? clear_snap->height : 0);
+	const float cr = RaveOverlayPremultipliedClearComponent(priv->state[2].f, ca);
+	const float cg = RaveOverlayPremultipliedClearComponent(priv->state[3].f, ca);
+	const float cb = RaveOverlayPremultipliedClearComponent(priv->state[4].f, ca);
 	glClearDepth(1.0);
 	bool initialCopied = false;
 	if (initialContextAddr && initialTex) {
@@ -1048,6 +1106,9 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 	if (ms->pass_active) {
 		flush_zsort_buffer(priv);
 		glFlush();
+#if QD3D_INIT_LOGGING_ENABLED
+		trace_overlay_readback(priv, ms);
+#endif
 		unbind_fbo();
 		ms->pass_active = false;
 	}
@@ -1760,7 +1821,8 @@ int32_t NativeClearDrawBuffer(uint32_t drawContextAddr, uint32_t rectAddr, uint3
 	RaveDrawPrivate *priv = GetContextFromDrawAddr(drawContextAddr);
 	if (!priv || !priv->metal || !priv->metal->pass_active) return kQANoErr;
 	if (!GfxGLDeviceMakeCurrent()) return 1;
-	float cr = priv->state[1].f, cg = priv->state[2].f, cb = priv->state[3].f, ca = priv->state[4].f;
+	float cr = priv->state[2].f, cg = priv->state[3].f,
+	      cb = priv->state[4].f, ca = 1.f;
 	if (initialContextAddr) {
 		uint32_t initHandle = ReadMacInt32(initialContextAddr);
 		RaveDrawPrivate *initCtx = RaveGetContext(initHandle);
@@ -1772,7 +1834,15 @@ int32_t NativeClearDrawBuffer(uint32_t drawContextAddr, uint32_t rectAddr, uint3
 			ca = 1.f;
 		}
 	}
+	/* ClearDrawBuffer obeys the same R/G/B/A write mask as Metal. */
+	uint32_t channelMask = priv->state[27].i & 0xfu;
+	if (!channelMask) channelMask = 0xfu;
+	glColorMask((channelMask & 1u) ? GL_TRUE : GL_FALSE,
+	            (channelMask & 2u) ? GL_TRUE : GL_FALSE,
+	            (channelMask & 4u) ? GL_TRUE : GL_FALSE,
+	            (channelMask & 8u) ? GL_TRUE : GL_FALSE);
 	glClearColor(cr, cg, cb, ca);
+	glDisable(GL_SCISSOR_TEST);
 	if (rectAddr) {
 		int32_t left = (int32_t)ReadMacInt32(rectAddr + 0);
 		int32_t right = (int32_t)ReadMacInt32(rectAddr + 4);
@@ -1782,6 +1852,7 @@ int32_t NativeClearDrawBuffer(uint32_t drawContextAddr, uint32_t rectAddr, uint3
 		if (top < 0) top = 0;
 		if (right > (int32_t)priv->metal->w) right = (int32_t)priv->metal->w;
 		if (bottom > (int32_t)priv->metal->h) bottom = (int32_t)priv->metal->h;
+		if (right <= left || bottom <= top) return kQANoErr;
 		if (right > left && bottom > top) {
 			glEnable(GL_SCISSOR_TEST);
 			/* FBO: bottom-left origin — RAVE top-left → convert */
@@ -1795,27 +1866,54 @@ int32_t NativeClearDrawBuffer(uint32_t drawContextAddr, uint32_t rectAddr, uint3
 	glClear(GL_COLOR_BUFFER_BIT);
 	return kQANoErr;
 }
-int32_t NativeClearZBuffer(uint32_t drawContextAddr, uint32_t rectAddr, uint32_t)
+int32_t NativeClearZBuffer(uint32_t drawContextAddr, uint32_t rectAddr,
+	                       uint32_t initialContextAddr)
 {
 	RaveDrawPrivate *priv = GetContextFromDrawAddr(drawContextAddr);
 	if (!priv || !priv->metal || !priv->metal->pass_active) return kQANoErr;
 	if (!GfxGLDeviceMakeCurrent()) return 1;
-	glClearDepth(1.0);
+	if (!RaveContextUsesMetalDepthAttachment(priv->flags) ||
+	    !RaveEffectiveDepthWriteEnabled(
+	        priv->state[28].i,
+	        priv->ati_state[kRaveATIDepthWriteEnableIndex].i))
+		return kQANoErr;
+	float clearDepth = 1.f;
+	if (initialContextAddr) {
+		const uint32_t initHandle = ReadMacInt32(initialContextAddr);
+		RaveDrawPrivate *initCtx = RaveGetContext(initHandle);
+		if (initCtx && initCtx->state[112].f != 0.f)
+			clearDepth = initCtx->state[112].f;
+	}
+	glClearDepth(RaveClampMetalDepth(clearDepth));
+	/* glClear respects the depth write mask; force it on for this operation,
+	 * then restore the current RAVE depth policy. */
+	glDepthMask(GL_TRUE);
+	glDisable(GL_SCISSOR_TEST);
 	if (rectAddr) {
 		int32_t left = (int32_t)ReadMacInt32(rectAddr + 0);
 		int32_t right = (int32_t)ReadMacInt32(rectAddr + 4);
 		int32_t top = (int32_t)ReadMacInt32(rectAddr + 8);
 		int32_t bottom = (int32_t)ReadMacInt32(rectAddr + 12);
+		if (left < 0) left = 0;
+		if (top < 0) top = 0;
+		if (right > (int32_t)priv->metal->w) right = (int32_t)priv->metal->w;
+		if (bottom > (int32_t)priv->metal->h) bottom = (int32_t)priv->metal->h;
+		if (right <= left || bottom <= top) {
+			apply_depth(priv);
+			return kQANoErr;
+		}
 		if (right > left && bottom > top) {
 			glEnable(GL_SCISSOR_TEST);
 			int32_t sy = (int32_t)priv->metal->h - bottom;
 			glScissor(left, sy, right - left, bottom - top);
 			glClear(GL_DEPTH_BUFFER_BIT);
 			glDisable(GL_SCISSOR_TEST);
+			apply_depth(priv);
 			return kQANoErr;
 		}
 	}
 	glClear(GL_DEPTH_BUFFER_BIT);
+	apply_depth(priv);
 	return kQANoErr;
 }
 int32_t NativeSwapBuffers(uint32_t ctx, uint32_t dirty) { return NativeRenderEnd(ctx, dirty); }

@@ -21,6 +21,8 @@
 #include "dsp_pixmap_offsets.h"
 #include "dsp_main_device_redirect_policy.h"
 #include "dsp_display_mode_policy.h"
+#include "dsp_back_buffer_range.h"
+#include "dsp_default_clut.h"
 #include "dsp_user_select_policy.h"
 #include "dsp_get_attributes_policy.h"
 #include "dsp_mode_enumerate.h"
@@ -29,8 +31,11 @@
 #include "macos_util.h"
 #include "video.h"
 #include "nqd_accel.h"
+#include "qd3d_init_logging.h"
+#include "vbl_source.h"
 
 #include <map>
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -61,13 +66,13 @@ uint32_t DSpAllocFirstContextHandle(const DSpContextAttributes *attr,
 	ctx->handle = s_next_handle++;
 	ctx->enumeration_mode_index = enumeration_mode_index;
 	if (attr) ctx->attr = *attr;
-	/* Identity CLUT by default */
+	DSpInitDefaultCLUT(ctx->clut_bytes, ctx->clut_bytes_latched,
+	                   ctx->attr.backBufferBestDepth);
+	/* DMC gamma is planar: 256 R, then 256 G, then 256 B. */
 	for (int i = 0; i < 256; i++) {
-		ctx->clut_bytes[i * 3] = ctx->clut_bytes[i * 3 + 1] = ctx->clut_bytes[i * 3 + 2] = (uint8_t)i;
-		ctx->clut_bytes_latched[i * 3] = ctx->clut_bytes_latched[i * 3 + 1] =
-			ctx->clut_bytes_latched[i * 3 + 2] = (uint8_t)i;
-		ctx->gamma_lut_persisted[i * 3] = ctx->gamma_lut_persisted[i * 3 + 1] =
-			ctx->gamma_lut_persisted[i * 3 + 2] = 255;
+		ctx->gamma_lut_persisted[i] = (uint8_t)i;
+		ctx->gamma_lut_persisted[256 + i] = (uint8_t)i;
+		ctx->gamma_lut_persisted[512 + i] = (uint8_t)i;
 	}
 	s_ctx[ctx->handle] = ctx;
 	return ctx->handle;
@@ -83,30 +88,123 @@ uint32_t DSpGetContextEnumerationIndex(uint32_t ctxRef)
 	return c ? c->enumeration_mode_index : DSP_ENUMERATION_INDEX_NONE;
 }
 
-int32_t DSpContext_ReserveHandler(uint32_t ctxRef, uint32_t /*desiredAttrAddr*/)
+static void dsp_apply_reserve_color_table(DSpContextPrivate *ctx,
+	                                      uint32_t color_table_handle,
+	                                      uint32_t depth)
+{
+	if (!ctx || !color_table_handle || depth > 8) return;
+	if (!NQDMetalAddrInBuffer(color_table_handle) ||
+	    !NQDMetalAddrInBuffer(color_table_handle + 3u)) return;
+	const uint32_t table = ReadMacInt32(color_table_handle);
+	if (!table || !NQDMetalAddrInBuffer(table) ||
+	    !NQDMetalAddrInBuffer(table + 7u)) return;
+	const int16_t last_index = (int16_t)ReadMacInt16(table + 6u);
+	if (last_index < 0) return;
+	uint32_t count = (uint32_t)last_index + 1u;
+	if (count > 256) count = 256;
+	const uint32_t bytes = 8u + count * 8u;
+	if (table > UINT32_MAX - bytes ||
+	    !NQDMetalAddrInBuffer(table + bytes - 1u)) return;
+
+	uint32_t applied = 0;
+	for (uint32_t i = 0; i < count; i++) {
+		const uint32_t entry = table + 8u + i * 8u;
+		const int16_t value = (int16_t)ReadMacInt16(entry);
+		if (value < 0 || value > 255) continue;
+		const uint32_t dst = (uint32_t)value * 3u;
+		ctx->clut_bytes[dst + 0] = (uint8_t)(ReadMacInt16(entry + 2u) >> 8);
+		ctx->clut_bytes[dst + 1] = (uint8_t)(ReadMacInt16(entry + 4u) >> 8);
+		ctx->clut_bytes[dst + 2] = (uint8_t)(ReadMacInt16(entry + 6u) >> 8);
+		applied++;
+	}
+	std::memcpy(ctx->clut_bytes_latched, ctx->clut_bytes,
+	            sizeof(ctx->clut_bytes_latched));
+	QD3D_RESOURCE_LOG("DSpReserve(GL): applied CTab handle=0x%08x table=0x%08x count=%u applied=%u depth=%u",
+	                  color_table_handle, table, count, applied, depth);
+}
+
+int32_t DSpContext_ReserveHandler(uint32_t ctxRef, uint32_t desiredAttrAddr)
 {
 	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
-	if (!ctx) {
-		/* Create on first reserve if metadata path omitted */
-		ctx = new DSpContextPrivate();
-		std::memset(ctx, 0, sizeof(*ctx));
-		ctx->handle = s_next_handle++;
-		ctx->enumeration_mode_index = DSP_ENUMERATION_INDEX_NONE;
-		ctx->attr.frequency = 60;
-		ctx->attr.displayWidth = 640;
-		ctx->attr.displayHeight = 480;
-		ctx->attr.colorNeeds = 32;
-		s_ctx[ctx->handle] = ctx;
-		ctxRef = ctx->handle;
-		(void)ctxRef;
+	if (!ctx) return kDSpInvalidContextErr;
+	if (!desiredAttrAddr ||
+	    !NQDMetalAddrInBuffer(desiredAttrAddr) ||
+	    !NQDMetalAddrInBuffer(desiredAttrAddr + 51u)) {
+		QD3D_STATE_LOG("DSpReserve(GL): invalid attributes ctx=%u addr=0x%08x",
+		               ctxRef, desiredAttrAddr);
+		return kDSpInvalidAttributesErr;
 	}
-	uint32_t w = ctx->attr.displayWidth ? ctx->attr.displayWidth : 640;
-	uint32_t h = ctx->attr.displayHeight ? ctx->attr.displayHeight : 480;
-	uint32_t bpp = ctx->attr.colorNeeds ? ctx->attr.colorNeeds : 32;
-	if (!DSpAllocateBackBuffer(ctx, w, h, bpp))
+	if (ctx->back_buffer) return kDSpContextAlreadyReservedErr;
+
+	DSpContextAttributes desired = {};
+	desired.frequency = ReadMacInt32(desiredAttrAddr + 0);
+	desired.displayWidth = ReadMacInt32(desiredAttrAddr + 4);
+	desired.displayHeight = ReadMacInt32(desiredAttrAddr + 8);
+	desired.reserved1 = ReadMacInt32(desiredAttrAddr + 12);
+	desired.reserved2 = ReadMacInt32(desiredAttrAddr + 16);
+	desired.colorNeeds = ReadMacInt32(desiredAttrAddr + 20);
+	desired.colorTable = ReadMacInt32(desiredAttrAddr + 24);
+	desired.contextOptions = ReadMacInt32(desiredAttrAddr + 28);
+	desired.backBufferDepthMask = ReadMacInt32(desiredAttrAddr + 32);
+	desired.displayDepthMask = ReadMacInt32(desiredAttrAddr + 36);
+	desired.backBufferBestDepth = ReadMacInt32(desiredAttrAddr + 40);
+	desired.displayBestDepth = ReadMacInt32(desiredAttrAddr + 44);
+	desired.pageCount = ReadMacInt32(desiredAttrAddr + 48);
+
+	const uint32_t back_depth = desired.backBufferBestDepth;
+	if (!desired.displayWidth || !desired.displayHeight || !desired.pageCount ||
+	    desired.displayWidth > 4096 || desired.displayHeight > 4096 ||
+	    (back_depth != 1 && back_depth != 2 && back_depth != 4 &&
+	     back_depth != 8 && back_depth != 16 && back_depth != 32) ||
+	    !desired.backBufferDepthMask) {
+		QD3D_STATE_LOG("DSpReserve(GL): rejected ctx=%u requested=%ux%u backDepth=%u displayDepth=%u backMask=0x%x displayMask=0x%x pages=%u colorNeeds=%u",
+		               ctxRef, desired.displayWidth, desired.displayHeight,
+		               back_depth, desired.displayBestDepth,
+		               desired.backBufferDepthMask, desired.displayDepthMask,
+		               desired.pageCount, desired.colorNeeds);
+		return kDSpInvalidAttributesErr;
+	}
+
+	const uint32_t actual_display_width = DSpReserveActualDisplayDimension(
+	    ctx->attr.displayWidth, desired.displayWidth);
+	const uint32_t actual_display_height = DSpReserveActualDisplayDimension(
+	    ctx->attr.displayHeight, desired.displayHeight);
+	const uint32_t actual_display_depth = DSpReserveActualDisplayDepth(
+	    ctx->attr.displayBestDepth, desired.displayBestDepth, back_depth);
+	const uint32_t actual_display_mask = ctx->attr.displayDepthMask
+	    ? ctx->attr.displayDepthMask : desired.displayDepthMask;
+
+	ctx->attr.displayWidth = actual_display_width;
+	ctx->attr.displayHeight = actual_display_height;
+	ctx->attr.backBufferWidth = DSpReserveBackBufferDimension(
+	    actual_display_width, desired.displayWidth);
+	ctx->attr.backBufferHeight = DSpReserveBackBufferDimension(
+	    actual_display_height, desired.displayHeight);
+	ctx->attr.backBufferBestDepth = back_depth;
+	ctx->attr.displayBestDepth = actual_display_depth;
+	ctx->attr.backBufferDepthMask = desired.backBufferDepthMask;
+	ctx->attr.displayDepthMask = actual_display_mask;
+	ctx->attr.pageCount = desired.pageCount;
+	ctx->attr.colorNeeds = desired.colorNeeds;
+	ctx->attr.colorTable = desired.colorTable;
+	ctx->attr.contextOptions = desired.contextOptions;
+	ctx->enumeration_mode_index = DSP_ENUMERATION_INDEX_NONE;
+	ctx->explicit_swap_observed = false;
+	ctx->swap_generation = 0;
+	ctx->front_staging_refresh_swap_generation = 0;
+	DSpInitDefaultCLUT(ctx->clut_bytes, ctx->clut_bytes_latched, back_depth);
+	dsp_apply_reserve_color_table(ctx, desired.colorTable, back_depth);
+
+	if (!DSpAllocateBackBuffer(ctx, ctx->attr.backBufferWidth,
+	                           ctx->attr.backBufferHeight, back_depth))
 		return kDSpInternalErr;
-	/* DrawSprocket 1.7: initial play state after Reserve is Inactive. */
 	ctx->state = (uint32_t)kDSpContextState_Inactive;
+	QD3D_STATE_LOG("DSpReserve(GL): ctx=%u display=%ux%u@%u back=%ux%u@%u pages=%u colorNeeds=%u options=0x%x",
+	               ctxRef, ctx->attr.displayWidth, ctx->attr.displayHeight,
+	               ctx->attr.displayBestDepth, ctx->attr.backBufferWidth,
+	               ctx->attr.backBufferHeight, back_depth,
+	               ctx->attr.pageCount, ctx->attr.colorNeeds,
+	               ctx->attr.contextOptions);
 	return kDSpNoErr;
 }
 
@@ -114,6 +212,8 @@ int32_t DSpContext_ReleaseHandler(uint32_t ctxRef)
 {
 	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
 	if (!ctx) return kDSpContextNotFoundErr;
+	if (ctx->state == (uint32_t)kDSpContextState_Active)
+		MetalCompositorSubmitFrame_ClearCachedFramebuffer();
 	DSpRestoreMainDevicePixMap(ctx);
 	DSpReleaseBackBufferNow(ctx);
 	s_ctx.erase(ctxRef);
@@ -127,70 +227,19 @@ int32_t DSpContext_ReleaseHandler(uint32_t ctxRef)
 	return kDSpNoErr;
 }
 
-/* Emit a real-ish CGrafPort + PixMapHandle pointing at pixel staging. */
-static uint32_t dsp_emit_cgraf_for_pixels(DSpContextPrivate *ctx, uint32_t pixels_mac,
-                                          uint32_t w, uint32_t h, uint32_t bpp_bits)
-{
-	if (ctx->cgrafptr_mac_addr)
-		return ctx->cgrafptr_mac_addr;
-	/* CGrafPort (~108 bytes) + PixMap (50) + Handle (4) */
-	uint32 port = Mac_sysalloc(128);
-	uint32 pm = Mac_sysalloc(DSP_MAINDEVICE_PIXMAP_SIZE);
-	uint32 pmH = Mac_sysalloc(4);
-	if (!port || !pm || !pmH) return 0;
-	std::memset(Mac2HostAddr(port), 0, 128);
-	std::memset(Mac2HostAddr(pm), 0, DSP_MAINDEVICE_PIXMAP_SIZE);
-	WriteMacInt32(pmH, pm);
-	/* portVersion high bits = color port */
-	WriteMacInt16(port + DSP_CGRAFPORT_OFF_PORT_VERSION, 0xC000);
-	WriteMacInt32(port + DSP_CGRAFPORT_OFF_PORT_PIXMAP, pmH);
-	WriteMacInt16(port + DSP_CGRAFPORT_OFF_PORT_RECT + 0, 0);
-	WriteMacInt16(port + DSP_CGRAFPORT_OFF_PORT_RECT + 2, 0);
-	WriteMacInt16(port + DSP_CGRAFPORT_OFF_PORT_RECT + 4, (int16)h);
-	WriteMacInt16(port + DSP_CGRAFPORT_OFF_PORT_RECT + 6, (int16)w);
-	/* PixMap */
-	uint32_t bpp = (bpp_bits <= 8) ? 1u : (bpp_bits <= 16) ? 2u : 4u;
-	uint32_t rb = w * bpp;
-	WriteMacInt32(pm + DSP_MAINDEVICE_PIXMAP_OFF_BASEADDR, pixels_mac);
-	WriteMacInt16(pm + DSP_MAINDEVICE_PIXMAP_OFF_ROWBYTES, (uint16)(rb | 0x8000));
-	WriteMacInt16(pm + DSP_MAINDEVICE_PIXMAP_OFF_BOUNDS_TOP, 0);
-	WriteMacInt16(pm + DSP_MAINDEVICE_PIXMAP_OFF_BOUNDS_LEFT, 0);
-	WriteMacInt16(pm + DSP_MAINDEVICE_PIXMAP_OFF_BOUNDS_BOT, (int16)h);
-	WriteMacInt16(pm + DSP_MAINDEVICE_PIXMAP_OFF_BOUNDS_RIGHT, (int16)w);
-	WriteMacInt16(pm + DSP_MAINDEVICE_PIXMAP_OFF_PIXELTYPE, 16); /* RGBDirect */
-	WriteMacInt16(pm + DSP_MAINDEVICE_PIXMAP_OFF_PIXELSIZE, (uint16)bpp_bits);
-	WriteMacInt16(pm + DSP_MAINDEVICE_PIXMAP_OFF_CMPCOUNT, bpp_bits == 8 ? 1 : 3);
-	WriteMacInt16(pm + DSP_MAINDEVICE_PIXMAP_OFF_CMPSIZE, bpp_bits == 8 ? 8 : (bpp_bits == 16 ? 5 : 8));
-	ctx->cgrafptr_mac_addr = port;
-	ctx->front_pixmap_mac_addr = pm;
-	ctx->front_pixmap_handle_mac_addr = pmH;
-	return port;
-}
-
-int32_t DSpContext_GetBackBufferHandler(uint32_t ctxRef, uint32_t outCGrafPtrAddr, uint32_t /*outGamePort*/)
+int32_t DSpContext_GetBackBufferHandler(uint32_t ctxRef, uint32_t /*options*/,
+                                        uint32_t outCGrafPtrAddr)
 {
 	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
-	if (!ctx || !ctx->back_buffer) return kDSpInternalErr;
+	if (!ctx || !ctx->back_buffer || !outCGrafPtrAddr)
+		return kDSpInvalidContextErr;
 	/* PDF p.51: clean back buffer from underlay when designated */
 	restore_underlay_if_any(ctx);
-	uint32_t w = ctx->attr.displayWidth ? ctx->attr.displayWidth : 640;
-	uint32_t h = ctx->attr.displayHeight ? ctx->attr.displayHeight : 480;
-	uint32_t bpp_bits = ctx->attr.colorNeeds ? ctx->attr.colorNeeds : 32;
-	if (bpp_bits != 8 && bpp_bits != 16 && bpp_bits != 32) bpp_bits = 32;
-	uint32_t bpp = (bpp_bits <= 8) ? 1u : (bpp_bits <= 16) ? 2u : 4u;
-	uint32_t size = w * h * bpp;
-	if (!ctx->front_staging_mac_addr) {
-		uint32 mac = Mac_sysalloc(size);
-		if (!mac) return kDSpInternalErr;
-		ctx->front_staging_mac_addr = mac;
-		ctx->front_staging_size = size;
-		ctx->front_staging_owned_sysheap = true;
-		std::memset(Mac2HostAddr(mac), 0, size);
-	}
-	uint32_t cgp = dsp_emit_cgraf_for_pixels(ctx, ctx->front_staging_mac_addr, w, h, bpp_bits);
+	const uint32_t cgp = DSpGetBackBufferCGrafPtr(ctx);
 	if (!cgp) return kDSpInternalErr;
-	if (outCGrafPtrAddr)
-		WriteMacInt32(outCGrafPtrAddr, cgp);
+	WriteMacInt32(outCGrafPtrAddr, cgp);
+	if (ctx->state == (uint32_t)kDSpContextState_Active)
+		DSpRedirectMainDevicePixMap(ctx);
 	return kDSpNoErr;
 }
 
@@ -199,9 +248,22 @@ int32_t DSpContext_SwapBuffersHandler(uint32_t ctxRef, uint32_t /*doneProc*/, ui
 	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
 	if (!ctx || !ctx->back_buffer) return kDSpInternalErr;
 	/* Copy guest staging → host back buffer */
-	if (ctx->front_staging_mac_addr && ctx->front_staging_size) {
-		uint8 *src = Mac2HostAddr(ctx->front_staging_mac_addr);
-		if (src) std::memcpy(ctx->back_buffer, src, ctx->front_staging_size);
+	if (ctx->staging_mac_addr && ctx->staging_size) {
+		const uint32_t w = DSpContextBackBufferWidth(ctx);
+		const uint32_t h = DSpContextBackBufferHeight(ctx);
+		const uint32_t row = DSpBackBufferAlignedRowBytes(
+		    w, ctx->attr.backBufferBestDepth);
+		const uint64_t expected64 = (uint64_t)row * h;
+		const uint32_t expected = expected64 <= UINT32_MAX
+		    ? (uint32_t)expected64 : 0;
+		uint8 *src = Mac2HostAddr(ctx->staging_mac_addr);
+		const uint32_t copy_size = expected
+		    ? std::min(expected, ctx->staging_size) : 0;
+		if (src && copy_size) std::memcpy(ctx->back_buffer, src, copy_size);
+		if (copy_size != expected) {
+			QD3D_RENDER_LOG("DSpSwap(GL): bounded staging copy ctx=%u have=%u expected=%u copied=%u",
+			                ctxRef, ctx->staging_size, expected, copy_size);
+		}
 	}
 	ctx->swap_generation++;
 	ctx->explicit_swap_observed = true;
@@ -262,6 +324,7 @@ int32_t DSpContext_SetStateHandler(uint32_t ctxRef, uint32_t state)
 		DSpHostBridge_SetActiveFullscreen(any_fs);
 	} else if (prev == (uint32_t)kDSpContextState_Active) {
 		ctx->fade_state.active = 0;
+		MetalCompositorSubmitFrame_ClearCachedFramebuffer();
 		DSpRestoreMainDevicePixMap(ctx);
 		bool any_fs = false;
 		for (auto &kv : s_ctx) {
@@ -356,7 +419,7 @@ int32_t DSpContext_GetDirtyRectGridSizeHandler(uint32_t ctxRef, uint32_t a, uint
 	return DSpContext_GetDirtyRectGridUnitsHandler(ctxRef, a, b);
 }
 int32_t DSpContext_GetFrontBufferHandler(uint32_t ctxRef, uint32_t outPtr) {
-	return DSpContext_GetBackBufferHandler(ctxRef, outPtr, 0);
+	return DSpContext_GetBackBufferHandler(ctxRef, 0, outPtr);
 }
 int32_t DSpGetCurrentContextHandler(uint32_t /*displayID*/, uint32_t outCtx) {
 	/* First Active context, else first reserved */
@@ -644,12 +707,15 @@ static void restore_underlay_if_any(DSpContextPrivate *ctx)
 		uint8 *src = Mac2HostAddr(rec->baseaddr_mac);
 		if (src) std::memcpy(rec->backing, src, rec->baseaddr_size);
 	}
-	uint32_t w = ctx->attr.displayWidth ? ctx->attr.displayWidth : rec->width;
-	uint32_t h = ctx->attr.displayHeight ? ctx->attr.displayHeight : rec->height;
-	uint32_t bpp = (ctx->attr.colorNeeds <= 8) ? 1 : (ctx->attr.colorNeeds <= 16) ? 2 : 4;
-	if (bpp == 4 && rec->width == w && rec->height == h) {
+	const uint32_t w = DSpContextBackBufferWidth(ctx);
+	const uint32_t h = DSpContextBackBufferHeight(ctx);
+	const uint32_t depth = ctx->attr.backBufferBestDepth;
+	if (depth == 32 && rec->width == w && rec->height == h) {
 		/* Direct copy when formats match BGRA/ARGB size */
-		std::memcpy(ctx->back_buffer, rec->backing, (size_t)rec->row_bytes * h);
+		const size_t expected = (size_t)DSpBackBufferAlignedRowBytes(w, depth) * h;
+		const size_t available = (size_t)rec->row_bytes * rec->height;
+		std::memcpy(ctx->back_buffer, rec->backing,
+		            std::min(expected, available));
 	}
 }
 
@@ -962,7 +1028,59 @@ static void gamma_identity(uint8_t lut[768])
 		for (int i = 0; i < 256; i++)
 			lut[c * 256 + i] = (uint8_t)i;
 }
-static void gamma_zeros(uint8_t lut[768]) { std::memset(lut, 0, 768); }
+static void gamma_copy_driver(uint8_t lut[768])
+{
+	const DMCModeSnapshot *snap = dmc_current_snapshot();
+	if (snap) {
+		std::memcpy(lut, snap->driver_gamma_lut, 768);
+	} else {
+		gamma_identity(lut);
+	}
+}
+static void gamma_read_zero_color(uint32_t color_addr,
+	                              uint8_t *r, uint8_t *g, uint8_t *b)
+{
+	*r = *g = *b = 0;
+	if (!color_addr || !NQDMetalAddrInBuffer(color_addr) ||
+	    !NQDMetalAddrInBuffer(color_addr + 5u)) return;
+	*r = (uint8_t)(ReadMacInt16(color_addr + 0u) >> 8);
+	*g = (uint8_t)(ReadMacInt16(color_addr + 2u) >> 8);
+	*b = (uint8_t)(ReadMacInt16(color_addr + 4u) >> 8);
+}
+static void gamma_compute_target(uint8_t color_r, uint8_t color_g,
+	                             uint8_t color_b, int32_t percent,
+	                             const uint8_t full_lut[768],
+	                             uint8_t out_lut[768])
+{
+	const uint8_t tint[3] = { color_r, color_g, color_b };
+	for (uint32_t c = 0; c < 3; c++) {
+		for (uint32_t i = 0; i < 256; i++) {
+			const int32_t zero = tint[c];
+			const int32_t full = full_lut[c * 256u + i];
+			int32_t value = 0;
+			if (percent <= 0) {
+				int32_t amount = percent <= -100 ? 100 : -percent;
+				value = (zero * (100 - amount)) / 100;
+			} else if (percent >= 100) {
+				int32_t amount = percent - 100;
+				if (amount > 100) amount = 100;
+				value = full + ((255 - full) * amount) / 100;
+			} else {
+				value = (zero * (100 - percent) + full * percent) / 100;
+			}
+			out_lut[c * 256u + i] =
+			    (uint8_t)std::max(0, std::min(255, value));
+		}
+	}
+}
+static uint16_t gamma_one_second_vbls()
+{
+	const uint64_t cadence = vbl_source_get_cadence_usec();
+	uint64_t count = cadence ? (1000000ull + cadence / 2u) / cadence : 60u;
+	if (!count) count = 1;
+	if (count > 4096) count = 4096;
+	return (uint16_t)count;
+}
 static void gamma_interp(const uint8_t *a, const uint8_t *b, uint32_t e, uint32_t d, uint8_t *out)
 {
 	if (d == 0) { std::memcpy(out, b, 768); return; }
@@ -999,41 +1117,58 @@ static void gamma_begin_fade(DSpContextPrivate *ctx, const uint8_t end_lut[768],
 	}
 }
 
-int32_t DSpContext_FadeGammaInHandler(uint32_t ctxRef, uint32_t /*zeroIntensityColor*/)
+int32_t DSpContext_FadeGammaInHandler(uint32_t ctxRef,
+	                                  uint32_t zeroIntensityColor)
 {
-	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
-	if (!ctx) return kDSpContextNotFoundErr;
-	uint8_t end[768];
-	gamma_identity(end);
-	/* ~15 VBLs ≈ 0.25s at 60Hz — animated, not instant */
-	gamma_begin_fade(ctx, end, 15);
-	return kDSpNoErr;
-}
-int32_t DSpContext_FadeGammaOutHandler(uint32_t ctxRef, uint32_t /*zeroIntensityColor*/)
-{
-	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
-	if (!ctx) return kDSpContextNotFoundErr;
-	uint8_t end[768];
-	gamma_zeros(end);
-	gamma_begin_fade(ctx, end, 15);
-	return kDSpNoErr;
-}
-int32_t DSpContext_FadeGammaHandler(uint32_t ctxRef, int32_t percent, uint32_t /*zeroIntensityColor*/)
-{
-	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
-	if (!ctx) return kDSpContextNotFoundErr;
-	if (percent < 0) percent = 0;
-	if (percent > 100) percent = 100;
-	uint8_t full[768], end[768];
-	gamma_identity(full);
-	/* Tint black at 0% → full driver table at 100% */
-	for (int c = 0; c < 3; c++) {
-		for (int i = 0; i < 256; i++) {
-			int32_t v = ((int32_t)full[c * 256 + i] * percent) / 100;
-			end[c * 256 + i] = (uint8_t)v;
-		}
+	if (!ctxRef) {
+		QD3D_STATE_LOG("DSpFadeGammaIn(GL): ambient no-op color=0x%08x",
+		               zeroIntensityColor);
+		return kDSpNoErr;
 	}
-	gamma_begin_fade(ctx, end, 10);
+	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
+	if (!ctx) return kDSpInvalidContextErr;
+	uint8_t end[768];
+	gamma_copy_driver(end);
+	gamma_begin_fade(ctx, end, gamma_one_second_vbls());
+	return kDSpNoErr;
+}
+int32_t DSpContext_FadeGammaOutHandler(uint32_t ctxRef,
+	                                   uint32_t zeroIntensityColor)
+{
+	if (!ctxRef) {
+		QD3D_STATE_LOG("DSpFadeGammaOut(GL): ambient no-op color=0x%08x",
+		               zeroIntensityColor);
+		return kDSpNoErr;
+	}
+	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
+	if (!ctx) return kDSpInvalidContextErr;
+	uint8_t r = 0, g = 0, b = 0;
+	gamma_read_zero_color(zeroIntensityColor, &r, &g, &b);
+	uint8_t full[768], end[768];
+	gamma_copy_driver(full);
+	gamma_compute_target(r, g, b, 0, full, end);
+	gamma_begin_fade(ctx, end, gamma_one_second_vbls());
+	return kDSpNoErr;
+}
+int32_t DSpContext_FadeGammaHandler(uint32_t ctxRef, int32_t percent,
+	                                uint32_t zeroIntensityColor)
+{
+	DSpContextPrivate *ctx = ctxRef ? DSpGetContext(ctxRef) : nullptr;
+	if (ctxRef && !ctx) return kDSpInvalidContextErr;
+	uint8_t r = 0, g = 0, b = 0;
+	gamma_read_zero_color(zeroIntensityColor, &r, &g, &b);
+	uint8_t full[768], target[768];
+	gamma_copy_driver(full);
+	gamma_compute_target(r, g, b, percent, full, target);
+	const int32_t rc = dmc_record_gamma_change_with_lut_fade(
+	    target, percent == 100 ? 0 : 1);
+	if (rc != 0) return kDSpInternalErr;
+	if (ctx) {
+		std::memcpy(ctx->gamma_lut_persisted, target, 768);
+		ctx->fade_state.active = 0;
+	}
+	QD3D_STATE_LOG("DSpFadeGamma(GL): ctx=%u percent=%d tint=%u/%u/%u ambient=%d",
+	               ctxRef, percent, r, g, b, ctxRef ? 0 : 1);
 	return kDSpNoErr;
 }
 int32_t DSpContext_SetVBLProcHandler(uint32_t ctxRef, uint32_t procPtr, uint32_t refCon)
@@ -1161,15 +1296,27 @@ extern "C" void DSpRedirectMainDevicePixMap(DSpContextPrivate *ctx)
 		ctx->saved_pixmap_valid = 1;
 	}
 
-	/* Prefer front staging (guest-writable); else leave base as-is if no staging */
-	uint32_t w = ctx->attr.displayWidth ? ctx->attr.displayWidth : 640;
-	uint32_t h = ctx->attr.displayHeight ? ctx->attr.displayHeight : 480;
-	uint32_t bpp = (redirect_depth <= 8) ? 1u : (redirect_depth <= 16) ? 2u : 4u;
-	uint32_t rb = DSpMainDevicePixMapRowBytes(w, ctx->attr.backBufferBestDepth, display_depth);
-	if (!rb) rb = w * bpp;
+	/* Prefer a real display-depth front surface. When the depths match, the
+	 * back staging has exactly the PixMap layout advertised to the guest. */
 	uint32_t base = ctx->front_staging_mac_addr;
 	if (!base && ctx->staging_mac_addr) base = ctx->staging_mac_addr;
 	if (!base) return;
+	const bool using_back_staging = base == ctx->staging_mac_addr;
+	if (using_back_staging && redirect_depth != ctx->attr.backBufferBestDepth) {
+		QD3D_STATE_LOG("DSpRedirectMainDevice(GL): refusing mixed-depth alias ctx=%u back=%u display=%u",
+		               ctx->handle, ctx->attr.backBufferBestDepth, redirect_depth);
+		return;
+	}
+	const uint32_t w = using_back_staging
+	    ? DSpContextBackBufferWidth(ctx)
+	    : (ctx->attr.displayWidth ? ctx->attr.displayWidth : 640);
+	const uint32_t h = using_back_staging
+	    ? DSpContextBackBufferHeight(ctx)
+	    : (ctx->attr.displayHeight ? ctx->attr.displayHeight : 480);
+	const uint32_t rb = using_back_staging
+	    ? DSpBackBufferAlignedRowBytes(w, ctx->attr.backBufferBestDepth)
+	    : DSpMainDevicePixMapRowBytes(w, ctx->attr.backBufferBestDepth,
+	                                 display_depth);
 
 	WriteMacInt32(pixMapPtr + DSP_MAINDEVICE_PIXMAP_OFF_BASEADDR, base);
 	WriteMacInt16(pixMapPtr + DSP_MAINDEVICE_PIXMAP_OFF_ROWBYTES,
@@ -1189,6 +1336,9 @@ extern "C" void DSpRedirectMainDevicePixMap(DSpContextPrivate *ctx)
 	WriteMacInt32(pixMapPtr + DSP_MAINDEVICE_PIXMAP_OFF_HRES, DSpMainDevicePixMapResolution());
 	WriteMacInt32(pixMapPtr + DSP_MAINDEVICE_PIXMAP_OFF_VRES, DSpMainDevicePixMapResolution());
 	WriteMacInt32(pixMapPtr + DSP_MAINDEVICE_PIXMAP_OFF_PLANEBYTES, DSpMainDevicePixMapPlaneBytes());
+	QD3D_STATE_LOG("DSpRedirectMainDevice(GL): ctx=%u pixmap=0x%08x base=0x%08x %ux%u@%u row=%u source=%s",
+	               ctx->handle, pixMapPtr, base, w, h, redirect_depth, rb,
+	               using_back_staging ? "back" : "front");
 }
 
 extern "C" void DSpRestoreMainDevicePixMap(DSpContextPrivate *ctx)
