@@ -34,14 +34,46 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include <libgen.h>
 #include <string.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <errno.h>
+#if defined(_WIN32) || defined(WIN32)
+#include <io.h>
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+/* MSVC has no libgen.h / unistd.h; provide dirname for cue FILE path join. */
+static char *bincue_dirname(char *path)
+{
+	if (!path || !*path)
+		return path;
+	char *slash = strrchr(path, '/');
+	char *bslash = strrchr(path, '\\');
+	char *sep = slash;
+	if (bslash && (!sep || bslash > sep))
+		sep = bslash;
+	if (!sep) {
+		path[0] = '.';
+		path[1] = '\0';
+		return path;
+	}
+	if (sep == path) {
+		/* Root path like "C:\" or "\" — keep one separator */
+		sep[1] = '\0';
+	} else {
+		*sep = '\0';
+	}
+	return path;
+}
+#define dirname bincue_dirname
+#else
+#include <libgen.h>
+#include <unistd.h>
+#endif
 
 #include <list>
+#include <vector>
 
 #ifdef OSX_CORE_AUDIO
 #include "../MacOSX/MacOSX_sound_if.h"
@@ -332,7 +364,11 @@ static bool ParseCueSheet(FILE *fh, CueSheet *cs, const char *cuefile)
 					char *tmp = strdup(cuefile);
 					char *b = dirname(tmp);
 					cs->binfile = (char *) malloc(strlen(b) + strlen(filename) + 2);
+#if defined(_WIN32) || defined(WIN32)
+					sprintf(cs->binfile, "%s\\%s", b, filename);
+#else
 					sprintf(cs->binfile, "%s/%s", b, filename);
+#endif
 					free(tmp);
 				}
 			} else if (!strcmp("TRACK", keyword)) {
@@ -458,10 +494,18 @@ static bool LoadCueSheet(const char *cuefile, CueSheet *cs)
 
 	if (cs) {
 		bzero(cs, sizeof(*cs));
-		if (!(fh = fopen(cuefile, "r")))
+		if (!(fh = fopen(cuefile, "r"))) {
+			fprintf(stderr, "[bincue] cannot open cue '%s': %s\n",
+			        cuefile, strerror(errno));
+			fflush(stderr);
 			return false;
+		}
 
-		if (!ParseCueSheet(fh, cs, cuefile)) goto fail;
+		if (!ParseCueSheet(fh, cs, cuefile)) {
+			fprintf(stderr, "[bincue] failed to parse cue '%s'\n", cuefile);
+			fflush(stderr);
+			goto fail;
+		}
 
 		// Open bin file and find length
 		#ifdef WIN32
@@ -470,11 +514,17 @@ static bool LoadCueSheet(const char *cuefile, CueSheet *cs)
 			binfh = open(cs->binfile,O_RDONLY);
 		#endif
 		if (binfh < 0) {
+			fprintf(stderr, "[bincue] cannot open bin '%s': %s\n",
+			        cs->binfile, strerror(errno));
+			fflush(stderr);
 			D(bug("Can't read bin file %s\n", cs->binfile));
 			goto fail;
 		}
 
 		if (fstat(binfh, &buf)) {
+			fprintf(stderr, "[bincue] fstat failed on '%s': %s\n",
+			        cs->binfile, strerror(errno));
+			fflush(stderr);
 			D(bug("fstat returned error\n"));
 			goto fail;
 		}
@@ -487,6 +537,9 @@ static bool LoadCueSheet(const char *cuefile, CueSheet *cs)
 						- tlast->start + totalPregap;
 
 		if (tlast->length < 0) {
+			fprintf(stderr, "[bincue] bin too short for cue '%s' (bin=%s size=%lld)\n",
+			        cuefile, cs->binfile, (long long)buf.st_size);
+			fflush(stderr);
 			D(bug("Binary file too short \n"));
  		  	goto fail;	
    	    }
@@ -497,13 +550,18 @@ static bool LoadCueSheet(const char *cuefile, CueSheet *cs)
 		cs->binfh = binfh;
 
 		fclose(fh);
+		fprintf(stderr, "[bincue] loaded cue '%s' -> bin '%s' (%d tracks, %u frames)\n",
+		        cuefile, cs->binfile, cs->tcnt, cs->length);
+		fflush(stderr);
 		return true;
 
 	  fail:
 		if (binfh >= 0)
 			close(binfh);	
-		fclose(fh);
+		if (fh)
+			fclose(fh);
 		free(cs->binfile);
+		cs->binfile = NULL;
 		return false;
 
     }
@@ -600,7 +658,12 @@ size_t read_bincue(void *fh, void *b, loff_t offset, size_t len)
 	
 	size_t bytes_read = 0;						// bytes read so far
 	unsigned char *buf = (unsigned char *) b;	// target buffer
-	unsigned char secbuf[cs->raw_sector_size];		// temporary buffer
+	/* MSVC has no VLAs; raw CD sectors are at most 2352 bytes. */
+	unsigned char secbuf[2352];
+
+	if (cs == NULL || cs->raw_sector_size <= 0 ||
+	    (size_t)cs->raw_sector_size > sizeof(secbuf))
+		return (size_t)-1;
 
 	off_t sec = ((offset/cs->cooked_sector_size) * cs->raw_sector_size);
 	off_t secoff = offset % cs->cooked_sector_size;
@@ -610,8 +673,8 @@ size_t read_bincue(void *fh, void *b, loff_t offset, size_t len)
 	// reading since we can request a read that starts in the middle
 	// of a sector
 
-	if (cs == NULL || lseek(cs->binfh, sec, SEEK_SET) < 0) {
-		return -1;
+	if (lseek(cs->binfh, sec, SEEK_SET) < 0) {
+		return (size_t)-1;
 	}
 	while (len) {
 
@@ -842,8 +905,12 @@ bool CDPlay_bincue(void *fh, uint8 start_m, uint8 start_s, uint8 start_f,
 
 		int cur_position_frames = (player->audioposition / cs->raw_sector_size) + player->audiostart;
 
-		player->audiostart = MSFToFrames((MSF){start_m, start_s, start_f});
-		player->audioend   = MSFToFrames((MSF){end_m, end_s, end_f});
+		{
+			MSF start_msf = { start_m, start_s, start_f };
+			MSF end_msf = { end_m, end_s, end_f };
+			player->audiostart = MSFToFrames(start_msf);
+			player->audioend   = MSFToFrames(end_msf);
+		}
 
 		track = PositionToTrack(player->cs, player->audiostart);
 
@@ -901,7 +968,8 @@ bool CDScan_bincue(void *fh, uint8 start_m, uint8 start_s, uint8 start_f, bool r
 	CDPlayer *player = CSToPlayer(cs);
 	
 	if (cs && player) {
-		int goto_frame = MSFToFrames((MSF){start_m, start_s, start_f});
+		MSF goto_msf = { start_m, start_s, start_f };
+		int goto_frame = MSFToFrames(goto_msf);
 
 		int scan_starting_track = PositionToTrack(cs, goto_frame);
 		if (cs->tracks[scan_starting_track].tcf != AUDIO) {
@@ -1128,12 +1196,12 @@ void MixAudio_bincue(uint8 *stream, int dest_stream_len)
 			int avail = SDL_GetAudioStreamAvailable(player->stream);
 			if (avail >= dest_stream_len) {
 				//D(bug("have bytes avail %d stream len %d\n", avail, dest_stream_len));
-				uint8 converted[dest_stream_len];
-				SDL_GetAudioStreamData(player->stream, converted, dest_stream_len);
+				std::vector<uint8> converted((size_t)dest_stream_len);
+				SDL_GetAudioStreamData(player->stream, converted.data(), dest_stream_len);
 				float volume = (float)player->volume_mono/128;
 				// Apply 60% volume while scanning (ff/reverse)
-				if (player->scanning) volume *= 0.6;
-				SDL_MixAudio(stream, converted, (SDL_AudioFormat) o.format, dest_stream_len, volume);
+				if (player->scanning) volume *= 0.6f;
+				SDL_MixAudio(stream, converted.data(), (SDL_AudioFormat) o.format, dest_stream_len, volume);
 			}
 #else
 			if (buf)
@@ -1141,12 +1209,12 @@ void MixAudio_bincue(uint8 *stream, int dest_stream_len)
 			int avail = SDL_AudioStreamAvailable(player->stream);
 			if (avail >= dest_stream_len) {
 				//D(bug("have bytes avail %d stream len %d\n", avail, dest_stream_len));
-				uint8 converted[dest_stream_len];
-				SDL_AudioStreamGet(player->stream, converted, dest_stream_len);
+				std::vector<uint8> converted((size_t)dest_stream_len);
+				SDL_AudioStreamGet(player->stream, converted.data(), dest_stream_len);
 				int volume = player->volume_mono;
 				// Apply 60% volume while scanning (ff/reverse)
 				if (player->scanning) volume = volume * 3 / 5;
-				SDL_MixAudio(stream, converted, dest_stream_len, volume);
+				SDL_MixAudio(stream, converted.data(), dest_stream_len, volume);
 			}
 #endif
 		}
@@ -1194,7 +1262,10 @@ static void ClosePlayerStream(CDPlayer * player)
 void OpenAudio_bincue(int freq, int format, int channels, uint8 silence, int volume)
 {
 	// save output audio params
-	current_output_settings = (OutputSettings){freq, format, channels, volume};
+	current_output_settings.freq = freq;
+	current_output_settings.format = format;
+	current_output_settings.channels = channels;
+	current_output_settings.default_cd_player_volume = volume;
 	have_current_output_settings = true;
 #if SDL_VERSION_ATLEAST(3, 0, 0)
 	D(bug("OpenAudio_bincue freq %d format %s channels %d volume %d\n",

@@ -23,6 +23,9 @@
 #include "sys.h"
 #include "prefs.h"
 
+#ifdef __APPLE__
+#include "TargetConditionals.h"
+#endif
 
 // Common preferences items (those which exist on all platforms)
 prefs_desc common_prefs_items[] = {
@@ -67,6 +70,10 @@ prefs_desc common_prefs_items[] = {
 	{"dayofs", TYPE_INT32, 0,			"day offset"},
 	{"mag_rate", TYPE_STRING, 0,			"rate of magnification"},
 	{"gammaramp", TYPE_STRING, false,	"gamma ramp (on, off or fullscreen)"},
+	{"nqdaccel", TYPE_BOOLEAN, false,	"enable NQD Metal compute acceleration"},
+	{"raveaccel", TYPE_BOOLEAN, false,	"enable RAVE 3D acceleration"},
+	{"glaccel", TYPE_BOOLEAN, false,	"enable OpenGL acceleration"},
+	{"dspaccel", TYPE_BOOLEAN, true,	"enable DrawSprocket (DSp) acceleration"},
 	{"swap_opt_cmd", TYPE_BOOLEAN, false,	"swap option and command key"},
 	{"host_domain", TYPE_STRING, true,	"handle DNS requests for this domain on the host (slirp only)"},
 	{"redir", TYPE_STRING, true,		"port forwarding for slirp"},
@@ -74,6 +81,12 @@ prefs_desc common_prefs_items[] = {
 	{"sound_buffer", TYPE_INT32, false,	"sound buffer length"},
 	{"name_encoding", TYPE_INT32, false,	"file name encoding"},
 	{"init_grab", TYPE_BOOLEAN, false,	"initially grabbing mouse"},
+#if TARGET_OS_IPHONE
+	// Mac Catalyst Windowed/Full Screen choice. Needs a descriptor here so SavePrefs()
+	// (which serializes the descriptor tables, not the runtime list) persists it to disk;
+	// without it the pref lives only in memory and reverts to its default every launch.
+	{"catalystfullscreen", TYPE_BOOLEAN, false,	"Mac Catalyst: launch emulation full screen"},
+#endif
 	{NULL, TYPE_END, false, NULL} // End of list
 };
 
@@ -88,21 +101,44 @@ void AddPrefsDefaults(void)
 #endif
 	PrefsAddInt32("bootdriver", 0);
 	PrefsAddInt32("bootdrive", 0);
+#if TARGET_OS_IPHONE
+	PrefsReplaceInt32("ramsize", 256);
+	PrefsReplaceInt32("frameskip", 1);
+	// Report a 466 MHz CPU to the guest by default (PowerBook/iMac G3 class).
+	// New installs persist this value; installs that predate this default are
+	// moved up by the one-time adoption step at the end of LoadPrefs() (their
+	// saved prefs carry the prior "cpuclock 0").
+	PrefsAddInt32("cpuclock", 466);
+	// Mac Catalyst: remembers the user's Windowed/Full Screen choice for the emulation
+	// window and is honored on launch. Defaults to full screen to preserve the prior
+	// always-fullscreen behavior. A brand-new key, so existing installs pick up this
+	// default automatically (no migration needed). Only read on Catalyst.
+	PrefsAddBool("catalystfullscreen", true);
+#else
 	PrefsAddInt32("ramsize", 16 * 1024 * 1024);
 	PrefsAddInt32("frameskip", 8);
+#endif
 	PrefsAddBool("gfxaccel", true);
+	PrefsAddBool("nqdaccel", true);
+	PrefsAddBool("raveaccel", true);
+	PrefsAddBool("glaccel", true);
+	PrefsAddBool("dspaccel", true);
 	PrefsAddBool("nocdrom", false);
 	PrefsAddBool("nonet", false);
 	PrefsAddBool("nosound", false);
 	PrefsAddBool("nogui", false);
 	PrefsAddBool("noclipconversion", false);
 	PrefsAddBool("ignoresegv", true);
-	PrefsAddBool("ignoreillegal", true);
+	PrefsAddBool("ignoreillegal", false);
 
-#if USE_JIT
+#if USE_JIT && !defined(__aarch64__)
 	// JIT compiler specific options
 	PrefsAddBool("jit", true);
 #else
+	// No JIT on this host, or (arm64) the C++ core keeps this pref off as the
+	// interpreter baseline — enabling PPC_ENABLE_JIT must not self-activate it.
+	// The Mac Catalyst app defaults JIT on at the settings layer (see
+	// MiscellaneousSettings) and writes "jit" true when the user boots.
 	PrefsAddBool("jit", false);
 #endif
 	PrefsAddBool("jit68k", false);

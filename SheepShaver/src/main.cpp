@@ -133,7 +133,7 @@ bool InitAll(const char *vmdir)
 	SCSIInit();
 
 	// Init external file system
-	ExtFSInit(); 
+	ExtFSInit();
 
 	// Init ADB
 	ADBInit();
@@ -331,6 +331,17 @@ void ExitAll(void)
 
 void PatchAfterStartup(void)
 {
+	// One-time patches: NQD acceleration hooks and ExtFS.
+	// These are idempotent but wasteful to repeat, so guard them.
+	static bool one_time_done = false;
+	if (!one_time_done) {
+		one_time_done = true;
+		InstallExtFS();
+	}
+
+	// RAVE registration may need retries if QD3D libraries aren't loaded
+	// yet (e.g. Disk First Aid runs at startup, delaying extension loading).
+	// VideoInstallAccel -> RaveRegisterEngine has its own guards and will
+	// return quickly if already registered.
 	ExecuteNative(NATIVE_VIDEO_INSTALL_ACCEL);
-	InstallExtFS();
 }

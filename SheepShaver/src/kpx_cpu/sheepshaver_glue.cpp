@@ -23,6 +23,15 @@
 #include "main.h"
 #include "prefs.h"
 #include "xlowmem.h"
+
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+#if TARGET_OS_MACCATALYST
+// Defined in PreferencesViewControllerObjC.mm — drains AppKit's NSEvent queue so
+// UIKit input stays live while the emulator owns the main thread on Catalyst.
+extern "C" void catalyst_pump_appkit_events(void);
+#endif
 #include "emul_op.h"
 #include "rom_patches.h"
 #include "macos_util.h"
@@ -39,6 +48,11 @@
 #include "serial.h"
 #include "ether.h"
 #include "timer.h"
+#if defined(ENABLE_GFXACCEL)
+#include "rave_engine.h"
+#include "gl_engine.h"
+#include "dsp_engine.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -95,7 +109,7 @@ extern uintptr SignalStackBase();
 extern "C" void check_load_invoc(uint32 type, int16 id, uint32 h);
 extern "C" void named_check_load_invoc(uint32 type, uint32 name, uint32 h);
 
-// PowerPC EmulOp to exit from emulation loop
+// PowerPC EmulOp to exit from emulation looop
 const uint32 POWERPC_EXEC_RETURN = POWERPC_EMUL_OP | 1;
 
 // Enable Execute68k() safety checks?
@@ -176,6 +190,10 @@ public:
 
 	// Handle MacOS interrupt
 	void interrupt(uint32 entry);
+
+	// Diagnostic accessors (crash-context dump, vm watch logging)
+	uint32 cur_pc()			{ return pc(); }
+	uint32 cur_gpr(int i)	{ return gpr(i); }
 
 	// Make sure the SIGSEGV handler can access CPU registers
 	friend sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip);
@@ -283,6 +301,13 @@ void sheepshaver_cpu::execute_sheep(uint32 opcode)
 #if PPC_ENABLE_JIT
 int sheepshaver_cpu::compile1(codegen_context_t & cg_context)
 {
+#if defined(__aarch64__)
+	// Threaded-code bring-up: SHEEP goes through the generic interpreter
+	// invoke like everything else. The specialized emission below leans on
+	// GPR/PC micro-ops (and, with PPC_REENTRANT_JIT, the EmulOp
+	// trampolines) that the arm64 backend does not implement yet.
+	return COMPILE_FAILURE;
+#endif
 	const instr_info_t *ii = cg_context.instr_info;
 	if (ii->mnemo != PPC_I(SHEEP))
 		return COMPILE_FAILURE;
@@ -384,6 +409,18 @@ int sheepshaver_cpu::compile1(codegen_context_t & cg_context)
 			dg.gen_store_T0_GPR(3);
 			status = COMPILE_CODE_OK;
 			break;
+		case NATIVE_NQD_BLTMASK_HOOK:
+			dg.gen_load_T0_GPR(3);
+			dg.gen_invoke_T0_ret_T0((uint32 (*)(uint32))NQD_bltmask_hook);
+			dg.gen_store_T0_GPR(3);
+			status = COMPILE_CODE_OK;
+			break;
+		case NATIVE_NQD_FILLMASK_HOOK:
+			dg.gen_load_T0_GPR(3);
+			dg.gen_invoke_T0_ret_T0((uint32 (*)(uint32))NQD_fillmask_hook);
+			dg.gen_store_T0_GPR(3);
+			status = COMPILE_CODE_OK;
+			break;
 		case NATIVE_NQD_BITBLT:
 			dg.gen_load_T0_GPR(3);
 			dg.gen_invoke_T0((void (*)(uint32))NQD_bitblt);
@@ -397,6 +434,16 @@ int sheepshaver_cpu::compile1(codegen_context_t & cg_context)
 		case NATIVE_NQD_FILLRECT:
 			dg.gen_load_T0_GPR(3);
 			dg.gen_invoke_T0((void (*)(uint32))NQD_fillrect);
+			status = COMPILE_CODE_OK;
+			break;
+		case NATIVE_NQD_BLTMASK:
+			dg.gen_load_T0_GPR(3);
+			dg.gen_invoke_T0((void (*)(uint32))NQD_bltmask);
+			status = COMPILE_CODE_OK;
+			break;
+		case NATIVE_NQD_FILLMASK:
+			dg.gen_load_T0_GPR(3);
+			dg.gen_invoke_T0((void (*)(uint32))NQD_fillmask);
 			status = COMPILE_CODE_OK;
 			break;
 		}
@@ -765,6 +812,65 @@ static void dump_disassembly(const uint32 pc, const int prefix_count, const int 
 	}
 }
 
+// Crash-context diagnostics (StarCraft post-splash SIGSEGV investigation):
+// validated guest reads only -- a wild pc/sp must not re-fault inside the
+// signal handler (dump_disassembly previously died reading unmapped memory).
+static bool guest_addr_ok(uint32 a, uint32 len)
+{
+	if (a >= RAMBase && a - RAMBase < RAMSize && RAMSize - (a - RAMBase) >= len)
+		return true;
+	if (a >= ROMBase && a - ROMBase < ROM_AREA_SIZE && ROM_AREA_SIZE - (a - ROMBase) >= len)
+		return true;
+	const uint32 kbase = (uint32)(KERNEL_DATA_BASE & ~0x3fffu);
+	const uint32 kend = (uint32)(KERNEL_DATA_BASE + KERNEL_AREA_SIZE);
+	if (a >= kbase && a < kend && kend - a >= len)
+		return true;
+	// Native-op TVECTs / thunks live in SheepMem (guest 0x51xxxxxx on Windows).
+	if (SheepMem::Contains(a) && SheepMem::Size() - (a - SheepMem::Base()) >= len)
+		return true;
+	return false;
+}
+
+static void dump_crash_context(sheepshaver_cpu *cpu)
+{
+	// Guest stack crawl. PowerOpen ABI: back chain at [sp], saved LR at [sp+8].
+	uint32 sp = cpu->cur_gpr(1);
+	fprintf(stderr, "guest stack crawl (r1=%08x):\n", sp);
+	for (int depth = 0; depth < 32; depth++) {
+		if (!guest_addr_ok(sp, 12)) {
+			fprintf(stderr, "  [%2d] sp %08x (unmapped; stop)\n", depth, sp);
+			break;
+		}
+		uint32 back = ReadMacInt32(sp);
+		uint32 saved_lr = ReadMacInt32(sp + 8);
+		fprintf(stderr, "  [%2d] sp %08x back %08x lr %08x\n", depth, sp, back, saved_lr);
+		if (back <= sp || back - sp > 0x100000)
+			break;
+		sp = back;
+	}
+
+	// Window around the kernel-data interrupt stack. The StarCraft dump showed
+	// this region holding little-endian copies of its own guest addresses;
+	// flag any word still matching that signature.
+	const uint32 lo = (uint32)KERNEL_DATA_BASE - 0x200;
+	const uint32 hi = (uint32)KERNEL_DATA_BASE + 0x40;
+	fprintf(stderr, "kernel-area dump [%08x..%08x) ('<' = LE self-address):\n", lo, hi);
+	for (uint32 a = lo; a < hi; a += 16) {
+		if (!guest_addr_ok(a, 16))
+			continue;
+		fprintf(stderr, "  %08x:", a);
+		for (int i = 0; i < 4; i++) {
+			uint32 w = ReadMacInt32(a + i * 4);
+			uint32 le = ((w & 0xff) << 24) | ((w & 0xff00) << 8) | ((w >> 8) & 0xff00) | (w >> 24);
+			fprintf(stderr, " %08x%c", w, (le - (a + i * 4)) <= 0x100 ? '<' : ' ');
+		}
+		fprintf(stderr, "\n");
+	}
+
+	extern void RsrcLocksDumpOnCrash(void);
+	RsrcLocksDumpOnCrash();
+}
+
 sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip)
 {
 #if ENABLE_VOSF
@@ -780,12 +886,24 @@ sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip)
 	if ((addr - (uintptr)ROMBaseHost) < ROM_SIZE)
 		return SIGSEGV_RETURN_SKIP_INSTRUCTION;
 
+	if (!ppc_cpu) {
+		// Haven't even gotten started yet?
+		return SIGSEGV_RETURN_FAILURE;
+	}
+
 	// Get program counter of target CPU
 	sheepshaver_cpu * const cpu = ppc_cpu;
 	const uint32 pc = cpu->pc();
 	
-	// Fault in Mac ROM or RAM?
-	bool mac_fault = (pc >= ROMBase && pc < (ROMBase + ROM_AREA_SIZE)) || (pc >= RAMBase && pc < (RAMBase + RAMSize)) || (pc >= DR_CACHE_BASE && pc < (DR_CACHE_BASE + DR_CACHE_SIZE));
+	// Fault while guest PC is in Mac ROM/RAM/DR cache, OR in SheepMem.
+	// SheepMem holds native-op TVECTs (EMUL_OP trampolines). When a native
+	// handler (e.g. VideoDoDriverIO) faults via WriteMacInt32, guest PC is
+	// still the TVECT opcode address — without SheepMem here, ignoresegv
+	// never applies and boot dies on the first unmapped guest store.
+	bool mac_fault = (pc >= ROMBase && pc < (ROMBase + ROM_AREA_SIZE))
+		|| (pc >= RAMBase && pc < (RAMBase + RAMSize))
+		|| (pc >= DR_CACHE_BASE && pc < (DR_CACHE_BASE + DR_CACHE_SIZE))
+		|| SheepMem::Contains(pc);
 	if (mac_fault) {
 
 		// "VM settings" during MacOS 8 installation
@@ -812,13 +930,31 @@ sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip)
 		else if ((pc - DR_CACHE_BASE) < DR_CACHE_SIZE && (cpu->gpr(20) == 0xf3012002 || cpu->gpr(20) == 0xf3012000))
 			return SIGSEGV_RETURN_SKIP_INSTRUCTION;
 
-		// Ignore writes to the zero page
-		else if ((uint32)(addr - SheepMem::ZeroPage()) < (uint32)SheepMem::PageSize())
+		// Ignore writes to the zero page (compare host addresses under NATMEM)
+		else if ((uint32)(addr - (uintptr)Mac2HostAddr(SheepMem::ZeroPage())) < (uint32)SheepMem::PageSize())
 			return SIGSEGV_RETURN_SKIP_INSTRUCTION;
 
 		// Ignore all other faults, if requested
-		if (PrefsFindBool("ignoresegv"))
+		if (PrefsFindBool("ignoresegv")) {
+			/* Rate-limited diagnostic: a storm of skips (e.g. GrayPage
+			 * into an unmapped framebuffer) freezes the emul thread in
+			 * the exception handler and looks like a hard lockup. */
+			static uint64_t s_skip_count = 0;
+			static uint32_t s_last_log_pc = 0;
+			s_skip_count++;
+			if (s_skip_count <= 8 ||
+			    (s_skip_count == 1000) ||
+			    (s_skip_count == 100000) ||
+			    (pc != s_last_log_pc && (s_skip_count % 100000) == 0)) {
+				fprintf(stderr,
+				        "[ignoresegv] skip #%llu host_ea=%p guest_pc=%08x\n",
+				        (unsigned long long)s_skip_count,
+				        (void *)addr, pc);
+				fflush(stderr);
+				s_last_log_pc = pc;
+			}
 			return SIGSEGV_RETURN_SKIP_INSTRUCTION;
+		}
 	}
 #else
 #error "FIXME: You don't have the capability to skip instruction within signal handlers"
@@ -829,7 +965,11 @@ sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip)
 	fprintf(stderr, "  ea %p\n", sigsegv_get_fault_address(sip));
 	dump_registers();
 	dump_log();
-	dump_disassembly(pc, 8, 8);
+	dump_crash_context(cpu);
+	if (guest_addr_ok(pc - 8 * 4, (8 + 8 + 1) * 4))
+		dump_disassembly(pc, 8, 8);
+	else
+		fprintf(stderr, "  (pc %08x outside mapped guest areas; disassembly skipped)\n", pc);
 
 	enter_mon();
 	QuitEmulator();
@@ -959,6 +1099,12 @@ void HandleInterrupt(powerpc_registers *r)
 #ifdef USE_SDL_VIDEO
 	// We must fill in the events queue in the same thread that did call SDL_SetVideoMode()
 	SDL_PumpEvents();
+#endif
+#if TARGET_OS_MACCATALYST
+	// Keep UIKit responsive while the emulator owns the main thread on Catalyst.
+	// Runs on the emul/main thread (~60Hz for interpreter and JIT), reentrancy-
+	// guarded by processing_interrupt in check_spcflags().
+	catalyst_pump_appkit_events();
 #endif
 
 	// Do nothing if interrupts are disabled
@@ -1120,6 +1266,18 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 	case NATIVE_NQD_FILLRECT:
 		NQD_fillrect(gpr(3));
 		break;
+	case NATIVE_NQD_BLTMASK_HOOK:
+		gpr(3) = NQD_bltmask_hook(gpr(3));
+		break;
+	case NATIVE_NQD_FILLMASK_HOOK:
+		gpr(3) = NQD_fillmask_hook(gpr(3));
+		break;
+	case NATIVE_NQD_BLTMASK:
+		NQD_bltmask(gpr(3));
+		break;
+	case NATIVE_NQD_FILLMASK:
+		NQD_fillmask(gpr(3));
+		break;
 	case NATIVE_SERIAL_NOTHING:
 	case NATIVE_SERIAL_OPEN:
 	case NATIVE_SERIAL_PRIME_IN:
@@ -1164,6 +1322,207 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 	case NATIVE_NAMED_CHECK_LOAD_INVOC:
 		named_check_load_invoc(gpr(3), gpr(4), gpr(5));
 		break;
+	case NATIVE_RAVE_DISPATCH: {
+#if !defined(ENABLE_GFXACCEL)
+		gpr(3) = (uint32)-1;
+		break;
+#else
+		// Save critical PPC registers that re-entrant PPC code could corrupt.
+		// Metal/SDL initialization during DrawContextNew can trigger event
+		// processing or CFM callbacks that re-enter the PPC emulator.
+		uint32 saved_lr = lr();
+		uint32 saved_ctr = ctr();
+		uint32 saved_sp = gpr(1);
+		uint32 saved_r2 = gpr(2);
+		uint32 saved_pc = pc();
+
+		// Read sub-opcode BEFORE dispatch for targeted logging
+		uint32 pre_subop = ReadMacInt32(rave_scratch_addr);
+
+		// For hook sub-opcodes (200-207), log full PPC state
+		if (pre_subop >= 200 && pre_subop <= 207) {
+			D(bug("RAVE NATIVE_OP: subop=%d PC=0x%08x LR=0x%08x CTR=0x%08x SP=0x%08x R2=0x%08x\n",
+				   pre_subop, saved_pc, saved_lr, saved_ctr, saved_sp, saved_r2));
+			// Dump instructions at LR (return address) to see what caller expects
+			D(bug("RAVE NATIVE_OP: instructions at LR 0x%08x:\n", saved_lr));
+			for (int di = -2; di < 6; di++) {
+				uint32 addr = saved_lr + di * 4;
+				uint32 instr = ReadMacInt32(addr);
+				D(bug("  [0x%08x] %08x%s\n", addr, instr, di == 0 ? " <-- LR" : ""));
+			}
+		}
+
+		// PPC calling convention: float arguments go in FPR, not GPR.
+		// SetFloat(drawContext, tag, value) has value as a float in fpr(1).
+		// We must extract the float bits and place them in r5 so the
+		// dispatch handler receives the correct value via gpr(5).
+		if (pre_subop == 0) {  // kRaveDrawSetFloat
+			float fval = (float)fpr(1);
+			uint32 fbits;
+			memcpy(&fbits, &fval, sizeof(uint32));
+			gpr(5) = fbits;
+		}
+
+		uint32 rave_ret = RaveDispatchARC(gpr(3), gpr(4), gpr(5), gpr(6), gpr(7), gpr(8));
+		gpr(3) = rave_ret;
+
+		// GetFloat returns float bits in gpr(3). PPC caller also expects
+		// the float return value in fpr(1).
+		if (pre_subop == 3) {  // kRaveDrawGetFloat
+			float fval;
+			memcpy(&fval, &rave_ret, sizeof(float));
+			fpr(1) = (double)fval;
+		}
+
+		// Check all registers for corruption
+		if (lr() != saved_lr) {
+			printf("RAVE: LR CORRUPTED during native op! was 0x%08x, now 0x%08x — restoring\n",
+				   saved_lr, lr());
+			lr() = saved_lr;
+		}
+		if (ctr() != saved_ctr) {
+			printf("RAVE: CTR CORRUPTED during native op! was 0x%08x, now 0x%08x — restoring\n",
+				   saved_ctr, ctr());
+			ctr() = saved_ctr;
+		}
+		if (gpr(1) != saved_sp) {
+			printf("RAVE: SP CORRUPTED during native op! was 0x%08x, now 0x%08x — restoring\n",
+				   saved_sp, gpr(1));
+			gpr(1) = saved_sp;
+		}
+		if (gpr(2) != saved_r2) {
+			printf("RAVE: R2(TOC) CORRUPTED during native op! was 0x%08x, now 0x%08x — restoring\n",
+				   saved_r2, gpr(2));
+			gpr(2) = saved_r2;
+		}
+
+		// For sub-opcode 204 (DrawContextNew), log the return value
+		if (pre_subop == 204) {
+			D(bug("RAVE NATIVE_OP: DrawContextNew returning %d, blr will go to LR=0x%08x\n",
+				   (int32)rave_ret, lr()));
+		}
+		break;
+#endif
+	}
+	case NATIVE_OPENGL_DISPATCH: {
+#if !defined(ENABLE_GFXACCEL)
+		gpr(3) = (uint32)-1;
+		break;
+#else
+		// Save critical PPC registers (same pattern as RAVE -- Metal/SDL init
+		// can trigger re-entrant PPC execution that corrupts these).
+		uint32 saved_lr = lr();
+		uint32 saved_ctr = ctr();
+		uint32 saved_sp = gpr(1);
+		uint32 saved_r2 = gpr(2);
+
+		// Read sub-opcode from GL scratch word
+		uint32 sub_opcode = ReadMacInt32(gl_scratch_addr);
+
+		// Check dispatch-table flag: if set, the game called through the
+		// context's internal dispatch table and passed the context index
+		// in R3 with real GL args starting at R4.  Shift args left by one.
+		extern uint32_t gl_dt_flag_addr;
+		uint32 dt_flag = ReadMacInt32(gl_dt_flag_addr);
+		WriteMacInt32(gl_dt_flag_addr, 0);  // clear for next call
+
+		uint32 arg_r3, arg_r4, arg_r5, arg_r6, arg_r7, arg_r8, arg_r9, arg_r10;
+		if (dt_flag) {
+			// Dispatch-table path: skip context index in R3, shift args.
+			// r4-r10 become args 0-6. Arg 7 (r10) is set to 0 for now;
+			// functions with 9+ args (like glTexImage2D) read additional
+			// args from the PPC stack via gl_ppc_stack_arg().
+			arg_r3 = gpr(4);  arg_r4 = gpr(5);  arg_r5 = gpr(6);
+			arg_r6 = gpr(7);  arg_r7 = gpr(8);  arg_r8 = gpr(9);
+			arg_r9 = gpr(10); arg_r10 = 0;
+		} else {
+			// Stub-patching path: args in normal positions
+			arg_r3 = gpr(3);  arg_r4 = gpr(4);  arg_r5 = gpr(5);
+			arg_r6 = gpr(6);  arg_r7 = gpr(7);  arg_r8 = gpr(8);
+			arg_r9 = gpr(9);  arg_r10 = gpr(10);
+		}
+
+		// Generic FPR extraction based on function signature table.
+		// PPC ABI passes float/double args in FPR1-FPR13. We extract them
+		// into a uint32 array so GLDispatch can reconstruct float values.
+		// Dispatch-table calls shift GPR args only; FPR numbering is unchanged
+		// because the context index is an integer argument.
+		const GLFuncSignature& sig = gl_func_signatures[sub_opcode < GL_MAX_SUBOPCODE ? sub_opcode : 0];
+		const int max_ppc_fpr_args = 13;
+		const int max_float_mask_bits = (int)(sizeof(sig.float_mask) * 8);
+		uint32 float_bits[max_ppc_fpr_args] = {0};  // Max 13 FPR args in PPC ABI
+		int fpr_idx = 0;
+		for (int i = 0; i < sig.num_args && i < max_float_mask_bits && fpr_idx < max_ppc_fpr_args; i++) {
+			if (sig.float_mask & (1u << i)) {
+				// This arg position is a float/double -- extract from next FPR.
+				// PPC ABI: floats are promoted to double in FPR, cast back to float.
+				float fval = (float)fpr(1 + fpr_idx);
+				memcpy(&float_bits[fpr_idx], &fval, 4);
+				fpr_idx++;
+			}
+		}
+
+		// Save PPC stack pointer for functions with 9+ args (e.g., glTexImage2D)
+		// When dt_flag is set, stack args are shifted by 1 position because
+		// the context arg consumed one GPR slot, pushing all subsequent args.
+		{
+			extern uint32_t gl_ppc_sp;
+			extern int gl_ppc_stack_arg_offset;
+			gl_ppc_sp = saved_sp;
+			gl_ppc_stack_arg_offset = dt_flag ? 1 : 0;
+		}
+
+		// Call dispatch with GPR args and extracted float bits
+		gpr(3) = GLDispatchARC(arg_r3, arg_r4, arg_r5, arg_r6,
+		                    arg_r7, arg_r8, arg_r9, arg_r10,
+		                    float_bits, fpr_idx);
+
+		// Restore registers that may have been corrupted
+		lr() = saved_lr;
+		ctr() = saved_ctr;
+		if (gpr(1) != saved_sp) gpr(1) = saved_sp;
+		if (gpr(2) != saved_r2) gpr(2) = saved_r2;
+
+		break;
+#endif
+	}
+	case NATIVE_DSP_DISPATCH: {
+#if !defined(ENABLE_GFXACCEL)
+		gpr(3) = (uint32)-1;
+		break;
+#else
+		// No Metal resources, so no @autoreleasepool wrapper is needed
+		// here; the context-lifecycle path wraps in @autoreleasepool once
+		// GPU calls (GetBackBuffer vending a MTLTexture) land. Register-
+		// preservation pattern mirrors RAVE/GL for re-entrant PPC safety.
+		uint32 saved_lr = lr();
+		uint32 saved_ctr = ctr();
+		uint32 saved_sp = gpr(1);
+		uint32 saved_r2 = gpr(2);
+
+		/* Stash caller LR + r11
+		 * for the one-shot DSpDispatch diagnostic on unresolved sub-opcodes
+		 * 400/401/501/502/600. r11 carries the CFM TVECT address under the
+		 * CFM ABI, so it identifies WHICH DSp symbol the caller jumped
+		 * through. Globals are defined in dsp_dispatch.cpp; single-thread
+		 * (emul) read+write so no synchronisation required. */
+		{
+			extern uint32_t dsp_caller_lr;
+			extern uint32_t dsp_caller_r11;
+			dsp_caller_lr = saved_lr;
+			dsp_caller_r11 = gpr(11);
+		}
+
+		uint32 dsp_ret = DSpDispatch(gpr(3), gpr(4), gpr(5), gpr(6), gpr(7), gpr(8));
+		gpr(3) = dsp_ret;
+
+		if (lr() != saved_lr) { lr() = saved_lr; }
+		if (ctr() != saved_ctr) { ctr() = saved_ctr; }
+		if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
+		if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
+		break;
+#endif
+	}
 	default:
 		printf("FATAL: NATIVE_OP called with bogus selector %d\n", selector);
 		QuitEmulator();

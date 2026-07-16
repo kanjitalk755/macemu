@@ -7,7 +7,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(CMAKE_C_STANDARD 99)
   option(ENABLE_JIT "Enable PPC JIT (precompiled dyngen)" OFF)
   option(ENABLE_GTK "GTK prefs UI (Unix)" OFF)
-  option(ENABLE_BINCUE "BIN/CUE support" OFF)
+  option(ENABLE_BINCUE "BIN/CUE support" ON)
   option(ENABLE_VOSF "Video on SEGV" OFF)
   option(USE_SDL3 "Use SDL3" OFF)
   set(MACEMU_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
@@ -43,35 +43,74 @@ macemu_write_config(
   "SheepShaver" "SheepShaver" "2.3" "")
 
 # ---------------------------------------------------------------------------
-# Include path: SheepShaver/src/include has text "symlink" stubs on Windows
-# (tiny files whose content is a relative path). Those must not be visible
-# to the compiler. Stage only real SS-specific headers into the build tree;
-# shared headers come from BasiliskII.
+# Staging helper
+#
+# Some SS paths are text "symlink" stubs on Windows; we stage real files into
+# the build tree. configure_file(COPYONLY) only runs at *cmake configure*
+# time, so MSVC/Ninja incremental builds keep using stale staged copies.
+# Always stage with add_custom_command(DEPENDS <source>) so a source edit
+# re-copies and recompiles. SheepShaver_stage is an explicit dependency of
+# the executable so VS/CMake IDE builds cannot skip the copy step.
+# ---------------------------------------------------------------------------
+set(SS_STAGE_OUTPUTS)
+function(ss_stage_file SRC DST)
+  if(NOT EXISTS "${SRC}")
+    message(FATAL_ERROR "ss_stage_file: missing source ${SRC}")
+  endif()
+  get_filename_component(_dst_dir "${DST}" DIRECTORY)
+  file(MAKE_DIRECTORY "${_dst_dir}")
+  # Seed at configure so the IDE can open the path before the first build.
+  if(NOT EXISTS "${DST}")
+    file(COPY "${SRC}" DESTINATION "${_dst_dir}")
+  endif()
+  add_custom_command(
+    OUTPUT "${DST}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SRC}" "${DST}"
+    DEPENDS "${SRC}"
+    COMMENT "Stage ${DST}"
+    VERBATIM)
+  # Propagate the growing list back to the caller (function scope isolation).
+  set(_ss_stage_acc ${SS_STAGE_OUTPUTS})
+  list(APPEND _ss_stage_acc "${DST}")
+  set(SS_STAGE_OUTPUTS "${_ss_stage_acc}" PARENT_SCOPE)
+endfunction()
+
+function(ss_is_text_stub FPATH OUT_VAR)
+  set(_stub FALSE)
+  if(EXISTS "${FPATH}" AND NOT IS_DIRECTORY "${FPATH}")
+    file(SIZE "${FPATH}" _sz)
+    if(_sz LESS 200)
+      file(READ "${FPATH}" _content LIMIT 200)
+      string(STRIP "${_content}" _content)
+      if(_content MATCHES "\\.\\./")
+        set(_stub TRUE)
+      endif()
+    endif()
+  endif()
+  set(${OUT_VAR} "${_stub}" PARENT_SCOPE)
+endfunction()
+
+# ---------------------------------------------------------------------------
+# Include path: stage real SS-specific headers (skip text-stubs)
 # ---------------------------------------------------------------------------
 set(SS_INC_STAGE "${CMAKE_CURRENT_BINARY_DIR}/ss_include")
 file(MAKE_DIRECTORY "${SS_INC_STAGE}")
 file(GLOB _ss_hdrs "${SS_SRC}/include/*")
+# Re-run configure if headers appear/disappear
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_ss_hdrs})
 set(_ss_staged 0)
 foreach(_h IN LISTS _ss_hdrs)
   if(IS_DIRECTORY "${_h}")
     continue()
   endif()
-  get_filename_component(_name "${_h}" NAME)
-  file(SIZE "${_h}" _sz)
-  set(_is_stub FALSE)
-  if(_sz LESS 200)
-    file(READ "${_h}" _content LIMIT 200)
-    string(STRIP "${_content}" _content)
-    if(_content MATCHES "\\.\\./")
-      set(_is_stub TRUE)
-    endif()
-  endif()
+  ss_is_text_stub("${_h}" _is_stub)
   if(NOT _is_stub)
-    configure_file("${_h}" "${SS_INC_STAGE}/${_name}" COPYONLY)
+    get_filename_component(_name "${_h}" NAME)
+    ss_stage_file("${_h}" "${SS_INC_STAGE}/${_name}")
     math(EXPR _ss_staged "${_ss_staged}+1")
   endif()
 endforeach()
-message(STATUS "SheepShaver: staged ${_ss_staged} real headers (skipped text-stubs)")
+message(STATUS "SheepShaver: staging ${_ss_staged} real headers (skipped text-stubs)")
 
 # ---------------------------------------------------------------------------
 # Shared sources (prefer BasiliskII tree; resolve text-symlink stubs)
@@ -89,7 +128,15 @@ endif()
 
 macemu_slirp_sources("${B2_SRC}" SS_SLIRP)
 macemu_sdl_sources("${B2_SRC}" SS_SDL)
-macemu_xplat_sources("${B2_SRC}" SS_XPLAT)
+# Resolve CrossPlatform sources (sigsegv/vm_alloc/video_blit) via text stubs or
+# real SS overrides — never hardcode only BasiliskII while a full SS copy sits
+# in the tree for the IDE to open (that made "Build" look like it ignored edits).
+macemu_xplat_sources_resolved("${SS_SRC}" "${B2_SRC}" SS_XPLAT)
+macemu_check_shared_source_traps("${SS_SRC}" "${B2_SRC}")
+# Log the exact paths that will be compiled (visible in VS CMake output).
+foreach(_xp IN LISTS SS_XPLAT)
+  message(STATUS "SheepShaver xplat: ${_xp}")
+endforeach()
 
 set(SS_CORE
   "${SS_SRC}/main.cpp"
@@ -126,7 +173,7 @@ set(SS_CPU
 
 set(PRE_PPC_IMPL "${SS_SRC}/Unix/dyngen_precompiled/ppc-execute-impl.cpp")
 if(EXISTS "${PRE_PPC_IMPL}")
-  configure_file("${PRE_PPC_IMPL}" "${SS_GEN}/ppc-execute-impl.cpp" COPYONLY)
+  ss_stage_file("${PRE_PPC_IMPL}" "${SS_GEN}/ppc-execute-impl.cpp")
 else()
   message(FATAL_ERROR "Missing ${PRE_PPC_IMPL}")
 endif()
@@ -142,46 +189,59 @@ if(ENABLE_JIT)
   else()
     set(_ops "${SS_SRC}/Unix/dyngen_precompiled")
   endif()
-  configure_file("${_ops}/basic-dyngen-ops.hpp" "${SS_GEN}/basic-dyngen-ops.hpp" COPYONLY)
-  configure_file("${_ops}/ppc-dyngen-ops.hpp" "${SS_GEN}/ppc-dyngen-ops.hpp" COPYONLY)
+  ss_stage_file("${_ops}/basic-dyngen-ops.hpp" "${SS_GEN}/basic-dyngen-ops.hpp")
+  ss_stage_file("${_ops}/ppc-dyngen-ops.hpp" "${SS_GEN}/ppc-dyngen-ops.hpp")
 endif()
 
 if(WIN32)
   macemu_windows_net_sources("${B2_SRC}" SS_NET)
 
-  # Stage Windows headers: real SS ones first; shared headers from B2
+  # Stage Windows headers (sysdeps isolation for staged .cpp)
   set(SS_WIN_STAGE "${CMAKE_CURRENT_BINARY_DIR}/ss_windows")
   file(MAKE_DIRECTORY "${SS_WIN_STAGE}")
   file(GLOB _ss_win_hdrs "${SS_SRC}/Windows/*.h")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_ss_win_hdrs})
   foreach(_h IN LISTS _ss_win_hdrs)
-    get_filename_component(_name "${_h}" NAME)
-    file(SIZE "${_h}" _sz)
-    set(_is_stub FALSE)
-    if(_sz LESS 200)
-      file(READ "${_h}" _content LIMIT 200)
-      string(STRIP "${_content}" _content)
-      if(_content MATCHES "\\.\\./")
-        set(_is_stub TRUE)
-      endif()
-    endif()
+    ss_is_text_stub("${_h}" _is_stub)
     if(NOT _is_stub)
-      configure_file("${_h}" "${SS_WIN_STAGE}/${_name}" COPYONLY)
+      get_filename_component(_name "${_h}" NAME)
+      ss_stage_file("${_h}" "${SS_WIN_STAGE}/${_name}")
     endif()
   endforeach()
 
-  # Stage Windows .cpp into the build tree so MSVC #include "sysdeps.h" does not
-  # pick BasiliskII/src/Windows/sysdeps.h next to the source file.
-  set(SS_WIN_SRC_STAGE "${CMAKE_CURRENT_BINARY_DIR}/ss_win_src")
-  file(MAKE_DIRECTORY "${SS_WIN_SRC_STAGE}")
+  # Compile Windows .cpp from their *real* source paths (not a staged copy).
+  # Staging .cpp broke MSVC/VS incremental rebuilds: the IDE tracked the
+  # staged copy while you edited the original, so "Build" often did nothing.
+  #
+  # Shared BasiliskII Windows sources (clip_windows.cpp, posix_emu.cpp, …)
+  # still need SheepShaver's sysdeps.h: MSVC searches the .cpp's directory
+  # first for #include "sysdeps.h". Force-include SS sysdeps first (/FI);
+  # both headers use the SYSDEPS_H guard so the later include is a no-op.
+  # SheepShaver-owned Windows sources already sit next to the right sysdeps.
   set(SS_PLATFORM)
+  set(_ss_sysdeps_fi "${SS_WIN_STAGE}/sysdeps.h")
+  # Normalize for string(FIND) (forward slashes)
+  file(TO_CMAKE_PATH "${B2_SRC}" _b2_norm)
   foreach(f
       main_windows.cpp prefs_windows.cpp sys_windows.cpp xpram_windows.cpp
       timer_windows.cpp serial_windows.cpp ether_windows.cpp clip_windows.cpp
       extfs_windows.cpp user_strings_windows.cpp util_windows.cpp posix_emu.cpp
       about_window_windows.cpp)
     macemu_resolve_path("${SS_SRC}/Windows/${f}" "${B2_SRC}/Windows/${f}" _p)
-    configure_file("${_p}" "${SS_WIN_SRC_STAGE}/${f}" COPYONLY)
-    list(APPEND SS_PLATFORM "${SS_WIN_SRC_STAGE}/${f}")
+    list(APPEND SS_PLATFORM "${_p}")
+    file(TO_CMAKE_PATH "${_p}" _p_norm)
+    string(FIND "${_p_norm}" "${_b2_norm}/Windows" _from_b2)
+    if(NOT _from_b2 EQUAL -1)
+      if(MSVC)
+        set_source_files_properties("${_p}" PROPERTIES
+          COMPILE_OPTIONS "/FI${_ss_sysdeps_fi}")
+      else()
+        set_source_files_properties("${_p}" PROPERTIES
+          COMPILE_OPTIONS "-include;${_ss_sysdeps_fi}")
+      endif()
+      set_source_files_properties("${_p}" PROPERTIES
+        OBJECT_DEPENDS "${_ss_sysdeps_fi}")
+    endif()
   endforeach()
 
   foreach(f scsi_dummy.cpp prefs_editor_dummy.cpp prefs_dummy.cpp)
@@ -232,15 +292,151 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# Graphics acceleration (PocketShaver engines: NQD / RAVE / GL / DSp)
+# ---------------------------------------------------------------------------
+if(NOT DEFINED ENABLE_GFXACCEL)
+  option(ENABLE_GFXACCEL "SheepShaver graphics accel (NQD/RAVE/GL/DSp)" ON)
+endif()
+if(NOT DEFINED GFXACCEL_BACKEND)
+  set(GFXACCEL_BACKEND "auto" CACHE STRING "gfxaccel GPU backend (auto|opengl|metal)")
+endif()
+
+set(SS_GFXACCEL)
+set(SS_GFXACCEL_INC)
+set(SS_GFXACCEL_LIBS)
+set(SS_GFXACCEL_DEFS)
+
+if(ENABLE_GFXACCEL)
+  set(GA "${SS_SRC}/gfxaccel")
+  set(SS_GFXACCEL_INC "${GA}" "${GA}/include" "${GA}/gl")
+
+  # Portable engine / policy / dispatch sources
+  list(APPEND SS_GFXACCEL
+    "${GA}/display_mode_controller.cpp"
+    "${GA}/dsp_dispatch.cpp"
+    "${GA}/dsp_engine.cpp"
+    "${GA}/dsp_install_hooks.cpp"
+    "${GA}/dsp_mode_enumerate.cpp"
+    "${GA}/dsp_thunks.cpp"
+    "${GA}/gfxaccel_resources.cpp"
+    "${GA}/gfxaccel_resources_heap.cpp"
+    "${GA}/gl_defer.cpp"
+    "${GA}/gl_dispatch.cpp"
+    "${GA}/gl_engine.cpp"
+    "${GA}/gl_state.cpp"
+    "${GA}/gl_thunks.cpp"
+    "${GA}/rave_dispatch.cpp"
+    "${GA}/rave_draw_context.cpp"
+    "${GA}/rave_engine.cpp"
+    "${GA}/rave_thunks.cpp"
+  )
+
+  # Resolve backend
+  set(_gfx_backend "${GFXACCEL_BACKEND}")
+  if(_gfx_backend STREQUAL "auto")
+    if(APPLE)
+      set(_gfx_backend "metal")
+    else()
+      set(_gfx_backend "opengl")
+    endif()
+  endif()
+
+  if(_gfx_backend STREQUAL "metal")
+    if(NOT APPLE)
+      message(FATAL_ERROR "GFXACCEL_BACKEND=metal requires Apple platforms")
+    endif()
+    list(APPEND SS_GFXACCEL_DEFS ENABLE_GFXACCEL=1 GFXACCEL_USE_METAL=1)
+    enable_language(OBJCXX)
+    list(APPEND SS_GFXACCEL
+      "${GA}/metal_device_shared.mm"
+      "${GA}/metal_compositor.mm"
+      "${GA}/metal_compositor_submitframe.mm"
+      "${GA}/nqd_metal_renderer.mm"
+      "${GA}/rave_metal_renderer.mm"
+      "${GA}/gl_metal_renderer.mm"
+      "${GA}/dsp_metal_renderer.mm"
+      "${GA}/dsp_draw_context.mm"
+      "${GA}/dsp_alt_buffer.mm"
+      "${GA}/dsp_flatten_restore.mm"
+      "${GA}/dsp_clut_gamma.mm"
+      "${GA}/dsp_host_bridge.mm"
+      "${GA}/gfxaccel_resources.mm"
+      "${GA}/gfxaccel_resources_heap.mm"
+      "${GA}/gfxaccel_arc_shim.mm"
+      "${GA}/vbl_source.mm"
+      "${GA}/pso_archive.mm"
+    )
+    find_library(METAL_LIB Metal)
+    find_library(QUARTZCORE_LIB QuartzCore)
+    find_library(FOUNDATION_LIB Foundation)
+    list(APPEND SS_GFXACCEL_LIBS ${METAL_LIB} ${QUARTZCORE_LIB} ${FOUNDATION_LIB})
+  else()
+    # OpenGL + SDL backend (default on Windows/Linux)
+    list(APPEND SS_GFXACCEL_DEFS ENABLE_GFXACCEL=1 GFXACCEL_USE_OPENGL=1)
+    list(APPEND SS_GFXACCEL
+      "${GA}/gl/gl_device.cpp"
+      "${GA}/gl/gl_compositor.cpp"
+      "${GA}/gl/vbl_source_sdl.cpp"
+      "${GA}/gl/gfxaccel_resources_gl.cpp"
+      "${GA}/gl/gfxaccel_resources_heap_gl.cpp"
+      "${GA}/gl/gfxaccel_arc_shim.cpp"
+      "${GA}/gl/pso_archive_gl.cpp"
+      "${GA}/gl/nqd_gl_renderer.cpp"
+      "${GA}/gl/rave_gl_renderer.cpp"
+      "${GA}/gl/gl_ffp_renderer.cpp"
+      "${GA}/gl/dsp_gl_renderer.cpp"
+      "${GA}/gl/dsp_draw_context_gl.cpp"
+      "${GA}/gl/gfxaccel_link_stubs.cpp"
+    )
+    if(WIN32)
+      list(APPEND SS_GFXACCEL_LIBS opengl32)
+    elseif(APPLE)
+      find_library(OPENGL_LIB OpenGL)
+      list(APPEND SS_GFXACCEL_LIBS ${OPENGL_LIB})
+    else()
+      find_package(OpenGL REQUIRED)
+      list(APPEND SS_GFXACCEL_LIBS OpenGL::GL)
+    endif()
+  endif()
+
+  message(STATUS "SheepShaver gfxaccel: backend=${_gfx_backend}")
+endif()
+
+# ---------------------------------------------------------------------------
 # Executable
 # ---------------------------------------------------------------------------
 # ppc-execute-impl.cpp is #included by ppc-execute.cpp (not a separate TU)
 add_executable(SheepShaver
-  ${SS_CORE} ${SS_CPU} ${SS_PLATFORM})
+  ${SS_CORE} ${SS_CPU} ${SS_PLATFORM} ${SS_GFXACCEL})
+
+# Force staging before any compile/link (required for VS/CMake IDE + Ninja).
+# Without this, staged headers can lag source edits forever after configure.
+if(SS_STAGE_OUTPUTS)
+  add_custom_target(SheepShaver_stage DEPENDS ${SS_STAGE_OUTPUTS})
+  add_dependencies(SheepShaver SheepShaver_stage)
+endif()
+
+# NOTE: Do not use cmake -E echo with ">" in the message under cmd.exe —
+# the shell treats it as a redirect and can overwrite the .exe (we hit this).
 # Ensure generated impl is present before compiling ppc-execute.cpp
 set_source_files_properties(
   "${KPX}/src/cpu/ppc/ppc-execute.cpp"
   PROPERTIES OBJECT_DEPENDS "${SS_GEN}/ppc-execute-impl.cpp")
+
+# Build identity next to the exe so you can tell which binary you launched
+# (VS sometimes keeps an older tree in the debugger history).
+# Use cmake -E only — never shell redirects.
+add_custom_command(TARGET SheepShaver POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E echo "[SheepShaver] built $<TARGET_FILE:SheepShaver>"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_CURRENT_LIST_FILE}"
+          "$<TARGET_FILE_DIR:SheepShaver>/_cmake_SheepShaver_CMakeLists.txt.ref"
+  COMMAND ${CMAKE_COMMAND}
+          -Dexe=$<TARGET_FILE:SheepShaver>
+          -Dstamp=$<TARGET_FILE_DIR:SheepShaver>/SheepShaver.buildid
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake_write_buildid.cmake"
+  COMMENT "Write SheepShaver.buildid"
+  VERBATIM)
 
 target_include_directories(SheepShaver PRIVATE
   "${CMAKE_CURRENT_BINARY_DIR}"
@@ -255,21 +451,31 @@ target_include_directories(SheepShaver PRIVATE
   "${B2_SRC}/slirp"
   "${KPX}/include"
   "${KPX}/src"
+  ${SS_GFXACCEL_INC}
 )
 
 target_compile_definitions(SheepShaver PRIVATE
   SHEEPSHAVER=1
   POWERPC_ROM=1
   EMULATED_PPC=1
+  ${SS_GFXACCEL_DEFS}
 )
 if(WIN32)
   target_compile_definitions(SheepShaver PRIVATE CONFIG_WIN32=1 NATMEM_OFFSET=0x11000000)
+endif()
+if(MSVC AND ENABLE_GFXACCEL)
+  # M_PI and other math macros from <cmath>
+  target_compile_definitions(SheepShaver PRIVATE _USE_MATH_DEFINES=1)
 endif()
 if(ENABLE_JIT)
   target_compile_definitions(SheepShaver PRIVATE USE_JIT ENABLE_DYNGEN)
 endif()
 
 macemu_apply_common(SheepShaver)
+
+if(SS_GFXACCEL_LIBS)
+  target_link_libraries(SheepShaver PRIVATE ${SS_GFXACCEL_LIBS})
+endif()
 
 if(ENABLE_GTK AND NOT WIN32)
   target_include_directories(SheepShaver PRIVATE ${GTK3_INCLUDE_DIRS})

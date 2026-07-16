@@ -315,6 +315,39 @@ int main(int argc, char **argv)
 	}
 	atexit(SDL_Quit);
 
+	/* Prove which binary is running (VS often launches a stale build tree). */
+	{
+		char mod[MAX_PATH];
+		if (GetModuleFileNameA(NULL, mod, MAX_PATH))
+			fprintf(stderr, "[build] exe=%s\n", mod);
+		fprintf(stderr, "[build] main_windows compiled %s %s\n", __DATE__, __TIME__);
+		/* Sibling stamp written by CMake POST_BUILD — if missing/old, wrong tree. */
+		if (mod[0]) {
+			char stamp[MAX_PATH];
+			strncpy(stamp, mod, MAX_PATH - 1);
+			stamp[MAX_PATH - 1] = '\0';
+			char *slash = strrchr(stamp, '\\');
+			if (!slash)
+				slash = strrchr(stamp, '/');
+			if (slash) {
+				slash[1] = '\0';
+				strncat(stamp, "SheepShaver.buildid", MAX_PATH - strlen(stamp) - 1);
+				FILE *sf = fopen(stamp, "r");
+				if (sf) {
+					char line[512];
+					fprintf(stderr, "[build] --- SheepShaver.buildid ---\n");
+					while (fgets(line, sizeof(line), sf))
+						fprintf(stderr, "[build] %s", line);
+					fprintf(stderr, "[build] ----------------------------\n");
+					fclose(sf);
+				} else {
+					fprintf(stderr, "[build] no SheepShaver.buildid next to exe (stale/non-CMake tree?)\n");
+				}
+			}
+		}
+		fflush(stderr);
+	}
+
 #ifdef ENABLE_MON
 	// Initialize mon
 	mon_init();
@@ -423,8 +456,17 @@ int main(int argc, char **argv)
 		goto quit;
 	D(bug("Initialization complete\n"));
 
-	// Write protect ROM
+	// Write protect ROM (guest stores are recovered by the SEGV skip
+	// handler — no per-write check on the emul hot path).
 	vm_protect(ROMBaseHost, ROM_AREA_SIZE, VM_PAGE_READ);
+#if defined(_WIN32)
+	// MSVC breaks on first-chance access violations before our SEH filter
+	// can skip the instruction. When a debugger is attached, leave ROM
+	// writable so those expected guest ROM stores never AV. Normal runs
+	// keep RO + SEGV recovery. Zero cost on the memory-write path.
+	if (IsDebuggerPresent())
+		vm_protect(ROMBaseHost, ROM_AREA_SIZE, VM_PAGE_READ | VM_PAGE_WRITE);
+#endif
 
 	// Start 60Hz thread
 	tick_thread_cancel = false;

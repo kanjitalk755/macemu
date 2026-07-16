@@ -303,8 +303,48 @@ static void *vm_acquire_internal(size_t size, int options)
 	if (options & VM_MAP_WRITE_WATCH)
 	  alloc_type |= MEM_WRITE_WATCH;
 
-	if ((addr = VirtualAlloc(NULL, size, alloc_type, PAGE_EXECUTE_READWRITE)) == NULL)
-		return VM_MAP_FAILED;
+	addr = NULL;
+	/*
+	 * On Win64, VirtualAlloc(NULL) routinely returns addresses above 4GB.
+	 * SheepShaver DIRECT_ADDRESSING + NATMEM_OFFSET uses Host2MacAddr()
+	 * which truncates to 32 bits, so a high framebuffer pointer produces
+	 * a bogus Mac address and later guest stores SEGV. When VM_MAP_32BIT
+	 * is requested, search for a free region in the low 32-bit VA range.
+	 */
+	if ((options & VM_MAP_32BIT) && sizeof(void *) == 8) {
+		/*
+		 * SheepShaver DIRECT_ADDRESSING uses Host2MacAddr(p) = p - NATMEM_OFFSET
+		 * (0x11000000). Allocations BELOW that base underflow the Mac address
+		 * (e.g. host 0x10000000 -> mac 0xff000000) and Mac2Host no longer
+		 * round-trips — GrayPage then SEGVs on every store (hang with
+		 * ignoresegv). Keep host pointers in [0x12000000, 0x70000000].
+		 */
+		const vm_uintptr_t kMinHost = 0x12000000;
+		const vm_uintptr_t kMaxHost = 0x70000000;
+		for (vm_uintptr_t try_addr = kMinHost; try_addr <= kMaxHost; try_addr += 0x100000) {
+			LPVOID p = VirtualAlloc((LPVOID)try_addr, size, alloc_type, PAGE_EXECUTE_READWRITE);
+			if (p != NULL) {
+				vm_uintptr_t base = (vm_uintptr_t)p;
+				if (base >= kMinHost && base <= (vm_uintptr_t)0xffffffff - (vm_uintptr_t)size) {
+					addr = p;
+					break;
+				}
+				VirtualFree(p, 0, MEM_RELEASE);
+			}
+		}
+	}
+	if (addr == NULL) {
+		if ((addr = VirtualAlloc(NULL, size, alloc_type, PAGE_EXECUTE_READWRITE)) == NULL)
+			return VM_MAP_FAILED;
+	}
+	if ((options & VM_MAP_32BIT) && sizeof(void *) == 8) {
+		vm_uintptr_t base = (vm_uintptr_t)addr;
+		/* Reject high (>4GB) and below-NATMEM pointers. */
+		if (base > (vm_uintptr_t)0xffffffff || base < (vm_uintptr_t)0x12000000) {
+			VirtualFree(addr, 0, MEM_RELEASE);
+			return VM_MAP_FAILED;
+		}
+	}
 #else
 	if ((addr = calloc(size, 1)) == 0)
 		return VM_MAP_FAILED;

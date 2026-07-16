@@ -1,0 +1,136 @@
+/*
+ *  gl_device.cpp - Shared OpenGL + SDL context for gfxaccel
+ */
+
+#include "sysdeps.h"
+#include "gl_device.h"
+
+#include <SDL.h>
+#include <SDL_opengl.h>
+
+#include <cstdio>
+#include <cstring>
+
+extern SDL_Window *sdl_window;
+
+static SDL_GLContext s_gl_ctx = nullptr;
+static bool s_ready = false;
+
+/* Opaque sentinels so code that null-checks SharedMetalDevice() still works. */
+static char s_device_sentinel = 1;
+static char s_queue_sentinel = 1;
+
+bool GfxGLDeviceInit(void)
+{
+	if (s_ready && s_gl_ctx)
+		return true;
+
+	if (!sdl_window) {
+		fprintf(stderr, "[gfxaccel-gl] GfxGLDeviceInit: sdl_window is NULL\n");
+		return false;
+	}
+
+	/* Prefer a compatibility profile so Mac GL 1.2 FFP maps cleanly. */
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+#if defined(SDL_GL_CONTEXT_PROFILE_MASK)
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+#endif
+
+	if (s_gl_ctx) {
+		SDL_GL_DeleteContext(s_gl_ctx);
+		s_gl_ctx = nullptr;
+	}
+
+	s_gl_ctx = SDL_GL_CreateContext(sdl_window);
+	if (!s_gl_ctx) {
+		fprintf(stderr, "[gfxaccel-gl] SDL_GL_CreateContext failed: %s\n", SDL_GetError());
+		s_ready = false;
+		return false;
+	}
+
+	if (SDL_GL_MakeCurrent(sdl_window, s_gl_ctx) != 0) {
+		fprintf(stderr, "[gfxaccel-gl] SDL_GL_MakeCurrent failed: %s\n", SDL_GetError());
+		SDL_GL_DeleteContext(s_gl_ctx);
+		s_gl_ctx = nullptr;
+		s_ready = false;
+		return false;
+	}
+
+	/* Never block the emulator thread on vsync. Present is invoked from
+	 * VideoVBL on the emul thread; SwapInterval(1) + full-frame uploads
+	 * at 2560x1440 starves PPC execution and looks like a hard lockup. */
+	SDL_GL_SetSwapInterval(0);
+
+	const char *vendor = (const char *)glGetString(GL_VENDOR);
+	const char *renderer = (const char *)glGetString(GL_RENDERER);
+	const char *version = (const char *)glGetString(GL_VERSION);
+	fprintf(stderr, "[gfxaccel-gl] OpenGL ready: %s / %s / %s\n",
+	        vendor ? vendor : "?",
+	        renderer ? renderer : "?",
+	        version ? version : "?");
+
+	s_ready = true;
+	return true;
+}
+
+bool GfxGLDeviceMakeCurrent(void)
+{
+	if (!s_ready || !s_gl_ctx || !sdl_window)
+		return false;
+	return SDL_GL_MakeCurrent(sdl_window, s_gl_ctx) == 0;
+}
+
+void GfxGLDeviceShutdown(void)
+{
+	if (s_gl_ctx) {
+		if (sdl_window)
+			SDL_GL_MakeCurrent(sdl_window, nullptr);
+		SDL_GL_DeleteContext(s_gl_ctx);
+		s_gl_ctx = nullptr;
+	}
+	s_ready = false;
+}
+
+bool GfxGLDeviceIsReady(void)
+{
+	return s_ready && s_gl_ctx != nullptr;
+}
+
+void GfxGLDeviceSwap(void)
+{
+	if (!s_ready || !sdl_window)
+		return;
+	SDL_GL_SwapWindow(sdl_window);
+}
+
+void GfxGLDeviceGetDrawableSize(int *out_w, int *out_h)
+{
+	int w = 0, h = 0;
+	if (sdl_window)
+		SDL_GL_GetDrawableSize(sdl_window, &w, &h);
+	if (out_w) *out_w = w;
+	if (out_h) *out_h = h;
+}
+
+void *SharedMetalDevice(void)
+{
+	if (!s_ready)
+		GfxGLDeviceInit();
+	return s_ready ? (void *)&s_device_sentinel : nullptr;
+}
+
+void *SharedMetalCommandQueue(void)
+{
+	if (!s_ready)
+		GfxGLDeviceInit();
+	return s_ready ? (void *)&s_queue_sentinel : nullptr;
+}
+
+void MetalValidation_InstallErrorHandler(void * /*cmdBufPtr*/)
+{
+	/* no-op on OpenGL */
+}

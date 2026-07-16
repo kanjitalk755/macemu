@@ -30,6 +30,10 @@
 #include "main.h"
 #include "extfs_defs.h"
 #include "prefs.h"
+#include "cpu_emulation.h"
+#if defined(SHEEPSHAVER)
+#include "thunks.h"  /* SheepMem::Reserve — guest-addressable scratch */
+#endif
 #include <ctype.h>
 
 
@@ -398,7 +402,38 @@ void init_posix_emu(void)
 			if(fd >= 0) {
 				my_write( fd, my_comp_icon, sizeof(my_comp_icon) );
 				my_close(fd);
-				// need room for the things from around the finfo that set_finfo reads
+				/*
+				 * Finder-info scratch for get_finfo/set_finfo.
+				 *
+				 * Under SheepShaver DIRECT_ADDRESSING + NATMEM_OFFSET,
+				 * Host2MacAddr() only works for pointers inside the guest
+				 * RAM image. A host static buffer is outside that range, so
+				 * Mac_memset(finfo) would write through a bogus NATMEM
+				 * address and crash in vm_memset during ExtFS init.
+				 *
+				 * Keep the scratch in guest-addressable storage:
+				 * SheepMem for SheepShaver; host buffer + Host2MacAddr for
+				 * Basilisk II (REAL/flat addressing).
+				 */
+#if defined(SHEEPSHAVER)
+				uint32 finfo_area = SheepMem::Reserve(ioFlXFndrInfo + SIZEOF_FXInfo);
+				if (finfo_area == 0) {
+					my_remove(custom_icon_name);
+				} else {
+					Mac_memset(finfo_area, 0, ioFlXFndrInfo + SIZEOF_FXInfo);
+					uint32 finfo = finfo_area + ioFlFndrInfo;
+					get_finfo(custom_icon_name, finfo, 0, false);
+					WriteMacInt16(finfo + fdFlags, kIsInvisible);
+					if (stat_result == 0) {
+						WriteMacInt32(finfo - ioFlFndrInfo + ioFlCrDat, TimeToMacTime(custom_icon_stat.st_ctime));
+						WriteMacInt32(finfo - ioFlFndrInfo + ioFlMdDat, TimeToMacTime(custom_icon_stat.st_mtime));
+					}
+					set_finfo(custom_icon_name, finfo, 0, false);
+					get_finfo(my_computer, finfo, 0, true);
+					WriteMacInt16(finfo + fdFlags, ReadMacInt16(finfo + fdFlags) | kHasCustomIcon);
+					set_finfo(my_computer, finfo, 0, true);
+				}
+#else
 				static uint8 custom_icon_hfile[ioFlXFndrInfo + SIZEOF_FXInfo];
 				memset(custom_icon_hfile, 0, ioFlXFndrInfo + SIZEOF_FXInfo);
 				static uint8 * host_finfo = custom_icon_hfile + ioFlFndrInfo;
@@ -413,6 +448,7 @@ void init_posix_emu(void)
 				get_finfo(my_computer, finfo, 0, true);
 				WriteMacInt16(finfo + fdFlags, ReadMacInt16(finfo + fdFlags) | kHasCustomIcon);
 				set_finfo(my_computer, finfo, 0, true);
+#endif
 			} else {
 				my_remove(custom_icon_name);
 			}

@@ -156,9 +156,13 @@ extern bool NQD_sync_hook(uint32);
 extern bool NQD_bitblt_hook(uint32);
 extern bool NQD_fillrect_hook(uint32);
 extern bool NQD_unknown_hook(uint32);
+extern bool NQD_bltmask_hook(uint32);
+extern bool NQD_fillmask_hook(uint32);
 extern void NQD_bitblt(uint32);
 extern void NQD_invrect(uint32);
 extern void NQD_fillrect(uint32);
+extern void NQD_bltmask(uint32);
+extern void NQD_fillmask(uint32);
 
 extern bool keyfile_valid;
 

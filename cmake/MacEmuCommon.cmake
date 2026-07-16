@@ -217,12 +217,73 @@ function(macemu_sdl_sources b2_src outvar)
 endfunction()
 
 function(macemu_xplat_sources b2_src outvar)
+  # Prefer paths under a sibling tree when callers pass them via
+  # macemu_resolve_path; this helper alone always uses BasiliskII.
   set(srcs
     "${b2_src}/CrossPlatform/vm_alloc.cpp"
     "${b2_src}/CrossPlatform/sigsegv.cpp"
     "${b2_src}/CrossPlatform/video_blit.cpp"
   )
   set(${outvar} "${srcs}" PARENT_SCOPE)
+endfunction()
+
+# Resolve CrossPlatform TUs the same way as other shared SheepShaver sources:
+# SheepShaver/src/CrossPlatform/<f> may be a text stub ("../../../BasiliskII/...")
+# or a real override. Never compile a stale full copy the IDE shows while the
+# build silently uses BasiliskII — resolve_path picks the real file.
+function(macemu_xplat_sources_resolved ss_src b2_src outvar)
+  set(srcs)
+  foreach(f vm_alloc.cpp sigsegv.cpp video_blit.cpp)
+    macemu_resolve_path("${ss_src}/CrossPlatform/${f}" "${b2_src}/CrossPlatform/${f}" _p)
+    list(APPEND srcs "${_p}")
+  endforeach()
+  set(${outvar} "${srcs}" PARENT_SCOPE)
+endfunction()
+
+# Warn (or fail) when a SheepShaver path looks like a full source file while the
+# build actually compiles the BasiliskII twin — classic "MSVC didn't pick up my
+# edit" trap (text stubs are OK; large non-stub files are not).
+function(macemu_check_shared_source_traps ss_src b2_src)
+  set(_trap_files
+    CrossPlatform/sigsegv.cpp
+    CrossPlatform/vm_alloc.cpp
+    CrossPlatform/video_blit.cpp
+    bincue.cpp
+    cdrom.cpp
+    disk.cpp
+    prefs.cpp
+    Windows/sys_windows.cpp
+    Windows/clip_windows.cpp
+    Windows/posix_emu.cpp
+  )
+  set(_traps)
+  foreach(rel ${_trap_files})
+    set(_ss "${ss_src}/${rel}")
+    set(_b2 "${b2_src}/${rel}")
+    if(EXISTS "${_ss}" AND EXISTS "${_b2}" AND NOT IS_DIRECTORY "${_ss}")
+      file(SIZE "${_ss}" _sz)
+      if(_sz GREATER_EQUAL 200)
+        file(READ "${_ss}" _content LIMIT 200)
+        string(STRIP "${_content}" _content)
+        if(NOT _content MATCHES "\\.\\./")
+          # Full local copy. If it differs from B2, edits to either side confuse.
+          file(SHA256 "${_ss}" _hss)
+          file(SHA256 "${_b2}" _hb2)
+          if(NOT _hss STREQUAL _hb2)
+            list(APPEND _traps "${_ss} (differs from ${_b2})")
+          endif()
+        endif()
+      endif()
+    endif()
+  endforeach()
+  if(_traps)
+    message(WARNING
+      "Shared sources under SheepShaver differ from BasiliskII twins.\n"
+      "CMake may compile one path while you edit the other in the IDE:\n"
+      "  ${_traps}\n"
+      "Prefer a text stub (relative path to BasiliskII) unless this is an intentional SS-only override "
+      "listed explicitly in SheepShaver/CMakeLists.txt.")
+  endif()
 endfunction()
 
 # Windows router / ether / cdenable (shared between both emulators)

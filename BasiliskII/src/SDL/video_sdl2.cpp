@@ -71,6 +71,13 @@
 #include "vm_alloc.h"
 #include "cdrom.h"
 
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+#include "metal_compositor.h"
+#include "display_mode_controller.h"
+#include "gfxaccel_resources.h"
+#include "nqd_accel.h"
+#endif
+
 #define DEBUG 0
 #include "debug.h"
 
@@ -760,6 +767,10 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
 #if defined(__MACOSX__) && SDL_VERSION_ATLEAST(2,0,14)
 	if (MetalIsAvailable()) window_flags |= SDL_WINDOW_METAL;
 #endif
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+	/* Compositor presents via its own OpenGL context. */
+	window_flags |= SDL_WINDOW_OPENGL;
+#endif
 	
 	if (!sdl_window) {
 		float m = get_mag_rate();
@@ -787,6 +798,12 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
 	}
 
 	if (!sdl_renderer) {
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+		/* Keep a software SDL_Renderer only as a fallback when compositor
+		 * is not yet initialized; avoid creating a GL renderer that would
+		 * steal the window's OpenGL context from gfxaccel. */
+		SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+#else
 		const char *render_driver = PrefsFindString("sdlrender");
 		if (render_driver) {
 			SDL_SetHint(SDL_HINT_RENDER_DRIVER, render_driver);
@@ -800,6 +817,7 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
 			SDL_SetHint(SDL_HINT_RENDER_DRIVER, "");
 #endif
 	    }
+#endif
 
 		bool sdl_vsync = PrefsFindBool("sdl_vsync");
 		if (sdl_vsync) {
@@ -1063,6 +1081,12 @@ void driver_base::init()
 	the_buffer = (uint8 *)vm_acquire_framebuffer(the_buffer_size);
 	the_buffer_copy = (uint8 *)malloc(the_buffer_size);
 	D(bug("the_buffer = %p, the_buffer_copy = %p, the_host_buffer = %p\n", the_buffer, the_buffer_copy, the_host_buffer));
+#if defined(SHEEPSHAVER) && (REAL_ADDRESSING || DIRECT_ADDRESSING)
+	if (the_buffer != VM_MAP_FAILED && the_buffer != NULL) {
+		fprintf(stderr, "[video] framebuffer host=%p mac=%08x size=%u\n",
+		        the_buffer, (unsigned)Host2MacAddr(the_buffer), (unsigned)the_buffer_size);
+	}
+#endif
 
 	// Check whether we can initialize the VOSF subsystem and it's profitable
 	if (!video_vosf_init(monitor)) {
@@ -1085,14 +1109,86 @@ void driver_base::init()
 		the_buffer_size = (aligned_height + 2) * pitch;
 		the_buffer_copy = (uint8 *)calloc(1, the_buffer_size);
 		the_buffer = (uint8 *)vm_acquire_framebuffer(the_buffer_size);
-		memset(the_buffer, 0, the_buffer_size);
+		if (the_buffer == VM_MAP_FAILED || the_buffer == NULL) {
+			fprintf(stderr, "[video] FATAL: framebuffer alloc failed size=%u\n",
+			        (unsigned)the_buffer_size);
+		} else {
+			memset(the_buffer, 0, the_buffer_size);
+		}
 		D(bug("the_buffer = %p, the_buffer_copy = %p\n", the_buffer, the_buffer_copy));
+#if defined(SHEEPSHAVER) && (REAL_ADDRESSING || DIRECT_ADDRESSING)
+		if (the_buffer != VM_MAP_FAILED && the_buffer != NULL) {
+			uint32 mac = Host2MacAddr(the_buffer);
+			uint8 *roundtrip = Mac2HostAddr(mac);
+			fprintf(stderr,
+			        "[video] framebuffer host=%p mac=%08x size=%u pitch=%d roundtrip=%p %s\n",
+			        the_buffer, (unsigned)mac, (unsigned)the_buffer_size, pitch,
+			        roundtrip, (roundtrip == the_buffer) ? "OK" : "MISMATCH");
+			/* Probe store through the guest address path used by GrayPage. */
+			WriteMacInt32(mac, 0xA5A5A5A5);
+			uint32 got = ReadMacInt32(mac);
+			if (got != 0xA5A5A5A5)
+				fprintf(stderr, "[video] FATAL: framebuffer probe R/W failed got=%08x\n",
+				        (unsigned)got);
+			WriteMacInt32(mac, 0);
+		}
+#endif
 	}
 
 	set_video_mode(display_type == DISPLAY_SCREEN ? SDL_WINDOW_FULLSCREEN : 0, pitch);
 
 	// Set frame buffer base
 	set_mac_frame_buffer(monitor, VIDEO_MODE_DEPTH, true);
+
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+	{
+		int fb_width = VIDEO_MODE_X;
+		int fb_height = VIDEO_MODE_Y;
+		/* Ensure DMC exists before compositor subscribe. */
+		if (!dmc_current_snapshot()) {
+			DMCModeDesc desc = {};
+			desc.width = (uint32_t)fb_width;
+			desc.height = (uint32_t)fb_height;
+			/* DMC wants bits-per-pixel from {1,2,4,8,16,32}. */
+			desc.depth = (uint32_t)mac_depth_of_video_depth(VIDEO_MODE_DEPTH);
+			desc.row_bytes = (uint32_t)VIDEO_MODE_ROW_BYTES;
+			desc.pitch = (uint32_t)pitch;
+			desc.screen_base_host = the_buffer;
+			dmc_create(&desc);
+		}
+		if (MetalCompositorIsInitialized()) {
+			/* Keep DMC snapshot in sync with guest mode (generation bump). */
+			{
+				DMCModeDesc desc = {};
+				desc.width = (uint32_t)fb_width;
+				desc.height = (uint32_t)fb_height;
+				desc.depth = (uint32_t)mac_depth_of_video_depth(VIDEO_MODE_DEPTH);
+				desc.row_bytes = (uint32_t)VIDEO_MODE_ROW_BYTES;
+				desc.pitch = (uint32_t)pitch;
+				desc.screen_base_host = the_buffer;
+				dmc_request_mode_switch(&desc);
+			}
+			int rc = MetalCompositorResize(fb_width, fb_height, VIDEO_MODE_DEPTH,
+			                               VIDEO_MODE_ROW_BYTES, pitch, the_buffer, the_buffer_size);
+			if (rc != 0)
+				fprintf(stderr, "[gfxaccel] compositor resize failed %d\n", rc);
+		} else {
+			int rc = MetalCompositorInit(fb_width, fb_height, VIDEO_MODE_DEPTH,
+			                             VIDEO_MODE_ROW_BYTES, pitch, the_buffer, the_buffer_size);
+			if (rc != 0) {
+				fprintf(stderr, "[gfxaccel] compositor init failed %d\n", rc);
+				MetalCompositorShutdown();
+			} else {
+				int32_t gre = gfxaccel_resources_init();
+				if (gre != 0)
+					fprintf(stderr, "[gfxaccel] resources init failed %d\n", (int)gre);
+			}
+		}
+		uint8_t bw_pal[6] = {255,255,255, 0,0,0};
+		MetalCompositorUpdatePalette(bw_pal, 2);
+		dmc_record_palette_change();
+	}
+#endif
 
 	adapt_to_video_mode();
 	
@@ -1160,6 +1256,13 @@ driver_base::~driver_base()
 {
 	ungrab_mouse();
 	restore_mouse_accel();
+
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+	/* Tear down gfxaccel before releasing the framebuffer backing. */
+	gfxaccel_resources_shutdown();
+	MetalCompositorShutdown();
+	NQDMetalCleanup();
+#endif
 
 	// HACK: Just delete instances of SDL_Surface and SDL_Texture, rather
 	// than also the SDL_Window and SDL_Renderer.  This fixes a bug whereby
@@ -1783,8 +1886,17 @@ void VideoVBL(void)
 
 	if (toggle_fullscreen)
 		do_toggle_fullscreen();
-	
+
+#if defined(ENABLE_GFXACCEL)
+	if (nqd_metal_available)
+		NQDMetalFlush();
+	if (MetalCompositorIsInitialized())
+		MetalCompositorPresent();
+	else
+		present_sdl_video();
+#else
 	present_sdl_video();
+#endif
 
 	// Temporarily give up frame buffer lock (this is the point where
 	// we are suspended when the user presses Ctrl-Tab)
@@ -1893,6 +2005,11 @@ void SDL_monitor_desc::set_palette(uint8 *pal, int num_in)
 
 	// Tell redraw thread to change palette
 	sdl_palette_changed = true;
+
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+	MetalCompositorUpdatePalette(pal, num_in);
+	dmc_record_palette_change();
+#endif
 
 	UNLOCK_PALETTE;
 }

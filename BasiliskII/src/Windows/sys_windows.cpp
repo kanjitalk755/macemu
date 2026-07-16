@@ -506,18 +506,54 @@ void *Sys_open(const char *path_name, bool read_only, bool is_cdrom)
 		}
 	}
 
-	else { // Hard file
+	else { // Hard file / image file
 
 		// Check if write access is allowed, set read-only flag if not
 		if (!read_only && is_read_only_path(name))
 			read_only = true;
 
-		// Open file
-
 #if defined(BINCUE)
-		void *binfd = open_bincue(name); // check if bincue
+		/*
+		 * BIN/CUE images: open via open_bincue() using the original narrow
+		 * path_name (never the TCHAR buffer — wrong under UNICODE builds).
+		 * Match Unix Sys_open: on success return immediately; do not require
+		 * CreateFile on the .cue text file (that only produced a useless
+		 * handle and hid open_bincue failures when the cue path was wrong).
+		 */
+		{
+			void *binfd = open_bincue(path_name);
+			if (binfd) {
+				fh = new file_handle;
+				fh->name = _tcsdup(name);
+				fh->fh = NULL;
+				fh->is_file = true;
+				fh->read_only = true;
+				fh->start_byte = 0;
+				fh->file_size = 0;
+				fh->is_floppy = false;
+				fh->is_cdrom = true; /* CD image semantics for the driver */
+				fh->bincue_fd = binfd;
+				fh->is_bincue = true;
+				fh->is_media_present = true;
+				fprintf(stderr, "[bincue] mounted %s\n", path_name);
+				fflush(stderr);
+				sys_add_file_handle(fh);
+				return fh;
+			}
+			/* Help diagnose prefs paths that no longer exist or fail parse. */
+			{
+				const char *dot = strrchr(path_name, '.');
+				if (dot && (_stricmp(dot, ".cue") == 0 || _stricmp(dot, ".CUE") == 0)) {
+					fprintf(stderr,
+					        "[bincue] FAILED to open '%s' (missing cue/bin or parse error)\n",
+					        path_name);
+					fflush(stderr);
+				}
+			}
+		}
 #endif
 
+		// Open plain disk/CD image file
 		HANDLE h = CreateFile(
 			name,
 			read_only ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
@@ -540,17 +576,8 @@ void *Sys_open(const char *path_name, bool read_only, bool is_cdrom)
 			fh->read_only = read_only;
 			fh->start_byte = 0;
 			fh->is_floppy = false;
-			fh->is_cdrom = false;
-
-#if defined(BINCUE)
-			if (binfd) {
-				fh->bincue_fd = binfd;
-				fh->is_bincue = true;
-				fh->is_media_present = true;
-				sys_add_file_handle(fh);
-				return fh;
-			}
-#endif
+			/* Prefer caller flag so cdrom prefs on .iso/.img stay CD drives */
+			fh->is_cdrom = is_cdrom;
 
 			// Detect disk image file layout
 			loff_t size = GetFileSize(h, NULL);
@@ -558,6 +585,8 @@ void *Sys_open(const char *path_name, bool read_only, bool is_cdrom)
 			uint8 data[256];
 			ReadFile(h, data, sizeof(data), &bytes_read, NULL);
 			FileDiskLayout(size, data, fh->start_byte, fh->file_size);
+			if (is_cdrom)
+				fh->is_media_present = true;
 		}
 	}
 

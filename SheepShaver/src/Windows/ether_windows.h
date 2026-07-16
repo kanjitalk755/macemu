@@ -1,1 +1,3 @@
-../../../BasiliskII/src/Windows/ether_windows.h
+/* Auto-fixed text-symlink stub: include the real Basilisk II file. */
+#pragma once
+#include "../../../BasiliskII/src/Windows/ether_windows.h"

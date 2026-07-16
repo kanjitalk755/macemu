@@ -1041,10 +1041,8 @@ static bool ix86_skip_instruction(SIGSEGV_REGISTER_TYPE * regs)
 
 	if (eip == 0)
 		return false;
-#ifdef _WIN32
-	if (IsBadCodePtr((FARPROC)eip))
-		return false;
-#endif
+	/* Do not use IsBadCodePtr(): it is unreliable on modern Windows/x64 and
+	 * can false-fail, which turns every ignoresegv into a re-fault loop. */
 	
 	enum instruction_type_t {
 		i_MOV,
@@ -1222,7 +1220,7 @@ static bool ix86_skip_instruction(SIGSEGV_REGISTER_TYPE * regs)
 #endif
 		};
 		
-		if (reg < 0 || reg >= (sizeof(x86_reg_map)/sizeof(x86_reg_map[0]) - 1))
+		if (reg < 0 || reg >= (int)(sizeof(x86_reg_map)/sizeof(x86_reg_map[0])))
 			return false;
 
 		// Set 0 to the relevant register part
@@ -3081,12 +3079,43 @@ static bool sigsegv_do_install_handler(sigsegv_fault_handler_t handler)
 #endif
 
 #ifdef HAVE_WIN32_EXCEPTIONS
+/*
+ * Shared ACCESS_VIOLATION recovery used by both the top-level filter and the
+ * vectored exception handler. Returns true if the fault was handled (instruction
+ * skipped / recovered) and execution should continue at the (possibly updated)
+ * context.
+ *
+ * IMPORTANT: SetUnhandledExceptionFilter is NOT invoked while a debugger is
+ * attached (MSDN). Under VS/cdb that meant ignoresegv never ran: the same
+ * guest unmapped load (e.g. vm_do_read_memory_4) re-faulted forever as
+ * first-chance/second-chance "exception thrown" loops. A Vectored Exception
+ * Handler still runs after first-chance continue and fixes that.
+ */
+static bool win32_try_handle_access_violation(EXCEPTION_POINTERS *ExceptionInfo)
+{
+	if (sigsegv_fault_handler == NULL)
+		return false;
+	if (ExceptionInfo == NULL || ExceptionInfo->ExceptionRecord == NULL)
+		return false;
+	if (ExceptionInfo->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
+		return false;
+	if (ExceptionInfo->ExceptionRecord->NumberParameters < 2)
+		return false;
+	return handle_badaccess(ExceptionInfo);
+}
+
 static LONG WINAPI main_exception_filter(EXCEPTION_POINTERS *ExceptionInfo)
 {
-	if (sigsegv_fault_handler != NULL
-		&& ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION
-		&& ExceptionInfo->ExceptionRecord->NumberParameters >= 2
-		&& handle_badaccess(ExceptionInfo))
+	if (win32_try_handle_access_violation(ExceptionInfo))
+		return EXCEPTION_CONTINUE_EXECUTION;
+
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+/* First-chance path that works with a debugger attached. */
+static LONG WINAPI main_vectored_exception_handler(EXCEPTION_POINTERS *ExceptionInfo)
+{
+	if (win32_try_handle_access_violation(ExceptionInfo))
 		return EXCEPTION_CONTINUE_EXECUTION;
 
 	return EXCEPTION_CONTINUE_SEARCH;
@@ -3150,10 +3179,35 @@ do_install_main_exception_filter ()
 
 #else
 
+static PVOID win32_veh_handle = NULL;
+
 static void
 do_install_main_exception_filter ()
 {
+  /* Keep the top-level filter for non-debug runs (and as a backstop). */
   SetUnhandledExceptionFilter ((LPTOP_LEVEL_EXCEPTION_FILTER) &main_exception_filter);
+
+  /*
+   * Vectored handler: required so ignoresegv/instruction-skip works under
+   * Visual Studio / cdb. Call with FirstHandler=TRUE so we run early among
+   * VEHs. Still only claims ACCESS_VIOLATIONs we can recover.
+   */
+  if (win32_veh_handle == NULL) {
+    win32_veh_handle = AddVectoredExceptionHandler(
+        1 /* FirstHandler */,
+        main_vectored_exception_handler);
+    if (win32_veh_handle == NULL) {
+      fprintf(stderr,
+              "[sigsegv] AddVectoredExceptionHandler failed (err=%lu); "
+              "ignoresegv will not work under a debugger\n",
+              (unsigned long)GetLastError());
+      fflush(stderr);
+    } else {
+      fprintf(stderr,
+              "[sigsegv] VEH installed (ignoresegv works with debugger attached)\n");
+      fflush(stderr);
+    }
+  }
 }
 #endif
 
@@ -3207,6 +3261,12 @@ void sigsegv_deinstall_handler(void)
 #endif
 #ifdef HAVE_WIN32_EXCEPTIONS
 	sigsegv_fault_handler = NULL;
+#if !(defined __CYGWIN__ && defined __i386__)
+	if (win32_veh_handle != NULL) {
+		RemoveVectoredExceptionHandler(win32_veh_handle);
+		win32_veh_handle = NULL;
+	}
+#endif
 #endif
 }
 

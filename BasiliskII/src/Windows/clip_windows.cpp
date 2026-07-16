@@ -28,6 +28,9 @@
 #include "cpu_emulation.h"
 #include "main.h"
 #include "emul_op.h"
+#if defined(SHEEPSHAVER)
+#include "thunks.h"	/* SheepMem for 68k trampolines under NATMEM */
+#endif
 
 #define DEBUG 0
 #include "debug.h"
@@ -251,8 +254,12 @@ static void do_getscrap(void **handle, uint32 type, int32 offset)
 						break;
 					}
 
-					// Add new data to clipboard
-					static uint8 proc[] = {
+					// Add new data to clipboard via a tiny 68k trampoline.
+					// Under SheepShaver DIRECT_ADDRESSING + NATMEM_OFFSET,
+					// Host2MacAddr() only works for guest-mapped RAM — a host
+					// static array is outside that range and WriteMacInt32
+					// then crashes (vm_do_write_memory_4 AV on boot/scrap).
+					static const uint8 putscrap_proc_template[] = {
 						0x59, 0x8f,					// subq.l	#4,sp
 						0xa9, 0xfc,					// ZeroScrap()
 						0x2f, 0x3c, 0, 0, 0, 0,		// move.l	#length,-(sp)
@@ -262,12 +269,23 @@ static void do_getscrap(void **handle, uint32 type, int32 offset)
 						0x58, 0x8f,					// addq.l	#4,sp
 						uint8(M68K_RTS >> 8), uint8(M68K_RTS)
 					};
+#if defined(SHEEPSHAVER)
+					static uint32 proc_area = 0;
+					if (proc_area == 0)
+						proc_area = SheepProc(putscrap_proc_template,
+						                      sizeof(putscrap_proc_template));
+#else
+					static uint8 proc[sizeof(putscrap_proc_template)];
+					memcpy(proc, putscrap_proc_template, sizeof(proc));
 					uint32 proc_area = Host2MacAddr(proc);
-					WriteMacInt32(proc_area +  6, out_length);
-					WriteMacInt32(proc_area + 12, type);
-					WriteMacInt32(proc_area + 18, scrap_area);
-					we_put_this_data = true;
-					Execute68k(proc_area, &r);
+#endif
+					if (proc_area != 0) {
+						WriteMacInt32(proc_area +  6, out_length);
+						WriteMacInt32(proc_area + 12, type);
+						WriteMacInt32(proc_area + 18, scrap_area);
+						we_put_this_data = true;
+						Execute68k(proc_area, &r);
+					}
 
 					// We are done with scratch memory
 					r.a[0] = scrap_area;
