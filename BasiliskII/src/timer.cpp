@@ -24,6 +24,18 @@
 #include "main.h"
 #include "cpu_emulation.h"
 
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#include "qd3d_init_logging.h"
+static bool timer_descent_ii_is_current_application()
+{
+	return ReadMacInt32(0x0910) == 0x0a446573 &&
+	       ReadMacInt32(0x0914) == 0x63656e74 &&
+	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
+}
+#else
+#define QD3D_WAIT_LOG(...) do { } while (0)
+#endif
+
 #ifdef PRECISE_TIMING_POSIX
 #include <pthread.h>
 #include <semaphore.h>
@@ -338,6 +350,12 @@ void TimerReset(void)
 int16 InsTime(uint32 tm, uint16 trap)
 {
 	D(bug("InsTime %08lx, trap %04x\n", tm, trap));
+	#if QD3D_WAIT_LOGGING_ENABLED
+	if (timer_descent_ii_is_current_application())
+		QD3D_WAIT_LOG("InsTime tick=%u task=0x%08x callback=0x%08x trap=0x%04x qType=0x%04x",
+		              ReadMacInt32(0x016a), tm, ReadMacInt32(tm + tmAddr),
+		              trap, ReadMacInt16(tm + qType));
+	#endif
 	WriteMacInt16(tm + qType, (ReadMacInt16(tm + qType) & 0x1fff) | ((trap << 4) & 0x6000));
 	if (find_desc(tm))
 		printf("WARNING: InsTime(%08x): Task re-inserted\n", tm);
@@ -358,6 +376,12 @@ int16 InsTime(uint32 tm, uint16 trap)
 int16 RmvTime(uint32 tm)
 {
 	D(bug("RmvTime %08lx\n", tm));
+	#if QD3D_WAIT_LOGGING_ENABLED
+	if (timer_descent_ii_is_current_application())
+		QD3D_WAIT_LOG("RmvTime tick=%u task=0x%08x callback=0x%08x qType=0x%04x tmCount=%d",
+		              ReadMacInt32(0x016a), tm, ReadMacInt32(tm + tmAddr),
+		              ReadMacInt16(tm + qType), (int32)ReadMacInt32(tm + tmCount));
+	#endif
 
 	// Find descriptor
 	TMDesc *desc = find_desc(tm);
@@ -433,6 +457,13 @@ int16 RmvTime(uint32 tm)
 int16 PrimeTime(uint32 tm, int32 time)
 {
 	D(bug("PrimeTime %08x, time %d\n", tm, time));
+	#if QD3D_WAIT_LOGGING_ENABLED
+	if (timer_descent_ii_is_current_application())
+		QD3D_WAIT_LOG("PrimeTime tick=%u task=0x%08x callback=0x%08x requested=%d unit=%s qType=0x%04x",
+		              ReadMacInt32(0x016a), tm, ReadMacInt32(tm + tmAddr), time,
+		              time > 0 ? "msec" : (time < 0 ? "usec" : "zero"),
+		              ReadMacInt16(tm + qType));
+	#endif
 
 	// Find descriptor
 	TMDesc *desc = find_desc(tm);
@@ -616,6 +647,10 @@ void TimerInterrupt(void)
 		TMDesc *next = desc->next;
 		uint32 tm = desc->task;
 		if ((ReadMacInt16(tm + qType) & 0x8000) && timer_cmp_time(desc->wakeup, now) <= 0) {
+			#if QD3D_WAIT_LOGGING_ENABLED
+			const bool log_descent_timer = timer_descent_ii_is_current_application();
+			const uint64 callback_started = GetTicks_usec();
+			#endif
 
 			// Found one, mark as inactive and remove it from the Time Manager queue
 			WriteMacInt16(tm + qType, ReadMacInt16(tm + qType) & 0x7fff);
@@ -631,6 +666,14 @@ void TimerInterrupt(void)
 				Execute68k(r.a[0], &r);
 				D(bug(" returned from TimeTask\n"));
 			}
+			#if QD3D_WAIT_LOGGING_ENABLED
+			if (log_descent_timer)
+				QD3D_WAIT_LOG("TimeTask fired tick=%u task=0x%08x callback=0x%08x callbackUsec=%llu qType=0x%04x tmCount=%d",
+				              ReadMacInt32(0x016a), tm, addr,
+				              (unsigned long long)(GetTicks_usec() - callback_started),
+				              ReadMacInt16(tm + qType),
+				              (int32)ReadMacInt32(tm + tmCount));
+			#endif
 		}
 		desc = next;
 	}

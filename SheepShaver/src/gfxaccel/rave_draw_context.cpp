@@ -505,7 +505,7 @@ static RaveDrawPrivate *GetContextFromDrawAddr(uint32 drawContextAddr)
 	return RaveGetContext(handle);
 }
 
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 static bool ShouldTraceStateTag(uint32 tag)
 {
 	/* Rendering decisions, texture selection, fog/clear values, and the GL
@@ -545,7 +545,7 @@ int32 NativeSetFloat(uint32 drawContextAddr, uint32 tag, uint32 valueBits)
 			float oldValue;
 			memcpy(&oldValue, &oldBits, sizeof(float));
 			ctx->ati_state[ati_idx].i = valueBits;
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 			if (oldValue != value) {
 				static uint64_t changes = 0;
 				if (ShouldTraceStateChange(++changes))
@@ -584,7 +584,7 @@ int32 NativeSetFloat(uint32 drawContextAddr, uint32 tag, uint32 valueBits)
 	ctx->state[tag].i = valueBits;
 	if (oldBits != valueBits)
 		ctx->dirty_flags |= (1u << (tag & 31));
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (oldValue != value && ShouldTraceStateTag(tag)) {
 		static uint64_t changes = 0;
 		changes++;
@@ -618,7 +618,7 @@ int32 NativeSetInt(uint32 drawContextAddr, uint32 tag, uint32 value)
 		if (ati_idx < RAVE_ATI_TAG_COUNT) {
 			uint32 oldValue = ctx->ati_state[ati_idx].i;
 			ctx->ati_state[ati_idx].i = value;
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 			if (oldValue != value) {
 				static uint64_t changes = 0;
 				if (ShouldTraceStateChange(++changes))
@@ -650,7 +650,7 @@ int32 NativeSetInt(uint32 drawContextAddr, uint32 tag, uint32 value)
 	ctx->state[tag].i = value;
 	if (oldValue != value)
 		ctx->dirty_flags |= (1u << (tag & 31));
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (oldValue != value && ShouldTraceStateTag(tag)) {
 		static uint64_t changes = 0;
 		changes++;
@@ -727,7 +727,7 @@ int32 NativeSetPtr(uint32 drawContextAddr, uint32 tag, uint32 ptr)
 		if (ati_idx < RAVE_ATI_TAG_COUNT) {
 			uint32 oldPtr = ctx->ati_state[ati_idx].i;
 			ctx->ati_state[ati_idx].i = ptr;
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 			if (oldPtr != ptr) {
 				static uint64_t changes = 0;
 				if (ShouldTraceStateChange(++changes))
@@ -747,7 +747,7 @@ int32 NativeSetPtr(uint32 drawContextAddr, uint32 tag, uint32 ptr)
 	ctx->state[tag].i = ptr;  // Mac address stored as uint32
 	if (oldPtr != ptr)
 		ctx->dirty_flags |= (1u << (tag & 31));
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (oldPtr != ptr && ShouldTraceStateTag(tag)) {
 		static uint64_t changes = 0;
 		changes++;

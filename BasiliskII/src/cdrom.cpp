@@ -45,6 +45,16 @@ using std::vector;
 #include "prefs.h"
 #include "cdrom.h"
 
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#include "qd3d_init_logging.h"
+#else
+#define QD3D_MEDIA_LOG(...) do { } while (0)
+#endif
+
+#ifndef QD3D_MEDIA_LOGGING_ENABLED
+#define QD3D_MEDIA_LOGGING_ENABLED 0
+#endif
+
 #define DEBUG 0
 #include "debug.h"
 
@@ -164,6 +174,15 @@ uint32 CDROMIconAddr;
 static bool acc_run_called = false;
 
 static std::map<int, void *> remount_map;
+
+#if QD3D_MEDIA_LOGGING_ENABLED
+static bool descent_ii_is_current_application()
+{
+	return ReadMacInt32(0x0910) == 0x0a446573 &&
+	       ReadMacInt32(0x0914) == 0x63656e74 &&
+	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
+}
+#endif
 
 /*
  *  Get pointer to drive info or drives.end() if not found
@@ -604,7 +623,30 @@ int16 CDROMPrime(uint32 pb, uint32 dce)
 	if ((ReadMacInt16(pb + ioTrap) & 0xff) == aRdCmd) {
 		
 		// Read
+#if QD3D_MEDIA_LOGGING_ENABLED
+		const uint64 read_started = GetTicks_usec();
+#endif
 		actual = Sys_read(info->fh, buffer, position + info->start_byte, length);
+#if QD3D_MEDIA_LOGGING_ENABLED
+		const uint64 read_usec = GetTicks_usec() - read_started;
+		if (descent_ii_is_current_application()) {
+			static uint32 descent_read_count = 0;
+			descent_read_count++;
+			const uint16 trap = ReadMacInt16(pb + ioTrap);
+			QD3D_MEDIA_LOG("Descent CD read=%u tick=%u pb=0x%08x qLink=0x%08x ioResult=%d completion=0x%08x position=%lld imagePosition=%lld bytes=%u actual=%u async=%u noQueue=%u completionPath=%s usec=%llu",
+			                  descent_read_count, ReadMacInt32(0x016a), pb,
+			                  ReadMacInt32(pb + qLink),
+			                  (int16)ReadMacInt16(pb + ioResult),
+			                  ReadMacInt32(pb + ioCompletion),
+			                  (long long)position,
+			                  (long long)(position + info->start_byte),
+			                  (unsigned)length, (unsigned)actual,
+			                  (trap >> asyncTrpBit) & 1,
+			                  (trap >> noQueueBit) & 1,
+			                  (trap & (1 << noQueueBit)) ? "direct" : "JIODone",
+			                  (unsigned long long)read_usec);
+		}
+#endif
 		if (actual != length) {
 			
 			// Read error, tried to read HFS root block?

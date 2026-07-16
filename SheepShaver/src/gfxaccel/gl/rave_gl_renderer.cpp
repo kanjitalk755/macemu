@@ -144,7 +144,7 @@ static bool trace_frame(const RaveDrawPrivate *priv)
 
 static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector);
 
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 static void trace_overlay_readback(const RaveDrawPrivate *priv,
 	                               const RaveMetalState *ms,
 	                               const char *stage)
@@ -245,11 +245,8 @@ void RaveCreateMetalOverlay(int32_t left, int32_t top, int32_t width, int32_t he
 	s_dst_l = left; s_dst_t = top; s_dst_w = width; s_dst_h = height;
 	if (width > 0 && height > 0)
 		acquire_overlay((uint32_t)width, (uint32_t)height);
-	/* Creating a draw context only vends its render target.  Descent creates
-	 * the context while its first QuickTime movie is already playing; claiming
-	 * display ownership here clears the live compositor layers even though no
-	 * RAVE frame exists yet.  NativeRenderEnd performs the ownership transition
-	 * immediately before publishing the first completed overlay. */
+	if (s_overlay_tex)
+		(void)dmc_set_active_owner(kDMCOwnerRAVE);
 	QD3D_INIT_LOG("RaveCreateMetalOverlay(GL): texture=%u pair=(%u,%u) allocated=%ux%u",
 	              (unsigned)s_overlay_tex, (unsigned)s_overlay_pair[0],
 	              (unsigned)s_overlay_pair[1], s_ow, s_oh);
@@ -621,7 +618,7 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 	const uint64_t notice_count = ++notice_counts[selector];
 	const bool log_notice = trace_sample(notice_count);
 	if (selector == 3u || selector == 4u) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		const auto notice_start = std::chrono::steady_clock::now();
 #endif
 		if (!copy_overlay_to_guest(priv, ms)) {
@@ -629,7 +626,7 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 			                selector, callback);
 			return;
 		}
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		const auto readback_done = std::chrono::steady_clock::now();
 #endif
 		if (!ms->notice_device_mac)
@@ -652,14 +649,14 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 		unbind_fbo();
 		call_macos4(callback, priv->drawContextAddr, ms->notice_device_mac,
 		            ms->notice_dirty_rect_mac, refcon);
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		const auto callback_done = std::chrono::steady_clock::now();
 #endif
 		const bool uploaded = upload_guest_to_overlay(
 		    ms, ms->notice_dirty_rect_mac);
 		const bool restored = uploaded || restore_overlay_fbo(ms);
 		ms->pass_active = restored;
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		if (log_notice || !uploaded) {
 			const auto upload_done = std::chrono::steady_clock::now();
 			const auto readback_usec = std::chrono::duration_cast<
@@ -817,7 +814,7 @@ static GLuint bind_current_texture(RaveDrawPrivate *priv)
 	assert(priv->metal != nullptr);
 	uint32_t tex_mac = priv->state[13].i; /* kQATag_Texture */
 	if (!tex_mac) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		priv->metal->missing_textures++;
 #endif
 		glDisable(GL_TEXTURE_2D);
@@ -826,7 +823,7 @@ static GLuint bind_current_texture(RaveDrawPrivate *priv)
 	uint32_t handle = RaveResourceFindByAddr(tex_mac);
 	RaveResourceEntry *entry = RaveResourceGet(handle);
 	if (!entry) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		uint64_t missing = ++priv->metal->missing_textures;
 		if (trace_sample(missing, 8, 256))
 			QD3D_RENDER_LOG("texture bind rejected: guest=0x%08x has no resource (missing=%llu)",
@@ -841,7 +838,7 @@ static GLuint bind_current_texture(RaveDrawPrivate *priv)
 		RaveRefreshTextureFromPixmap(entry);
 
 	if (!entry->metal_texture) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		uint64_t missing = ++priv->metal->missing_textures;
 		if (trace_sample(missing, 8, 256)) {
 			QD3D_RENDER_LOG("texture bind unrealized: guest=0x%08x handle=%u type=%u size=%ux%u pixelType=%u (missing=%llu)",
@@ -854,7 +851,7 @@ static GLuint bind_current_texture(RaveDrawPrivate *priv)
 		return 0;
 	}
 	GLuint tex = (GLuint)(uintptr_t)entry->metal_texture;
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	priv->metal->texture_binds++;
 	if (priv->metal->texture_binds <= 8 && trace_frame(priv)) {
 			QD3D_RENDER_LOG("frame=%u textureBind=%llu guest=0x%08x handle=%u gl=%u size=%ux%u mips=%u pixelType=%u filter=%u op=0x%x rgbNonzero=%u alphaZero=%u",
@@ -897,7 +894,7 @@ static GLuint bind_texture_unit(RaveDrawPrivate *priv, uint32_t tex_mac, int uni
 	if (ext.multitex && ext.ActiveTexture)
 		ext.ActiveTexture(GL_TEXTURE0 + unit);
 	if (!tex_mac) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		priv->metal->missing_textures++;
 #endif
 		glDisable(GL_TEXTURE_2D);
@@ -906,7 +903,7 @@ static GLuint bind_texture_unit(RaveDrawPrivate *priv, uint32_t tex_mac, int uni
 	uint32_t handle = RaveResourceFindByAddr(tex_mac);
 	RaveResourceEntry *entry = RaveResourceGet(handle);
 	if (!entry) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		priv->metal->missing_textures++;
 #endif
 		glDisable(GL_TEXTURE_2D);
@@ -917,14 +914,14 @@ static GLuint bind_texture_unit(RaveDrawPrivate *priv, uint32_t tex_mac, int uni
 	else if (RaveTextureNeedsLivePixmapRefresh(entry))
 		RaveRefreshTextureFromPixmap(entry);
 	if (!entry->metal_texture) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		priv->metal->missing_textures++;
 #endif
 		glDisable(GL_TEXTURE_2D);
 		return 0;
 	}
 	GLuint tex = (GLuint)(uintptr_t)entry->metal_texture;
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	priv->metal->texture_binds++;
 #endif
 	glEnable(GL_TEXTURE_2D);
@@ -951,7 +948,7 @@ static bool accept_draw(RaveDrawPrivate *priv, const char *kind, uint32_t vertic
 	if (!priv || !priv->metal) return false;
 	RaveMetalState *ms = priv->metal;
 	if (!ms->pass_active) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		ms->dropped_draws++;
 		if (trace_sample(ms->dropped_draws, 8, 256)) {
 			QD3D_RENDER_LOG("DROP %s: frame=%u vertices=%u render pass inactive totalDropped=%llu",
@@ -967,7 +964,7 @@ static bool accept_draw(RaveDrawPrivate *priv, const char *kind, uint32_t vertic
 static void record_draw(RaveDrawPrivate *priv, const char *kind, uint32_t vertices,
 	                    bool textured, const HostV *first)
 {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (!priv || !priv->metal) return;
 	RaveMetalState *ms = priv->metal;
 	ms->draw_calls++;
@@ -1109,12 +1106,12 @@ static void apply_draw_state(RaveDrawPrivate *priv, bool textured)
 		 * block cached. */
 		if (textured)
 			bind_current_texture(priv);
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		ms->state_cache_hits++;
 #endif
 		return;
 	}
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	ms->state_applies++;
 #endif
 	apply_blend(priv);
@@ -1453,7 +1450,7 @@ int32_t NativeRenderStart(uint32_t drawContextAddr, uint32_t dirtyRectAddr, uint
 	ms->pass_active = true;
 	priv->frameCount++;
 	priv->zsortCount = 0;
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	ms->draw_calls = 0;
 	ms->vertices = 0;
 	ms->textured_draws = 0;
@@ -1491,7 +1488,7 @@ int32_t NativeRenderStart(uint32_t drawContextAddr, uint32_t dirtyRectAddr, uint
 	/* Metal fires the image-buffer initializer after the render target has
 	 * been cleared/loaded and before the first 3D draw. */
 	fire_notice_method(priv, 3);
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (trace_frame(priv)) {
 		int32_t dl = 0, dr = 0, dt = 0, db = 0;
 		if (dirtyRectAddr) {
@@ -1534,13 +1531,13 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 	 * active display format, composites its CPU-side 2D content, and returns a
 	 * dirty rectangle. Keep both trace stages so callback vs 3D failures are
 	 * distinguishable in one log. */
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	trace_overlay_readback(priv, ms, "pre-notice");
 #endif
 	fire_notice_method(priv, 4);
 	if (ms->pass_active) {
 		glFlush();
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		trace_overlay_readback(priv, ms, "post-notice");
 #endif
 		unbind_fbo();
@@ -1577,7 +1574,7 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 	if (submitResult == kGfxAccelNoErr) {
 		s_last_submitted_tex = s_overlay_tex;
 	}
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	GLenum glError = glGetError();
 	if (trace_frame(priv) || ownerResult != 0 || submitResult != 0 || glError != GL_NO_ERROR ||
 	    ms->missing_textures != 0 || ms->dropped_draws != 0) {

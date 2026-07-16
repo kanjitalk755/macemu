@@ -169,7 +169,7 @@ uint32 RaveDispatch(uint32 r3, uint32 r4, uint32 r5,
 	uint32 method_id = ReadMacInt32(rave_scratch_addr);
 
 	if (method_id < kRaveDrawMethodCount) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		static uint64_t drawDispatchCount[kRaveDrawMethodCount] = {};
 		uint64_t count = ++drawDispatchCount[method_id];
 		if (method_id >= kRaveDrawDrawPoint &&

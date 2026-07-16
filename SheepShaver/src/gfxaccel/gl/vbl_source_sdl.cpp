@@ -188,7 +188,7 @@ extern "C" void vbl_source_sdl_tick(double target_ts)
 	 * pump the event loop and encounter another VBL on this same thread; the
 	 * nested chain must not run the DSp drains or primary callback twice. */
 	if (s_in_callback.exchange(1) != 0) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		static uint64_t s_nested_tick_count = 0;
 		++s_nested_tick_count;
 		if (s_nested_tick_count <= 8 ||

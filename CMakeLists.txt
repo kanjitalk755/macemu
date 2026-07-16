@@ -39,6 +39,18 @@ option(ENABLE_GFXACCEL   "SheepShaver graphics accel (NQD/RAVE/GL/DSp)" ON)
 option(ENABLE_QD3D_INIT_LOGGING
   "Log focused SheepShaver QuickDraw 3D/RAVE initialization diagnostics"
   OFF)
+option(ENABLE_QD3D_GRAPHICS_LOGGING
+  "Enable high-volume QD3D graphics diagnostics when QD3D logging is enabled"
+  OFF)
+option(ENABLE_QD3D_AUDIO_LOGGING
+  "Enable sound component and SDL audio diagnostics when QD3D logging is enabled"
+  OFF)
+option(ENABLE_QD3D_MEDIA_LOGGING
+  "Enable CD/media I/O diagnostics when QD3D logging is enabled"
+  OFF)
+option(ENABLE_QD3D_WAIT_LOGGING
+  "Enable high-volume guest timing and wait diagnostics when QD3D logging is enabled"
+  OFF)
 # GFXACCEL_BACKEND: auto | opengl | metal
 # auto = Metal on Apple, OpenGL elsewhere
 set(GFXACCEL_BACKEND "auto" CACHE STRING "gfxaccel GPU backend (auto|opengl|metal)")
@@ -79,5 +91,9 @@ message(STATUS "  Sheep JIT    : ${ENABLE_SHEEPSHAVER_JIT}")
 message(STATUS "  SDL3         : ${USE_SDL3}")
 message(STATUS "  gfxaccel     : ${ENABLE_GFXACCEL} (${GFXACCEL_BACKEND})")
 message(STATUS "  QD3D init log: ${ENABLE_QD3D_INIT_LOGGING}")
+message(STATUS "  QD3D graphics log: ${ENABLE_QD3D_GRAPHICS_LOGGING}")
+message(STATUS "  QD3D audio log: ${ENABLE_QD3D_AUDIO_LOGGING}")
+message(STATUS "  QD3D media log: ${ENABLE_QD3D_MEDIA_LOGGING}")
+message(STATUS "  QD3D wait log: ${ENABLE_QD3D_WAIT_LOGGING}")
 message(STATUS "  Platform     : ${CMAKE_SYSTEM_NAME} / ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "")

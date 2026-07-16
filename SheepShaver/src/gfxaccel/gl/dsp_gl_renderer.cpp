@@ -302,7 +302,7 @@ void DSpEncodeBackBufferBlit(DSpContextPrivate *ctx, void * /*encoder*/, void * 
 			desc.generation = snap ? snap->generation : 0;
 			submit_result = MetalCompositorSubmitFrame(&desc);
 		}
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		static uint64_t present_count = 0;
 		present_count++;
 		if (present_count <= 8 || (present_count & (present_count - 1)) == 0 ||

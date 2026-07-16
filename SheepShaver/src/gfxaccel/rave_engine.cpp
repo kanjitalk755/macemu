@@ -1027,7 +1027,7 @@ bool ConvertPixels(uint32_t pixelType, uint32 srcAddr, uint8_t *dst,
 
 
 
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 static bool QD3DResourceTraceSample(uint64_t count)
 {
 	return count <= 32 || (count != 0 && (count & (count - 1)) == 0) ||
@@ -1044,7 +1044,7 @@ static bool QD3DResourceTraceSample(uint64_t count)
 static void RaveCreateTextureFromImages(uint32_t flags, uint32_t pixelType,
                                          uint32 imagesAddr, RaveResourceEntry *entry)
 {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	static uint64_t createCount = 0;
 	createCount++;
 #endif
@@ -1053,7 +1053,7 @@ static void RaveCreateTextureFromImages(uint32_t flags, uint32_t pixelType,
 	uint32_t h        = ReadMacInt32(imagesAddr + 4);
 	uint32_t rowBytes = ReadMacInt32(imagesAddr + 8);
 	uint32_t pixmap   = ReadMacInt32(imagesAddr + 12);
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (QD3DResourceTraceSample(createCount)) {
 		QD3D_RESOURCE_LOG("TextureNew count=%llu entry=0x%08x flags=0x%08x pixelType=%u images=0x%08x level0=%ux%u rowBytes=%u pixels=0x%08x",
 		                  (unsigned long long)createCount,
@@ -1196,7 +1196,7 @@ static void RaveCreateTextureFromImages(uint32_t flags, uint32_t pixelType,
 	} else {
 		RAVE_LOG("TextureNew WARN: Mac_sysalloc(%d) failed for cpu_pixel_data", cpuBufSize);
 	}
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (QD3DResourceTraceSample(createCount)) {
 		QD3D_RESOURCE_LOG("TextureNew ready count=%llu entry=0x%08x native=%p size=%ux%u mips=%u copied=%d indexed=%d cpu=0x%08x bytes=%u rgbNonzero=%u alphaZero=%u",
 		                  (unsigned long long)createCount, entry->mac_addr,
@@ -1301,7 +1301,7 @@ void RaveRealizeDeferredTexture(RaveResourceEntry *entry)
 static void RaveCreateBitmapFromImage(uint32_t pixelType, uint32 imageAddr,
                                        RaveResourceEntry *entry)
 {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	static uint64_t bitmapCount = 0;
 	bitmapCount++;
 #endif
@@ -1309,7 +1309,7 @@ static void RaveCreateBitmapFromImage(uint32_t pixelType, uint32 imageAddr,
 	uint32_t h        = ReadMacInt32(imageAddr + 4);
 	uint32_t rowBytes = ReadMacInt32(imageAddr + 8);
 	uint32_t pixmap   = ReadMacInt32(imageAddr + 12);
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (QD3DResourceTraceSample(bitmapCount)) {
 		QD3D_RESOURCE_LOG("BitmapNew count=%llu entry=0x%08x pixelType=%u image=0x%08x size=%ux%u rowBytes=%u pixels=0x%08x",
 		                  (unsigned long long)bitmapCount,
@@ -1369,7 +1369,7 @@ static void RaveCreateBitmapFromImage(uint32_t pixelType, uint32 imageAddr,
 static void RaveCreateColorTableData(uint32_t tableType, uint32 pixelDataAddr,
                                       int32_t transparentIndex, RaveResourceEntry *entry)
 {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	static uint64_t tableCount = 0;
 	tableCount++;
 #endif
@@ -1398,7 +1398,7 @@ static void RaveCreateColorTableData(uint32_t tableType, uint32 pixelDataAddr,
 	entry->clut_count = count;
 	entry->transparent_index = (transparentIndex != 0) ? 0 : -1;
 	RaveRememberCL8ColorTableSnapshot(clut, count);
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	if (QD3DResourceTraceSample(tableCount)) {
 		QD3D_RESOURCE_LOG("ColorTableNew count=%llu entry=0x%08x tableType=%u entries=%u pixels=0x%08x transparentFlag=%d firstBGRA=0x%08x",
 		                  (unsigned long long)tableCount,

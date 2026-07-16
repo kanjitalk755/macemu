@@ -73,6 +73,7 @@ const uint32 siHardwareVolume		= FOURCC('h','v','o','l');	// volume level of all
 const uint32 siHardwareVolumeSteps	= FOURCC('h','s','t','p');	// number of volume steps for hardware
 const uint32 siHardwareBusy			= FOURCC('h','w','b','s');	// sound hardware is in use
 const uint32 siHardwareFormat       = FOURCC('h','w','f','m');  // hardware format
+const uint32 siCompressionFactor	= FOURCC('c','m','f','a');	// compression info (output is uncompressed PCM)
 const uint32 siHeadphoneMute		= FOURCC('p','m','u','t');	// mute state of headphone
 const uint32 siHeadphoneVolume		= FOURCC('p','v','o','l');	// volume level of headphone
 const uint32 siHeadphoneVolumeSteps	= FOURCC('h','d','s','t');	// number of volume steps for headphone
@@ -126,7 +127,7 @@ enum {
 	kRateConvert			= (1L << 17),
 	kCreateSoundSource		= (1L << 18),
 	kHighQuality			= (1L << 22),
-	kNonRealTime			= (1L << 23),
+	kRealTime				= (1L << 23),
 	cmpWantsRegisterMessage	= (1L << 31)
 };
 

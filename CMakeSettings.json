@@ -57,6 +57,26 @@
 					"type": "BOOL"
 				},
 				{
+					"name": "ENABLE_QD3D_GRAPHICS_LOGGING",
+					"value": "OFF",
+					"type": "BOOL"
+				},
+				{
+					"name": "ENABLE_QD3D_AUDIO_LOGGING",
+					"value": "ON",
+					"type": "BOOL"
+				},
+				{
+					"name": "ENABLE_QD3D_MEDIA_LOGGING",
+					"value": "OFF",
+					"type": "BOOL"
+				},
+				{
+					"name": "ENABLE_QD3D_WAIT_LOGGING",
+					"value": "OFF",
+					"type": "BOOL"
+				},
+				{
 					"name": "ENABLE_SHEEPSHAVER_JIT",
 					"value": "OFF",
 					"type": "BOOL"
@@ -103,6 +123,26 @@
 				{
 					"name": "ENABLE_QD3D_INIT_LOGGING",
 					"value": "ON",
+					"type": "BOOL"
+				},
+				{
+					"name": "ENABLE_QD3D_GRAPHICS_LOGGING",
+					"value": "OFF",
+					"type": "BOOL"
+				},
+				{
+					"name": "ENABLE_QD3D_AUDIO_LOGGING",
+					"value": "ON",
+					"type": "BOOL"
+				},
+				{
+					"name": "ENABLE_QD3D_MEDIA_LOGGING",
+					"value": "OFF",
+					"type": "BOOL"
+				},
+				{
+					"name": "ENABLE_QD3D_WAIT_LOGGING",
+					"value": "OFF",
 					"type": "BOOL"
 				},
 				{

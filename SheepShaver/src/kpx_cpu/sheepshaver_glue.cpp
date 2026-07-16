@@ -42,6 +42,18 @@ extern "C" void catalyst_pump_appkit_events(void);
 #include "cpu/ppc/ppc-instructions.hpp"
 #include "thunks.h"
 
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#include "qd3d_init_logging.h"
+static bool cpu_descent_ii_is_current_application()
+{
+	return ReadMacInt32(0x0910) == 0x0a446573 &&
+	       ReadMacInt32(0x0914) == 0x63656e74 &&
+	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
+}
+#else
+#define QD3D_WAIT_LOG(...) do { } while (0)
+#endif
+
 // Used for NativeOp trampolines
 #include "video.h"
 #include "name_registry.h"
@@ -1105,6 +1117,27 @@ void HandleInterrupt(powerpc_registers *r)
 	// Runs on the emul/main thread (~60Hz for interpreter and JIT), reentrancy-
 	// guarded by processing_interrupt in check_spcflags().
 	catalyst_pump_appkit_events();
+#endif
+
+#if QD3D_WAIT_LOGGING_ENABLED
+	static uint32 diagnostic_interrupt_count;
+	static uint32 previous_sample_pc;
+	static uint32 repeated_sample_count;
+	if (cpu_descent_ii_is_current_application()) {
+		diagnostic_interrupt_count++;
+		if (r->pc == previous_sample_pc)
+			repeated_sample_count++;
+		else
+			repeated_sample_count = 1;
+		if ((diagnostic_interrupt_count % 6) == 0 || repeated_sample_count == 4) {
+			QD3D_WAIT_LOG("Guest CPU sample=%u tick=%u runMode=%u pc=0x%08x lr=0x%08x ctr=0x%08x sp=0x%08x toc=0x%08x repeatedPC=%u flags=0x%08x irqNest=%d",
+			              diagnostic_interrupt_count, ReadMacInt32(0x016a),
+			              ReadMacInt32(XLM_RUN_MODE), r->pc, r->lr, r->ctr,
+			              r->gpr[1], r->gpr[2], repeated_sample_count,
+			              InterruptFlags, (int32)ReadMacInt32(XLM_IRQ_NEST));
+		}
+		previous_sample_pc = r->pc;
+	}
 #endif
 
 	// Do nothing if interrupts are disabled

@@ -81,7 +81,7 @@ static bool s_classic_fb_texture_valid = false;
 static CompositeLayer s_framebuffer_cache;
 static bool s_framebuffer_valid = false;
 static GLuint s_framebuffer_tex_cache = 0;
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 static uint64_t s_overlay_submit_count = 0;
 static uint64_t s_present_count = 0;
 
@@ -678,7 +678,7 @@ void MetalCompositorPresent(void)
 	 * A second clear/swap while the outer present is incomplete can replay the
 	 * first movie frames and expose a partially composed back buffer. */
 	if (s_present_in_progress) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		static uint64_t s_nested_present_count = 0;
 		++s_nested_present_count;
 		if (compositor_trace_sample(s_nested_present_count)) {
@@ -693,7 +693,7 @@ void MetalCompositorPresent(void)
 	 * Do not let presentation rebind framebuffer 0 or overwrite compatibility
 	 * state while RAVE is still building the current overlay frame. */
 	if (RaveGLRenderPassActive()) {
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 		static uint64_t s_deferred_present_count = 0;
 		++s_deferred_present_count;
 		if (compositor_trace_sample(s_deferred_present_count)) {
@@ -726,7 +726,7 @@ void MetalCompositorPresent(void)
 		return;
 	s_last_present_usec = now_usec;
 
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	GLboolean inherited_color_mask[4] = {};
 	GLint inherited_scissor_box[4] = {};
 	const GLboolean inherited_scissor = glIsEnabled(GL_SCISSOR_TEST);
@@ -782,7 +782,7 @@ void MetalCompositorPresent(void)
 		draw_overlay_layer(&s_framebuffer_cache);
 	if (s_overlay_valid)
 		draw_overlay_layer(&s_overlay_cache);
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	s_present_count++;
 	if (compositor_trace_sample(s_present_count)) {
 		QD3D_RENDER_LOG("CompositorPresent count=%llu drawable=%dx%d guest=%dx%d classicOccluded=%d classicUploaded=%d framebufferValid=%d framebuffer=%u overlayValid=%d overlay=%u dst=%.1f,%.1f %.1fx%.1f inheritedScissor=%d[%d,%d %dx%d] inheritedMask=%d%d%d%d glError=0x%x",
@@ -888,7 +888,7 @@ int32_t MetalCompositorSubmitFrame(const struct FrameDescriptor *desc)
 		remember_overlay_framebuffer_baseline();
 		s_last_overlay_submit_usec = compositor_now_usec();
 	}
-#if QD3D_INIT_LOGGING_ENABLED
+#if QD3D_GRAPHICS_LOGGING_ENABLED
 	s_overlay_submit_count++;
 	if (compositor_trace_sample(s_overlay_submit_count)) {
 		QD3D_RENDER_LOG("CompositorSubmit count=%llu layers=%u generation=%llu overlayValid=%d overlay=%u",

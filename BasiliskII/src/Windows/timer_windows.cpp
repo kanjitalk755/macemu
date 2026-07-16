@@ -24,6 +24,18 @@
 #include "macos_util.h"
 #include "timer.h"
 
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#include "qd3d_init_logging.h"
+static bool timer_windows_descent_ii_is_current_application()
+{
+	return ReadMacInt32(0x0910) == 0x0a446573 &&
+	       ReadMacInt32(0x0914) == 0x63656e74 &&
+	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
+}
+#else
+#define QD3D_WAIT_LOG(...) do { } while (0)
+#endif
+
 #define DEBUG 0
 #include "debug.h"
 
@@ -81,6 +93,31 @@ void Microseconds(uint32 &hi, uint32 &lo)
 	tt.QuadPart = TICKS2USECS(tt.QuadPart - mac_boot_ticks);
 	hi = tt.HighPart;
 	lo = tt.LowPart;
+#if QD3D_WAIT_LOGGING_ENABLED
+	static uint32 last_tick;
+	static uint32 calls_this_tick;
+	static uint64 first_value;
+	static uint64 last_value;
+	if (timer_windows_descent_ii_is_current_application()) {
+		const uint32 tick = ReadMacInt32(0x016a);
+		const uint64 value = ((uint64)hi << 32) | lo;
+		if (calls_this_tick && tick != last_tick) {
+			QD3D_WAIT_LOG("Microseconds polling tick=%u calls=%u first=%llu last=%llu spanUsec=%llu",
+			              last_tick, calls_this_tick,
+			              (unsigned long long)first_value,
+			              (unsigned long long)last_value,
+			              (unsigned long long)(last_value - first_value));
+			calls_this_tick = 0;
+		}
+		if (!calls_this_tick)
+			first_value = value;
+		last_tick = tick;
+		last_value = value;
+		calls_this_tick++;
+	} else {
+		calls_this_tick = 0;
+	}
+#endif
 }
 
 
@@ -185,6 +222,36 @@ uint64 GetTicks_usec(void)
 }
 
 
+#if QD3D_WAIT_LOGGING_ENABLED
+static void log_idle_wait_complete(uint64 started, bool descent_was_current)
+{
+	if (!descent_was_current)
+		return;
+
+	static uint32 wait_count;
+	static uint64 total_wait_usec;
+	static uint64 max_wait_usec;
+	static uint32 last_log_tick;
+	const uint64 wait_usec = GetTicks_usec() - started;
+	const uint32 tick = ReadMacInt32(0x016a);
+	wait_count++;
+	total_wait_usec += wait_usec;
+	if (wait_usec > max_wait_usec)
+		max_wait_usec = wait_usec;
+	if (wait_usec >= 50000 || tick - last_log_tick >= 30) {
+		QD3D_WAIT_LOG("Idle/Event wait tick=%u waits=%u totalUsec=%llu maxUsec=%llu lastUsec=%llu",
+		              tick, wait_count, (unsigned long long)total_wait_usec,
+		              (unsigned long long)max_wait_usec,
+		              (unsigned long long)wait_usec);
+		wait_count = 0;
+		total_wait_usec = 0;
+		max_wait_usec = 0;
+		last_log_tick = tick;
+	}
+}
+#endif
+
+
 /*
  *  Delay by specified number of microseconds (<1 second)
  */
@@ -237,17 +304,27 @@ idle_sentinel::~idle_sentinel()
 
 void idle_wait(void)
 {
+#if QD3D_WAIT_LOGGING_ENABLED
+	const bool log_descent_wait = timer_windows_descent_ii_is_current_application();
+	const uint64 wait_started = GetTicks_usec();
+#endif
 	LOCK_IDLE;
 	if (idle_sem_ok > 0) {
 		idle_sem_ok++;
 		UNLOCK_IDLE;
 		WaitForSingleObject(idle_sem, INFINITE);
+#if QD3D_WAIT_LOGGING_ENABLED
+		log_idle_wait_complete(wait_started, log_descent_wait);
+#endif
 		return;
 	}
 	UNLOCK_IDLE;
 
 	// Fallback: sleep 10 ms (this should not happen though)
 	Delay_usec(10000);
+#if QD3D_WAIT_LOGGING_ENABLED
+	log_idle_wait_complete(wait_started, log_descent_wait);
+#endif
 }
 
 

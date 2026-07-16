@@ -71,6 +71,18 @@
 #include "vm_alloc.h"
 #include "cdrom.h"
 
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#include "qd3d_init_logging.h"
+static bool video_descent_ii_is_current_application()
+{
+	return ReadMacInt32(0x0910) == 0x0a446573 &&
+	       ReadMacInt32(0x0914) == 0x63656e74 &&
+	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
+}
+#else
+#define QD3D_WAIT_LOG(...) do { } while (0)
+#endif
+
 #if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
 #include "metal_compositor.h"
 #include "display_mode_controller.h"
@@ -1872,6 +1884,14 @@ static bool is_fullscreen(SDL_Window * window)
 #ifdef SHEEPSHAVER
 void VideoVBL(void)
 {
+#if QD3D_WAIT_LOGGING_ENABLED
+	const bool log_descent_vbl = video_descent_ii_is_current_application();
+	const uint64 vbl_started = GetTicks_usec();
+	static uint32 diagnostic_vbl_count;
+	static uint32 previous_frame_hash;
+	if (log_descent_vbl)
+		diagnostic_vbl_count++;
+#endif
 	// Emergency quit requested? Then quit
 	if (emerg_quit)
 		QuitEmulator();
@@ -1893,11 +1913,48 @@ void VideoVBL(void)
 	// Temporarily give up frame buffer lock (this is the point where
 	// we are suspended when the user presses Ctrl-Tab)
 	UNLOCK_FRAME_BUFFER;
+#if QD3D_WAIT_LOGGING_ENABLED
+	const uint64 frame_lock_started = GetTicks_usec();
+#endif
 	LOCK_FRAME_BUFFER;
+#if QD3D_WAIT_LOGGING_ENABLED
+	const uint64 frame_lock_usec = GetTicks_usec() - frame_lock_started;
+#endif
 
 	// Execute video VBL
 	if (private_data != NULL && private_data->interruptsEnabled)
 		VSLDoInterruptService(private_data->vslServiceID);
+
+#if QD3D_WAIT_LOGGING_ENABLED
+	if (log_descent_vbl) {
+		const uint64 vbl_usec = GetTicks_usec() - vbl_started;
+		if ((diagnostic_vbl_count % 6) == 0 || vbl_usec >= 10000 || frame_lock_usec >= 5000) {
+			uint32 frame_hash = 2166136261u;
+			uint32 width = 0;
+			uint32 height = 0;
+			uint32 compositor_active = 0;
+#if defined(ENABLE_GFXACCEL)
+			compositor_active = MetalCompositorIsInitialized() ? 1u : 0u;
+#endif
+			if (guest_surface && guest_surface->pixels) {
+				width = guest_surface->w;
+				height = guest_surface->h;
+				const uint8 *pixels = static_cast<const uint8 *>(guest_surface->pixels);
+				const size_t bytes = (size_t)guest_surface->pitch * guest_surface->h;
+				for (size_t i = 0; i < bytes; i += 64)
+					frame_hash = (frame_hash ^ pixels[i]) * 16777619u;
+			}
+			QD3D_WAIT_LOG("VideoVBL count=%u tick=%u totalUsec=%llu frameLockUsec=%llu framebuffer=%ux%u hash=%08x changed=%u compositor=%u",
+			              diagnostic_vbl_count, ReadMacInt32(0x016a),
+			              (unsigned long long)vbl_usec,
+			              (unsigned long long)frame_lock_usec,
+			              width, height, frame_hash,
+			              frame_hash != previous_frame_hash,
+			              compositor_active);
+			previous_frame_hash = frame_hash;
+		}
+	}
+#endif
 }
 #else
 void VideoInterrupt(void)

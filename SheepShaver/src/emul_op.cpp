@@ -47,6 +47,18 @@
 #include "emul_op.h"
 #include "thunks.h"
 
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#include "qd3d_init_logging.h"
+static bool emul_op_descent_ii_is_current_application()
+{
+	return ReadMacInt32(0x0910) == 0x0a446573 &&
+	       ReadMacInt32(0x0914) == 0x63656e74 &&
+	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
+}
+#else
+#define QD3D_WAIT_LOG(...) do { } while (0)
+#endif
+
 #define DEBUG 0
 #include "debug.h"
 
@@ -309,7 +321,20 @@ void EmulOp(M68kRegisters *r, uint32 pc, int selector)
 			tick_inhibit = false;
 			break;
 
-		case OP_IRQ:			// Level 1 interrupt
+		case OP_IRQ: {			// Level 1 interrupt
+#if QD3D_WAIT_LOGGING_ENABLED
+			const bool log_descent_irq = emul_op_descent_ii_is_current_application();
+			const uint64 irq_started = GetTicks_usec();
+			const uint32 irq_flags = InterruptFlags;
+			static uint64 previous_via_usec;
+			static uint32 via_count;
+			uint64 via_delta_usec = 0;
+			if (log_descent_irq && (irq_flags & INTFLAG_VIA)) {
+				via_delta_usec = previous_via_usec ? irq_started - previous_via_usec : 0;
+				previous_via_usec = irq_started;
+				via_count++;
+			}
+#endif
 			WriteMacInt16(ReadMacInt32(KernelDataAddr + 0x67c), 0);	// Clear interrupt
 			r->d[0] = 0;
 			if (HasMacStarted()) {
@@ -352,7 +377,21 @@ void EmulOp(M68kRegisters *r, uint32 pc, int selector)
 				}
 			} else
 				r->d[0] = 1;
+			#if QD3D_WAIT_LOGGING_ENABLED
+			if (log_descent_irq) {
+				const uint64 handler_usec = GetTicks_usec() - irq_started;
+				if ((irq_flags & INTFLAG_TIMER) || via_delta_usec >= 25000 ||
+				    handler_usec >= 10000 || (via_count && (via_count % 30) == 0)) {
+					QD3D_WAIT_LOG("IRQ tick=%u flags=0x%08x viaDeltaUsec=%llu handlerUsec=%llu irqNest=%d",
+					              ReadMacInt32(0x016a), irq_flags,
+					              (unsigned long long)via_delta_usec,
+					              (unsigned long long)handler_usec,
+					              (int32)ReadMacInt32(XLM_IRQ_NEST));
+				}
+			}
+			#endif
 			break;
+		}
 
 		case OP_SCSI_DISPATCH: {	// SCSIDispatch() replacement
 			uint32 ret = ReadMacInt32(r->a[7]);

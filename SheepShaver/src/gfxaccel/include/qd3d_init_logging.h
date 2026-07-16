@@ -1,11 +1,9 @@
 /*
  * qd3d_init_logging.h - Focused QuickDraw 3D/RAVE diagnostics
  *
- * Enable with the CMake option ENABLE_QD3D_INIT_LOGGING=ON or by defining
- * QD3D_INIT_LOGGING_ENABLED=1 for the SheepShaver target.  This channel is
- * deliberately independent of the high-volume graphics logging controls.
- * The historical option name is retained, but it now covers init, state,
- * resource, and rate-limited render-path diagnostics.
+ * ENABLE_QD3D_INIT_LOGGING is the master switch. The audio, media, graphics,
+ * and timing channels are independently selected with their corresponding
+ * QD3D_*_LOGGING_ENABLED definition.
  */
 
 #ifndef QD3D_INIT_LOGGING_H
@@ -13,6 +11,22 @@
 
 #ifndef QD3D_INIT_LOGGING_ENABLED
 #define QD3D_INIT_LOGGING_ENABLED 0
+#endif
+
+#ifndef QD3D_GRAPHICS_LOGGING_ENABLED
+#define QD3D_GRAPHICS_LOGGING_ENABLED 0
+#endif
+
+#ifndef QD3D_AUDIO_LOGGING_ENABLED
+#define QD3D_AUDIO_LOGGING_ENABLED 0
+#endif
+
+#ifndef QD3D_MEDIA_LOGGING_ENABLED
+#define QD3D_MEDIA_LOGGING_ENABLED 0
+#endif
+
+#ifndef QD3D_WAIT_LOGGING_ENABLED
+#define QD3D_WAIT_LOGGING_ENABLED 0
 #endif
 
 #if QD3D_INIT_LOGGING_ENABLED
@@ -52,6 +66,29 @@ static inline void log(const char *category, const char *file, int line,
 
 } // namespace qd3d_init_logging
 
+#if QD3D_AUDIO_LOGGING_ENABLED
+#define QD3D_AUDIO_LOG(...) \
+	::qd3d_init_logging::log("audio", __FILE__, __LINE__, __VA_ARGS__)
+#else
+#define QD3D_AUDIO_LOG(...) do { } while (0)
+#endif
+
+#if QD3D_MEDIA_LOGGING_ENABLED
+#define QD3D_MEDIA_LOG(...) \
+	::qd3d_init_logging::log("media", __FILE__, __LINE__, __VA_ARGS__)
+#else
+#define QD3D_MEDIA_LOG(...) do { } while (0)
+#endif
+
+#if QD3D_WAIT_LOGGING_ENABLED
+#define QD3D_WAIT_LOG(...) \
+	::qd3d_init_logging::log("wait", __FILE__, __LINE__, __VA_ARGS__)
+#else
+#define QD3D_WAIT_LOG(...) do { } while (0)
+#endif
+
+#if QD3D_GRAPHICS_LOGGING_ENABLED
+
 #define QD3D_INIT_LOG(...) \
 	::qd3d_init_logging::log("init", __FILE__, __LINE__, __VA_ARGS__)
 #define QD3D_STATE_LOG(...) \
@@ -60,8 +97,15 @@ static inline void log(const char *category, const char *file, int line,
 	::qd3d_init_logging::log("resource", __FILE__, __LINE__, __VA_ARGS__)
 #define QD3D_RENDER_LOG(...) \
 	::qd3d_init_logging::log("render", __FILE__, __LINE__, __VA_ARGS__)
-#define QD3D_AUDIO_LOG(...) \
-	::qd3d_init_logging::log("audio", __FILE__, __LINE__, __VA_ARGS__)
+
+#else
+
+#define QD3D_INIT_LOG(...) do { } while (0)
+#define QD3D_STATE_LOG(...) do { } while (0)
+#define QD3D_RESOURCE_LOG(...) do { } while (0)
+#define QD3D_RENDER_LOG(...) do { } while (0)
+
+#endif
 
 #else
 
@@ -70,6 +114,8 @@ static inline void log(const char *category, const char *file, int line,
 #define QD3D_RESOURCE_LOG(...) do { } while (0)
 #define QD3D_RENDER_LOG(...) do { } while (0)
 #define QD3D_AUDIO_LOG(...) do { } while (0)
+#define QD3D_MEDIA_LOG(...) do { } while (0)
+#define QD3D_WAIT_LOG(...) do { } while (0)
 
 #endif
 

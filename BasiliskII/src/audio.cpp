@@ -40,7 +40,9 @@
 #define QD3D_AUDIO_LOG(...) do { } while (0)
 #endif
 
-#include <cassert>
+#ifndef QD3D_AUDIO_LOGGING_ENABLED
+#define QD3D_AUDIO_LOGGING_ENABLED 0
+#endif
 
 #define DEBUG 0
 #include "debug.h"
@@ -59,6 +61,15 @@ uint32 audio_component_flags;		// Component feature flags
 uint32 audio_data = 0;				// Mac address of global data area
 static int open_count = 0;			// Open/close nesting count
 
+#if QD3D_AUDIO_LOGGING_ENABLED
+static uint32 diagnostic_source;
+static uint32 diagnostic_source_pb;
+static int16 diagnostic_pb_result;
+static uint32 diagnostic_pb_frames;
+static uint32 diagnostic_pb_data;
+static uint32 diagnostic_poll_count;
+#endif
+
 bool AudioAvailable = false;		// Flag: audio output available (from the software point of view)
 
 int SoundInSource = 2;
@@ -72,6 +83,42 @@ int SoundInGain = 65536; // FIXED 4-byte from 0.5 to 1.5; this is middle value (
 void AudioReset(void)
 {
 	audio_data = 0;
+	#if QD3D_AUDIO_LOGGING_ENABLED
+	diagnostic_source = 0;
+	diagnostic_source_pb = 0;
+	diagnostic_pb_result = 0;
+	diagnostic_pb_frames = 0;
+	diagnostic_pb_data = 0;
+	diagnostic_poll_count = 0;
+#endif
+}
+
+
+void AudioDiagnosticPoll(void)
+{
+#if QD3D_AUDIO_LOGGING_ENABLED
+	if (!diagnostic_source_pb)
+		return;
+
+	diagnostic_poll_count++;
+	const int16 result = ReadMacInt16(diagnostic_source_pb + 60);
+	const uint32 frames = ReadMacInt32(diagnostic_source_pb + 20);
+	const uint32 data = ReadMacInt32(diagnostic_source_pb + 24);
+	if (diagnostic_poll_count == 1 || result != diagnostic_pb_result ||
+	    frames != diagnostic_pb_frames || data != diagnostic_pb_data) {
+		QD3D_AUDIO_LOG("SourcePB poll=%u tick=%u source=0x%08x pb=0x%08x frames=%u data=0x%08x moreRtn=0x%08x completionRtn=0x%08x refCon=0x%08x result=%d%s",
+		                diagnostic_poll_count, ReadMacInt32(0x016a),
+		                diagnostic_source, diagnostic_source_pb,
+		                frames, data,
+		                ReadMacInt32(diagnostic_source_pb + 48),
+		                ReadMacInt32(diagnostic_source_pb + 52),
+		                ReadMacInt32(diagnostic_source_pb + 56), result,
+		                result != diagnostic_pb_result ? " changed" : "");
+	}
+	diagnostic_pb_result = result;
+	diagnostic_pb_frames = frames;
+	diagnostic_pb_data = data;
+#endif
 }
 
 
@@ -83,6 +130,11 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 {
 	D(bug(" AudioGetInfo %c%c%c%c, infoPtr %08lx, source ID %08lx\n", selector >> 24, (selector >> 16) & 0xff, (selector >> 8) & 0xff, selector & 0xff, infoPtr, sourceID));
 	M68kRegisters r;
+	if (selector != siHardwareBusy)
+		QD3D_AUDIO_LOG("GetInfo tick=%u selector=%c%c%c%c info=0x%08x source=0x%08x",
+		                ReadMacInt32(0x016a), selector >> 24,
+		                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
+		                selector & 0xff, infoPtr, sourceID);
 
 	switch (selector) {
 		case siSampleSize:
@@ -161,6 +213,24 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 
 		case siHardwareBusy:
 			WriteMacInt16(infoPtr, AudioStatus.num_sources != 0);
+			#if QD3D_AUDIO_LOGGING_ENABLED
+			{
+				static uint32 busy_poll_tick;
+				static uint32 busy_poll_count;
+				static uint32 busy_poll_value;
+				const uint32 tick = ReadMacInt32(0x016a);
+				if (busy_poll_count && tick != busy_poll_tick) {
+					QD3D_AUDIO_LOG("GetInfo hardwareBusy tick=%u polls=%u value=%u sources=%d",
+					                busy_poll_tick, busy_poll_count,
+					                busy_poll_value,
+					                AudioStatus.num_sources);
+					busy_poll_count = 0;
+				}
+				busy_poll_tick = tick;
+				busy_poll_value = AudioStatus.num_sources != 0;
+				busy_poll_count++;
+			}
+			#endif
 			break;
 
 		case siHardwareFormat:
@@ -174,6 +244,19 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 			WriteMacInt32(infoPtr + scd_reserved, 0);
 			break;
 
+		case siCompressionFactor: {
+			const uint16 bytes_per_sample = AudioStatus.sample_size >> 3;
+			WriteMacInt32(infoPtr + 0, 20);
+			WriteMacInt32(infoPtr + 4, AudioStatus.sample_size == 16 ? FOURCC('t','w','o','s') : FOURCC('r','a','w',' '));
+			WriteMacInt16(infoPtr + 8, 0); // notCompressed
+			WriteMacInt16(infoPtr + 10, 1);
+			WriteMacInt16(infoPtr + 12, bytes_per_sample);
+			WriteMacInt16(infoPtr + 14, bytes_per_sample * AudioStatus.channels);
+			WriteMacInt16(infoPtr + 16, bytes_per_sample);
+			WriteMacInt16(infoPtr + 18, 0);
+			break;
+		}
+
 		default:	// Delegate to Apple Mixer
 			if (AudioStatus.mixer == 0)
 				return badComponentSelector;
@@ -182,7 +265,15 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 			r.d[0] = selector;
 			r.a[1] = sourceID;
 			r.a[2] = AudioStatus.mixer;
+			#if QD3D_AUDIO_LOGGING_ENABLED
+			const uint64 get_info_started = GetTicks_usec();
+			#endif
 			Execute68k(audio_data + adatGetInfo, &r);
+			QD3D_AUDIO_LOG("GetInfo delegated tick=%u selector=%c%c%c%c source=0x%08x result=%d usec=%llu",
+			                ReadMacInt32(0x016a), selector >> 24,
+			                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
+			                selector & 0xff, sourceID, (int32)r.d[0],
+			                (unsigned long long)(GetTicks_usec() - get_info_started));
 			D(bug("  delegated to Apple Mixer, returns %08lx\n", r.d[0]));
 			return r.d[0];
 	}
@@ -197,16 +288,11 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 static int32 AudioSetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 {
 	D(bug(" AudioSetInfo %c%c%c%c, infoPtr %08lx, source ID %08lx\n", selector >> 24, (selector >> 16) & 0xff, (selector >> 8) & 0xff, selector & 0xff, infoPtr, sourceID));
-	if (selector == siSampleSize || selector == siSampleRate ||
-	    selector == siNumberChannels) {
-		QD3D_AUDIO_LOG("SetInfo selector=%c%c%c%c request=0x%08x source=0x%08x current=%uHz/%ubit/%uch sources=%d",
-		                selector >> 24, (selector >> 16) & 0xff,
-		                (selector >> 8) & 0xff, selector & 0xff, infoPtr,
-		                sourceID, AudioStatus.sample_rate >> 16,
-		                AudioStatus.sample_size, AudioStatus.channels,
-		                AudioStatus.num_sources);
-	}
 	M68kRegisters r;
+	QD3D_AUDIO_LOG("SetInfo tick=%u selector=%c%c%c%c info=0x%08x source=0x%08x",
+	                ReadMacInt32(0x016a), selector >> 24,
+	                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
+	                selector & 0xff, infoPtr, sourceID);
 
 	switch (selector) {
 		case siSampleSize:
@@ -279,9 +365,18 @@ static int32 AudioSetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 			r.d[0] = selector;
 			r.a[1] = sourceID;
 			r.a[2] = AudioStatus.mixer;
+			#if QD3D_AUDIO_LOGGING_ENABLED
+			const uint64 set_info_started = GetTicks_usec();
+			#endif
 			Execute68k(audio_data + adatSetInfo, &r);
-			D(bug("  delegated to Apple Mixer, returns %08lx\n", r.d[0]));
-			return r.d[0];
+			const int32 set_result = r.d[0];
+			QD3D_AUDIO_LOG("SetInfo delegated tick=%u selector=%c%c%c%c source=0x%08x result=%d usec=%llu",
+			                ReadMacInt32(0x016a), selector >> 24,
+			                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
+			                selector & 0xff, sourceID, set_result,
+			                (unsigned long long)(GetTicks_usec() - set_info_started));
+			D(bug("  delegated to Apple Mixer, returns %08lx\n", set_result));
+			return set_result;
 	}
 	return noErr;
 }
@@ -297,6 +392,9 @@ int32 AudioDispatch(uint32 params, uint32 globals)
 	M68kRegisters r;
 	uint32 p = params + cp_params;
 	int16 selector = (int16)ReadMacInt16(params + cp_what);
+#if QD3D_AUDIO_LOGGING_ENABLED
+	uint64 diagnostic_call_started = 0;
+#endif
 
 	switch (selector) {
 
@@ -464,7 +562,7 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 			return noErr;
 
 		// Sound component functions (not delegated)
-		case kSoundComponentInitOutputDeviceSelect:
+		case kSoundComponentInitOutputDeviceSelect: {
 			D(bug(" InitOutputDevice\n"));
 			if (!audio_open)
 				return noHardwareErr;
@@ -486,15 +584,22 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 			r.a[0] = audio_data + adatMixer;
 			r.d[0] = 0;
 			r.a[1] = audio_data + adatData;
+			#if QD3D_AUDIO_LOGGING_ENABLED
+			diagnostic_call_started = GetTicks_usec();
+			#endif
 			Execute68k(audio_data + adatOpenMixer, &r);
 			AudioStatus.mixer = ReadMacInt32(audio_data + adatMixer);
-			QD3D_AUDIO_LOG("InitOutputDevice mixer=0x%08x result=%d format=%uHz/%ubit/%uch blockFrames=%d",
-			                AudioStatus.mixer, (int32)r.d[0],
+			const int32 mixer_result = r.d[0];
+			QD3D_AUDIO_LOG("InitOutputDevice tick=%u mixer=0x%08x result=%d format=%uHz/%ubit/%uch blockFrames=%d usec=%llu",
+			                ReadMacInt32(0x016a),
+			                AudioStatus.mixer, mixer_result,
 			                AudioStatus.sample_rate >> 16,
 			                AudioStatus.sample_size, AudioStatus.channels,
-			                audio_frames_per_block);
-			D(bug(" OpenMixer() returns %08lx, mixer %08lx\n", r.d[0], AudioStatus.mixer));
-			return r.d[0];
+			                audio_frames_per_block,
+			                (unsigned long long)(GetTicks_usec() - diagnostic_call_started));
+			D(bug(" OpenMixer() returns %08lx, mixer %08lx\n", mixer_result, AudioStatus.mixer));
+			return mixer_result;
+		}
 
 		case kSoundComponentGetSourceSelect:
 			D(bug(" GetSource source %08lx\n", ReadMacInt32(p)));
@@ -504,32 +609,17 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 		// Sound component functions (delegated)
 		case kSoundComponentAddSourceSelect:
 			D(bug(" AddSource\n"));
-			/* Keep the host callback silent until the Apple Mixer has installed
-			 * the first source. Publishing num_sources before DelegateCall let
-			 * SDL request GetSourceData from a half-mutated mixer. */
-			r.a[0] = AudioStatus.mixer;
-			r.a[1] = params;
-			Execute68k(audio_data + adatDelegateCall, &r);
-			if ((int32)r.d[0] == noErr)
-				AudioStatus.num_sources++;
-			QD3D_AUDIO_LOG("AddSource result=%d sources=%d mixer=0x%08x",
-			                (int32)r.d[0], AudioStatus.num_sources,
-			                AudioStatus.mixer);
-			return r.d[0];
+			AudioStatus.num_sources++;
+			QD3D_AUDIO_LOG("AddSource sources=%d mixer=0x%08x",
+			                AudioStatus.num_sources, AudioStatus.mixer);
+			goto delegate;
 
 		case kSoundComponentRemoveSourceSelect:
 			D(bug(" RemoveSource\n"));
-			assert(AudioStatus.num_sources > 0);
 			AudioStatus.num_sources--;
-			r.a[0] = AudioStatus.mixer;
-			r.a[1] = params;
-			Execute68k(audio_data + adatDelegateCall, &r);
-			if ((int32)r.d[0] != noErr)
-				AudioStatus.num_sources++;
-			QD3D_AUDIO_LOG("RemoveSource result=%d sources=%d mixer=0x%08x",
-			                (int32)r.d[0], AudioStatus.num_sources,
-			                AudioStatus.mixer);
-			return r.d[0];
+			QD3D_AUDIO_LOG("RemoveSource sources=%d mixer=0x%08x",
+			                AudioStatus.num_sources, AudioStatus.mixer);
+			goto delegate;
 
 		case kSoundComponentGetInfoSelect:
 			return AudioGetInfo(ReadMacInt32(p), ReadMacInt32(p + 4), ReadMacInt32(p + 8));
@@ -543,34 +633,84 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 			r.d[0] = ReadMacInt16(p + 4);
 			r.a[0] = ReadMacInt32(p);
 			r.a[1] = AudioStatus.mixer;
+			#if QD3D_AUDIO_LOGGING_ENABLED
+			diagnostic_call_started = GetTicks_usec();
+			#endif
 			Execute68k(audio_data + adatStartSource, &r);
-			QD3D_AUDIO_LOG("StartSource source=0x%08x count=%u result=%d sources=%d",
+			QD3D_AUDIO_LOG("StartSource tick=%u source=0x%08x count=%u result=%d sources=%d usec=%llu",
+			                ReadMacInt32(0x016a),
 			                ReadMacInt32(p), ReadMacInt16(p + 4),
-			                (int32)r.d[0], AudioStatus.num_sources);
+			                (int32)r.d[0], AudioStatus.num_sources,
+			                (unsigned long long)(GetTicks_usec() - diagnostic_call_started));
 			D(bug(" returns %08lx\n", r.d[0]));
 			return noErr;
 
 		case kSoundComponentStopSourceSelect:
 			D(bug(" StopSource\n"));
+			QD3D_AUDIO_LOG("StopSource sources=%d mixer=0x%08x",
+			                AudioStatus.num_sources, AudioStatus.mixer);
 			goto delegate;
 
 		case kSoundComponentPauseSourceSelect:
 			D(bug(" PauseSource\n"));
+			QD3D_AUDIO_LOG("PauseSource sources=%d mixer=0x%08x",
+			                AudioStatus.num_sources, AudioStatus.mixer);
 delegate:	// Delegate call to Apple Mixer
 			D(bug(" delegating call to Apple Mixer\n"));
 			r.a[0] = AudioStatus.mixer;
 			r.a[1] = params;
+			#if QD3D_AUDIO_LOGGING_ENABLED
+			diagnostic_call_started = GetTicks_usec();
+			#endif
 			Execute68k(audio_data + adatDelegateCall, &r);
+			QD3D_AUDIO_LOG("Sound delegate tick=%u selector=%d result=%d usec=%llu sources=%d",
+			                ReadMacInt32(0x016a), selector, (int32)r.d[0],
+			                (unsigned long long)(GetTicks_usec() - diagnostic_call_started),
+			                AudioStatus.num_sources);
 			D(bug(" returns %08lx\n", r.d[0]));
 			return r.d[0];
 
 		case kSoundComponentPlaySourceBufferSelect:
 			D(bug(" PlaySourceBuffer flags %08lx\n", ReadMacInt32(p)));
-			r.d[0] = ReadMacInt32(p);
-			r.a[0] = ReadMacInt32(p + 4);
-			r.a[1] = ReadMacInt32(p + 8);
-			r.a[2] = AudioStatus.mixer;
-			Execute68k(audio_data + adatPlaySourceBuffer, &r);
+			{
+				const uint32 actions = ReadMacInt32(p);
+				const uint32 pb = ReadMacInt32(p + 4);
+				const uint32 source = ReadMacInt32(p + 8);
+				const int16 initial_result = ReadMacInt16(pb + 60);
+
+#if QD3D_AUDIO_LOGGING_ENABLED
+				diagnostic_source = source;
+				diagnostic_source_pb = pb;
+				diagnostic_pb_result = initial_result;
+				diagnostic_pb_frames = ReadMacInt32(pb + 20);
+				diagnostic_pb_data = ReadMacInt32(pb + 24);
+				diagnostic_poll_count = 0;
+#endif
+
+				r.d[0] = actions;
+				r.a[0] = pb;
+				r.a[1] = source;
+				r.a[2] = AudioStatus.mixer;
+				#if QD3D_AUDIO_LOGGING_ENABLED
+				diagnostic_call_started = GetTicks_usec();
+				#endif
+				Execute68k(audio_data + adatPlaySourceBuffer, &r);
+				QD3D_AUDIO_LOG("PlaySourceBuffer tick=%u actions=0x%08x source=0x%08x pb=0x%08x recordBytes=%u format=%c%c%c%c %uHz/%ubit/%uch frames=%u data=0x%08x rateMultiplier=0x%08x moreRtn=0x%08x completionRtn=0x%08x refCon=0x%08x pbResult=%d->%d callResult=%d sources=%d usec=%llu",
+				                ReadMacInt32(0x016a), actions, source, pb,
+				                ReadMacInt32(pb),
+				                ReadMacInt32(pb + 8) >> 24,
+				                (ReadMacInt32(pb + 8) >> 16) & 0xff,
+				                (ReadMacInt32(pb + 8) >> 8) & 0xff,
+				                ReadMacInt32(pb + 8) & 0xff,
+				                ReadMacInt32(pb + 16) >> 16,
+				                ReadMacInt16(pb + 14), ReadMacInt16(pb + 12),
+				                ReadMacInt32(pb + 20), ReadMacInt32(pb + 24),
+				                ReadMacInt32(pb + 32), ReadMacInt32(pb + 48),
+				                ReadMacInt32(pb + 52), ReadMacInt32(pb + 56),
+				                initial_result, (int16)ReadMacInt16(pb + 60),
+				                (int32)r.d[0], AudioStatus.num_sources,
+				                (unsigned long long)(GetTicks_usec() - diagnostic_call_started));
+			}
 			D(bug(" returns %08lx\n", r.d[0]));
 			return r.d[0];
 
