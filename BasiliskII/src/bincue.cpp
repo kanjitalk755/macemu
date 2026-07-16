@@ -620,7 +620,16 @@ void *open_bincue(const char *name)
 			player->audiostatus = CDROM_AUDIO_NO_STATUS;
 		else
 			player->audiostatus = CDROM_AUDIO_INVALID;
-		player->audiofh = dup(cs->binfh);
+		/* dup() shares the underlying file position with cs->binfh.  The SDL
+		 * audio callback seeks/reads audio while the emulation thread seeks/reads
+		 * data sectors; sharing that cursor lets either thread move it between
+		 * the other's lseek() and read(), intermittently returning audio bytes to
+		 * a CD data read.  Open the BIN again to obtain an independent cursor. */
+#ifdef WIN32
+		player->audiofh = open(cs->binfile, O_RDONLY | O_BINARY);
+#else
+		player->audiofh = open(cs->binfile, O_RDONLY);
+#endif
 		if (player->audiofh < 0)
 			player->audio_enabled = false;
 
@@ -1260,7 +1269,7 @@ void MixAudio_bincue(uint8 *stream, int dest_stream_len)
 }
 
 static void OpenPlayerStream(CDPlayer * player) {
-	if (!have_current_output_settings) {
+	if (player->audiofh < 0 || !have_current_output_settings) {
 		player->stream = NULL;
 		return;
 	}
