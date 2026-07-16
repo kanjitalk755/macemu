@@ -34,6 +34,14 @@
 #include "user_strings.h"
 #include "cdrom.h"
 
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#include "qd3d_init_logging.h"
+#else
+#define QD3D_AUDIO_LOG(...) do { } while (0)
+#endif
+
+#include <cassert>
+
 #define DEBUG 0
 #include "debug.h"
 
@@ -189,6 +197,15 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 static int32 AudioSetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 {
 	D(bug(" AudioSetInfo %c%c%c%c, infoPtr %08lx, source ID %08lx\n", selector >> 24, (selector >> 16) & 0xff, (selector >> 8) & 0xff, selector & 0xff, infoPtr, sourceID));
+	if (selector == siSampleSize || selector == siSampleRate ||
+	    selector == siNumberChannels) {
+		QD3D_AUDIO_LOG("SetInfo selector=%c%c%c%c request=0x%08x source=0x%08x current=%uHz/%ubit/%uch sources=%d",
+		                selector >> 24, (selector >> 16) & 0xff,
+		                (selector >> 8) & 0xff, selector & 0xff, infoPtr,
+		                sourceID, AudioStatus.sample_rate >> 16,
+		                AudioStatus.sample_size, AudioStatus.channels,
+		                AudioStatus.num_sources);
+	}
 	M68kRegisters r;
 
 	switch (selector) {
@@ -471,6 +488,11 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 			r.a[1] = audio_data + adatData;
 			Execute68k(audio_data + adatOpenMixer, &r);
 			AudioStatus.mixer = ReadMacInt32(audio_data + adatMixer);
+			QD3D_AUDIO_LOG("InitOutputDevice mixer=0x%08x result=%d format=%uHz/%ubit/%uch blockFrames=%d",
+			                AudioStatus.mixer, (int32)r.d[0],
+			                AudioStatus.sample_rate >> 16,
+			                AudioStatus.sample_size, AudioStatus.channels,
+			                audio_frames_per_block);
 			D(bug(" OpenMixer() returns %08lx, mixer %08lx\n", r.d[0], AudioStatus.mixer));
 			return r.d[0];
 
@@ -482,13 +504,32 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 		// Sound component functions (delegated)
 		case kSoundComponentAddSourceSelect:
 			D(bug(" AddSource\n"));
-			AudioStatus.num_sources++;
-			goto delegate;
+			/* Keep the host callback silent until the Apple Mixer has installed
+			 * the first source. Publishing num_sources before DelegateCall let
+			 * SDL request GetSourceData from a half-mutated mixer. */
+			r.a[0] = AudioStatus.mixer;
+			r.a[1] = params;
+			Execute68k(audio_data + adatDelegateCall, &r);
+			if ((int32)r.d[0] == noErr)
+				AudioStatus.num_sources++;
+			QD3D_AUDIO_LOG("AddSource result=%d sources=%d mixer=0x%08x",
+			                (int32)r.d[0], AudioStatus.num_sources,
+			                AudioStatus.mixer);
+			return r.d[0];
 
 		case kSoundComponentRemoveSourceSelect:
 			D(bug(" RemoveSource\n"));
+			assert(AudioStatus.num_sources > 0);
 			AudioStatus.num_sources--;
-			goto delegate;
+			r.a[0] = AudioStatus.mixer;
+			r.a[1] = params;
+			Execute68k(audio_data + adatDelegateCall, &r);
+			if ((int32)r.d[0] != noErr)
+				AudioStatus.num_sources++;
+			QD3D_AUDIO_LOG("RemoveSource result=%d sources=%d mixer=0x%08x",
+			                (int32)r.d[0], AudioStatus.num_sources,
+			                AudioStatus.mixer);
+			return r.d[0];
 
 		case kSoundComponentGetInfoSelect:
 			return AudioGetInfo(ReadMacInt32(p), ReadMacInt32(p + 4), ReadMacInt32(p + 8));
@@ -503,6 +544,9 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 			r.a[0] = ReadMacInt32(p);
 			r.a[1] = AudioStatus.mixer;
 			Execute68k(audio_data + adatStartSource, &r);
+			QD3D_AUDIO_LOG("StartSource source=0x%08x count=%u result=%d sources=%d",
+			                ReadMacInt32(p), ReadMacInt16(p + 4),
+			                (int32)r.d[0], AudioStatus.num_sources);
 			D(bug(" returns %08lx\n", r.d[0]));
 			return noErr;
 

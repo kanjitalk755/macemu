@@ -91,6 +91,12 @@ static int bincue_core_audio_callback(void);
 #endif
 
 #include "bincue.h"
+
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#include "qd3d_init_logging.h"
+#else
+#define QD3D_AUDIO_LOG(...) do { } while (0)
+#endif
 #define DEBUG 0
 #include "debug.h"
 
@@ -956,6 +962,9 @@ bool CDPlay_bincue(void *fh, uint8 start_m, uint8 start_s, uint8 start_f,
 		}
 
 		track = PositionToTrack(player->cs, player->audiostart);
+		QD3D_AUDIO_LOG("CDPlay request=%02u:%02u:%02u-%02u:%02u:%02u startFrame=%u endFrame=%u trackIndex=%d",
+		                start_m, start_s, start_f, end_m, end_s, end_f,
+		                player->audiostart, player->audioend, track);
 
 		int cur_track = PositionToTrack(player->cs, cur_position_frames);
 		MSF cur_msf;

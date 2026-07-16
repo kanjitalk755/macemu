@@ -21,6 +21,8 @@
 #include "gl_ext.h" /* GL_RGBA8 / GL_BGRA / FBO enums for Windows GL 1.1 */
 
 #include <atomic>
+#include <cassert>
+#include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <vector>
@@ -28,6 +30,7 @@
 
 extern SDL_Window *sdl_window;
 extern "C" void vbl_source_sdl_tick(double target_ts);
+extern "C" int RaveGLRenderPassActive(void);
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -41,6 +44,7 @@ extern "C" void vbl_source_sdl_tick(double target_ts);
 // State
 // ---------------------------------------------------------------------------
 static bool s_init = false;
+static bool s_present_in_progress = false;
 static int s_width = 0, s_height = 0, s_depth = 0;
 static int s_row_bytes = 0, s_pitch = 0;
 static int s_bits_per_pixel = 0;
@@ -48,6 +52,8 @@ static void *s_buffer = nullptr;
 static uint32_t s_buffer_size = 0;
 
 static GLuint s_fb_tex = 0;
+static int s_fb_tex_width = 0;
+static int s_fb_tex_height = 0;
 static GLuint s_palette_tex = 0;   /* 256x1 RGB for indexed */
 static GLuint s_prog_32 = 0, s_prog_16 = 0, s_prog_idx = 0, s_prog_overlay = 0;
 static GLuint s_gamma_tex = 0;
@@ -69,6 +75,9 @@ static GLuint s_overlay_tex_cache = 0; /* GL name retained as GLuint in void* */
  * handoff even if the application never calls QAEngineDisable.
  */
 static std::vector<uint8_t> s_overlay_fb_baseline;
+static uint64_t s_last_overlay_submit_usec = 0;
+static std::vector<uint8_t> s_classic_fb_upload_baseline;
+static bool s_classic_fb_texture_valid = false;
 static CompositeLayer s_framebuffer_cache;
 static bool s_framebuffer_valid = false;
 static GLuint s_framebuffer_tex_cache = 0;
@@ -83,6 +92,25 @@ static bool compositor_trace_sample(uint64_t count)
 }
 #endif
 
+class ScopedCompositorPresent
+{
+public:
+	ScopedCompositorPresent()
+	{
+		assert(!s_present_in_progress);
+		s_present_in_progress = true;
+	}
+
+	~ScopedCompositorPresent()
+	{
+		assert(s_present_in_progress);
+		s_present_in_progress = false;
+	}
+
+	ScopedCompositorPresent(const ScopedCompositorPresent &) = delete;
+	ScopedCompositorPresent &operator=(const ScopedCompositorPresent &) = delete;
+};
+
 /* Present-rect cache (window coords). */
 static std::atomic<uint64_t> s_present_origin{0};
 static std::atomic<uint64_t> s_present_size{0};
@@ -96,6 +124,33 @@ static size_t visible_framebuffer_bytes(void)
 		return 0;
 	const size_t visible = (size_t)s_row_bytes * (size_t)s_height;
 	return visible < (size_t)s_buffer_size ? visible : (size_t)s_buffer_size;
+}
+
+static uint64_t compositor_now_usec(void)
+{
+	return (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+		std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static bool classic_framebuffer_needs_upload(void)
+{
+	const size_t bytes = visible_framebuffer_bytes();
+	assert(bytes == 0 || s_buffer != nullptr);
+	if (!s_classic_fb_texture_valid ||
+	    bytes != s_classic_fb_upload_baseline.size())
+		return true;
+	return bytes != 0 &&
+	       std::memcmp(s_buffer, s_classic_fb_upload_baseline.data(), bytes) != 0;
+}
+
+static void remember_classic_framebuffer_upload(void)
+{
+	const size_t bytes = visible_framebuffer_bytes();
+	assert(bytes == 0 || s_buffer != nullptr);
+	s_classic_fb_upload_baseline.resize(bytes);
+	if (bytes != 0)
+		std::memcpy(s_classic_fb_upload_baseline.data(), s_buffer, bytes);
+	s_classic_fb_texture_valid = true;
 }
 
 static void remember_overlay_framebuffer_baseline(void)
@@ -122,6 +177,17 @@ static void detect_implicit_quickdraw_handoff(void)
 	if (bytes != s_overlay_fb_baseline.size())
 		return;
 	if (std::memcmp(s_buffer, s_overlay_fb_baseline.data(), bytes) == 0)
+		return;
+	/* At 60 Hz a VideoVBL can land between two RAVE frames. Descent writes
+	 * incidental QuickDraw data while its RAVE context remains live; treating
+	 * that single write as an immediate owner change clears the cached overlay
+	 * until the next RenderEnd and produces severe alternating-frame flicker.
+	 * A real menu handoff stops RAVE submissions, so wait for a short quiet
+	 * interval before accepting the framebuffer write as authoritative. */
+	static constexpr uint64_t kRaveHandoffQuietUsec = 250000u;
+	const uint64_t now = compositor_now_usec();
+	if (s_last_overlay_submit_usec != 0 &&
+	    now - s_last_overlay_submit_usec < kRaveHandoffQuietUsec)
 		return;
 
 	QD3D_RENDER_LOG("CompositorQuickDrawHandoff: guest framebuffer changed after the last RAVE frame; restoring QuickDraw owner");
@@ -285,6 +351,10 @@ static bool build_programs(void)
 static void destroy_textures(void)
 {
 	if (s_fb_tex) { glDeleteTextures(1, &s_fb_tex); s_fb_tex = 0; }
+	s_fb_tex_width = 0;
+	s_fb_tex_height = 0;
+	s_classic_fb_texture_valid = false;
+	s_classic_fb_upload_baseline.clear();
 	if (s_palette_tex) { glDeleteTextures(1, &s_palette_tex); s_palette_tex = 0; }
 	if (s_gamma_tex) { glDeleteTextures(1, &s_gamma_tex); s_gamma_tex = 0; }
 	s_fb_tex_export = 0;
@@ -301,6 +371,26 @@ static void ensure_fb_texture(void)
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		s_fb_tex_export = s_fb_tex;
 	}
+	if (s_fb_tex_width != s_width || s_fb_tex_height != s_height) {
+		glBindTexture(GL_TEXTURE_2D, s_fb_tex);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, s_width, s_height, 0,
+		             GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		s_fb_tex_width = s_width;
+		s_fb_tex_height = s_height;
+		s_classic_fb_texture_valid = false;
+		s_classic_fb_upload_baseline.clear();
+	}
+}
+
+static bool framebuffer_layer_occludes_classic_framebuffer(void)
+{
+	return s_framebuffer_valid && s_framebuffer_cache.source &&
+	       s_framebuffer_cache.blend == kBlendOpaque &&
+	       s_framebuffer_cache.alpha >= 1.f &&
+	       s_framebuffer_cache.dst_origin_x <= 0.f &&
+	       s_framebuffer_cache.dst_origin_y <= 0.f &&
+	       s_framebuffer_cache.dst_size_w >= (float)s_width &&
+	       s_framebuffer_cache.dst_size_h >= (float)s_height;
 }
 
 /* Expand guest framebuffer into tightly packed RGBA8 for upload. */
@@ -578,19 +668,52 @@ void MetalCompositorUpdatePalette(const uint8_t *pal, int num_colors)
 		s_palette[i * 4 + 3] = 255;
 	}
 	s_palette_dirty = true;
+	s_classic_fb_texture_valid = false;
 }
 
 void MetalCompositorPresent(void)
 {
 	if (!s_init) return;
+	/* Guest callbacks may pump a nested VideoVBL on the same emulation thread.
+	 * A second clear/swap while the outer present is incomplete can replay the
+	 * first movie frames and expose a partially composed back buffer. */
+	if (s_present_in_progress) {
+#if QD3D_INIT_LOGGING_ENABLED
+		static uint64_t s_nested_present_count = 0;
+		++s_nested_present_count;
+		if (compositor_trace_sample(s_nested_present_count)) {
+			QD3D_RENDER_LOG("CompositorPresent deferred: nested present count=%llu",
+			                (unsigned long long)s_nested_present_count);
+		}
+#endif
+		return;
+	}
 
-	/* Throttle: Present runs on the emul thread via VideoVBL. A full
-	 * 2560x1440 expand+upload every tick locks the guest. Cap to ~30 Hz
-	 * and always run VBL side-effects even when we skip the draw. */
-	static uint32_t s_last_present_ms = 0;
-	const uint32_t now_ms = SDL_GetTicks();
-	const bool do_draw = (s_last_present_ms == 0) ||
-	                     (now_ms - s_last_present_ms) >= 33;
+	/* Guest notice callbacks can run VideoVBL before NativeRenderEnd returns.
+	 * Do not let presentation rebind framebuffer 0 or overwrite compatibility
+	 * state while RAVE is still building the current overlay frame. */
+	if (RaveGLRenderPassActive()) {
+#if QD3D_INIT_LOGGING_ENABLED
+		static uint64_t s_deferred_present_count = 0;
+		++s_deferred_present_count;
+		if (compositor_trace_sample(s_deferred_present_count)) {
+			QD3D_RENDER_LOG("CompositorPresent deferred: RAVE render pass active count=%llu",
+			                (unsigned long long)s_deferred_present_count);
+		}
+#endif
+		return;
+	}
+	ScopedCompositorPresent present_scope;
+
+	/* Present runs on the emulation thread via VideoVBL. Follow the emulated
+	 * display cadence; unchanged framebuffer uploads are cached below, so
+	 * accelerated content no longer needs the old hard-coded 30 Hz ceiling. */
+	static uint64_t s_last_present_usec = 0;
+	const uint64_t now_usec = compositor_now_usec();
+	const uint64_t cadence_usec = GfxFramePacingClampCadenceUsec(
+		vbl_source_get_cadence_usec());
+	const bool do_draw = s_last_present_usec == 0 ||
+	                     now_usec - s_last_present_usec >= cadence_usec;
 
 	/* Drive VBL secondary callbacks (DSp drains etc.) every call. */
 	vbl_source_sdl_tick(0.0);
@@ -601,7 +724,7 @@ void MetalCompositorPresent(void)
 		return;
 	if (!GfxGLDeviceMakeCurrent())
 		return;
-	s_last_present_ms = now_ms;
+	s_last_present_usec = now_usec;
 
 #if QD3D_INIT_LOGGING_ENABLED
 	GLboolean inherited_color_mask[4] = {};
@@ -630,18 +753,29 @@ void MetalCompositorPresent(void)
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
-	/* Upload + draw framebuffer */
-	static std::vector<uint8_t> rgba;
-	expand_framebuffer_rgba(rgba);
-	ensure_fb_texture();
-	glEnable(GL_TEXTURE_2D);
-	glBindTexture(GL_TEXTURE_2D, s_fb_tex);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, s_width, s_height, 0,
-	             GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-	glDisable(GL_BLEND);
-	glColor4f(1.f, 1.f, 1.f, 1.f);
-	draw_textured_quad();
+	/* A full-screen opaque DSp page completely hides the classic framebuffer.
+	 * Avoid expanding and uploading that second full-screen surface during
+	 * movies; otherwise update the already-allocated texture in place. */
+	const bool classic_occluded =
+		framebuffer_layer_occludes_classic_framebuffer();
+	bool classic_uploaded = false;
+	if (!classic_occluded) {
+		ensure_fb_texture();
+		glEnable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, s_fb_tex);
+		if (classic_framebuffer_needs_upload()) {
+			static std::vector<uint8_t> rgba;
+			expand_framebuffer_rgba(rgba);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s_width, s_height,
+			                GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+			remember_classic_framebuffer_upload();
+			classic_uploaded = true;
+		}
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+		glDisable(GL_BLEND);
+		glColor4f(1.f, 1.f, 1.f, 1.f);
+		draw_textured_quad();
+	}
 
 	/* DSp page-flipped framebuffer, then the independent RAVE overlay. */
 	if (s_framebuffer_valid)
@@ -651,9 +785,11 @@ void MetalCompositorPresent(void)
 #if QD3D_INIT_LOGGING_ENABLED
 	s_present_count++;
 	if (compositor_trace_sample(s_present_count)) {
-		QD3D_RENDER_LOG("CompositorPresent count=%llu drawable=%dx%d guest=%dx%d framebufferValid=%d framebuffer=%u overlayValid=%d overlay=%u dst=%.1f,%.1f %.1fx%.1f inheritedScissor=%d[%d,%d %dx%d] inheritedMask=%d%d%d%d glError=0x%x",
+		QD3D_RENDER_LOG("CompositorPresent count=%llu drawable=%dx%d guest=%dx%d classicOccluded=%d classicUploaded=%d framebufferValid=%d framebuffer=%u overlayValid=%d overlay=%u dst=%.1f,%.1f %.1fx%.1f inheritedScissor=%d[%d,%d %dx%d] inheritedMask=%d%d%d%d glError=0x%x",
 		                (unsigned long long)s_present_count, dw, dh, s_width,
-		                s_height, s_framebuffer_valid ? 1 : 0,
+		                s_height, classic_occluded ? 1 : 0,
+		                classic_uploaded ? 1 : 0,
+		                s_framebuffer_valid ? 1 : 0,
 		                (unsigned)s_framebuffer_tex_cache,
 		                s_overlay_valid ? 1 : 0,
 		                (unsigned)s_overlay_tex_cache,
@@ -712,6 +848,9 @@ int MetalCompositorResize(int width, int height, int depth, int row_bytes,
 	s_buffer = buffer;
 	s_buffer_size = buffer_size;
 	s_bits_per_pixel = depth_to_bpp_bits(depth);
+	s_classic_fb_texture_valid = false;
+	s_classic_fb_upload_baseline.clear();
+	ensure_fb_texture();
 	COMPOSITOR_LOG("Resize %dx%d depth=%d", width, height, depth);
 	return 0;
 }
@@ -745,8 +884,10 @@ int32_t MetalCompositorSubmitFrame(const struct FrameDescriptor *desc)
 			s_framebuffer_tex_cache = (GLuint)(uintptr_t)L->source;
 		}
 	}
-	if (submitted_overlay)
+	if (submitted_overlay) {
 		remember_overlay_framebuffer_baseline();
+		s_last_overlay_submit_usec = compositor_now_usec();
+	}
 #if QD3D_INIT_LOGGING_ENABLED
 	s_overlay_submit_count++;
 	if (compositor_trace_sample(s_overlay_submit_count)) {
@@ -795,6 +936,7 @@ void MetalCompositorSubmitFrame_ClearCachedOverlay(void)
 	std::memset(&s_overlay_cache, 0, sizeof(s_overlay_cache));
 	s_overlay_tex_cache = 0;
 	s_overlay_fb_baseline.clear();
+	s_last_overlay_submit_usec = 0;
 }
 
 void MetalCompositorSubmitFrame_ClearCachedFramebuffer(void)
@@ -833,6 +975,7 @@ void MetalCompositorUpdateGammaLUT(const uint8_t *lut)
 			break;
 		}
 	}
+	s_classic_fb_texture_valid = false;
 	if (s_init && GfxGLDeviceMakeCurrent())
 		upload_gamma_texture();
 }

@@ -36,11 +36,14 @@
 
 #include <map>
 #include <algorithm>
+#include <cassert>
+#include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
-#include <vector>
 #include <cstdint>
+#include <thread>
+#include <vector>
 
 /* Forward decls for heap free used by alt-buffer teardown */
 extern "C" void gfxaccel_resources_heap_mm_free_buffer(uint32_t heap_id, void *ptr);
@@ -243,10 +246,96 @@ int32_t DSpContext_GetBackBufferHandler(uint32_t ctxRef, uint32_t /*options*/,
 	return kDSpNoErr;
 }
 
-int32_t DSpContext_SwapBuffersHandler(uint32_t ctxRef, uint32_t /*doneProc*/, uint32_t /*refCon*/)
+static uint32_t DSpMaxFrameRatePacingVBLs(uint32_t max_frame_rate,
+	                                      uint64_t cadence_usec)
+{
+	if (max_frame_rate == 0)
+		return 1;
+	const uint64_t cadence = GfxFramePacingClampCadenceUsec(
+		cadence_usec ? cadence_usec : GFX_FRAME_PACING_DEFAULT_USEC);
+	uint64_t refresh_hz = (1000000ull + cadence / 2u) / cadence;
+	if (refresh_hz == 0 || (uint64_t)max_frame_rate >= refresh_hz)
+		return 1;
+	const uint64_t vbls = (refresh_hz + max_frame_rate - 1u) /
+	                      max_frame_rate;
+	return vbls > UINT32_MAX ? UINT32_MAX : (uint32_t)vbls;
+}
+
+static void DSpSyncSwapFramePacing(const DSpContextPrivate *ctx)
+{
+	assert(ctx != nullptr);
+	const uint32_t pacing_vbls = DSpMaxFrameRatePacingVBLs(
+		ctx->max_frame_rate, vbl_source_get_cadence_usec());
+	for (uint32_t i = 0; i < pacing_vbls; i++) {
+		if (vbl_source_sync_3d_pacing_for_engine(
+		        kGfxFramePacingEngineDSp) != kGfxAccelNoErr)
+			break;
+	}
+}
+
+static bool DSpPollBusyProc(uint32_t ctx_ref, uint32_t busy_proc,
+	                        uint32_t user_refcon)
+{
+	if (busy_proc == 0)
+		return true;
+	const uint64_t cadence = GfxFramePacingClampCadenceUsec(
+		vbl_source_get_cadence_usec());
+	const uint64_t timeout_usec = cadence * 2u;
+	for (uint64_t elapsed = 0; elapsed < timeout_usec; elapsed += 500u) {
+		if ((call_macos2(busy_proc, ctx_ref, user_refcon) & 0xffu) == 0)
+			return true;
+		std::this_thread::sleep_for(std::chrono::microseconds(500));
+	}
+	return false;
+}
+
+static DSpContextPrivate *DSpRevalidateSwapContext(
+	uint32_t ctx_ref, DSpContextPrivate *expected, uint32_t entry_state)
+{
+	DSpContextPrivate *fresh = DSpGetContext(ctx_ref);
+	if (fresh != expected || fresh->state != entry_state ||
+	    !fresh->back_buffer || !fresh->back_texture)
+		return nullptr;
+	return fresh;
+}
+
+int32_t DSpContext_SwapBuffersHandler(uint32_t ctxRef,
+	                                  uint32_t busyProcAddr,
+	                                  uint32_t userRefCon)
 {
 	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
 	if (!ctx || !ctx->back_buffer) return kDSpInternalErr;
+	ctx->explicit_swap_observed = true;
+	ctx->swap_generation++;
+	const uint32_t entry_state = ctx->state;
+#if QD3D_INIT_LOGGING_ENABLED
+	static uint64_t swap_count = 0;
+	const uint64_t this_swap = ++swap_count;
+	if (this_swap <= 8 || (this_swap & (this_swap - 1u)) == 0 ||
+	    (this_swap % 120u) == 0) {
+		QD3D_RENDER_LOG("DSpSwap(GL): count=%llu ctx=%u busyProc=0x%08x refCon=0x%08x options=0x%x maxFrameRate=%u syncVBL=%d",
+		                (unsigned long long)this_swap, ctxRef, busyProcAddr,
+		                userRefCon, ctx->attr.contextOptions,
+		                ctx->max_frame_rate,
+		                (ctx->attr.contextOptions &
+		                 kDSpContextOption_DontSyncVBL) == 0 ? 1 : 0);
+	}
+#endif
+
+	/* DSp 1.7 defines the second argument as a pre-swap busy callback, not
+	 * a completion proc. Movie players also use SwapBuffers as their cadence
+	 * boundary, so preserve both the callback gate and VBL synchronization. */
+	if (!DSpPollBusyProc(ctxRef, busyProcAddr, userRefCon))
+		QD3D_RENDER_LOG("DSpSwap(GL): busyProc timed out after two VBLs; proceeding");
+	ctx = DSpRevalidateSwapContext(ctxRef, ctx, entry_state);
+	if (!ctx)
+		return kDSpInvalidContextErr;
+	if ((ctx->attr.contextOptions & kDSpContextOption_DontSyncVBL) == 0) {
+		DSpSyncSwapFramePacing(ctx);
+		ctx = DSpRevalidateSwapContext(ctxRef, ctx, entry_state);
+		if (!ctx)
+			return kDSpInvalidContextErr;
+	}
 	/* Copy guest staging → host back buffer */
 	if (ctx->staging_mac_addr && ctx->staging_size) {
 		const uint32_t w = DSpContextBackBufferWidth(ctx);
@@ -265,8 +354,6 @@ int32_t DSpContext_SwapBuffersHandler(uint32_t ctxRef, uint32_t /*doneProc*/, ui
 			                ctxRef, ctx->staging_size, expected, copy_size);
 		}
 	}
-	ctx->swap_generation++;
-	ctx->explicit_swap_observed = true;
 	ctx->dirty_cold_start = false;
 	ctx->dirty_empty = true;
 

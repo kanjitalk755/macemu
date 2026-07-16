@@ -30,6 +30,12 @@
 #include "audio.h"
 #include "audio_defs.h"
 
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+#include "qd3d_init_logging.h"
+#else
+#define QD3D_AUDIO_LOG(...) do { } while (0)
+#endif
+
 #define DEBUG 0
 #include "debug.h"
 
@@ -98,6 +104,10 @@ static bool open_sdl_audio(void)
 	audio_spec.samples = 4096 >> PrefsFindInt32("sound_buffer");
 	audio_spec.callback = stream_func;
 	audio_spec.userdata = NULL;
+	QD3D_AUDIO_LOG("SDL open requested format=%uHz/%ubit/%uch samples=%u sources=%d",
+	                audio_spec.freq, SDL_AUDIO_BITSIZE(audio_spec.format),
+	                audio_spec.channels, audio_spec.samples,
+	                AudioStatus.num_sources);
 
 	// Open the audio device, forcing the desired format
 	if (SDL_OpenAudio(&audio_spec, NULL) < 0) {
@@ -126,11 +136,16 @@ static bool open_sdl_audio(void)
 #endif
 	printf("Using SDL/%s audio output\n", driver_name ? driver_name : "");
 	silence_byte = audio_spec.silence;
-	SDL_PauseAudio(0);
 
 	// Sound buffer size = 4096 frames
 	audio_frames_per_block = audio_spec.samples;
 	audio_mix_buf = (uint8*)malloc(audio_spec.size);
+	memset(audio_mix_buf, silence_byte, audio_spec.size);
+	/* Do not let the callback observe an unallocated first-use mix buffer. */
+	SDL_PauseAudio(0);
+	QD3D_AUDIO_LOG("SDL open complete driver=%s size=%u silence=0x%02x",
+	                driver_name ? driver_name : "", audio_spec.size,
+	                silence_byte);
 	return true;
 }
 
@@ -180,11 +195,16 @@ void AudioInit(void)
 
 static void close_audio(void)
 {
-	// Close audio device
-#if defined(BINCUE)
-	CloseAudio_bincue();
-#endif
+	/* Stop and join the callback before destroying the BIN/CUE conversion
+	 * streams it can access from MixAudio_bincue. */
+	QD3D_AUDIO_LOG("SDL close format=%uHz/%ubit/%uch sources=%d",
+	                AudioStatus.sample_rate >> 16, AudioStatus.sample_size,
+	                AudioStatus.channels, AudioStatus.num_sources);
+	SDL_PauseAudio(1);
 	SDL_CloseAudio();
+	#if defined(BINCUE)
+	CloseAudio_bincue();
+	#endif
 	free(audio_mix_buf);
 	audio_mix_buf = NULL;
 	audio_open = false;
@@ -227,7 +247,14 @@ void audio_exit_stream()
 
 static void stream_func(void *arg, uint8 *stream, int stream_len)
 {
+	static int prior_source_count = 0;
+	static uint64 active_callback_count = 0;
+	const int source_count = AudioStatus.num_sources;
+	if (source_count != 0 && prior_source_count == 0)
+		active_callback_count = 0;
+	prior_source_count = source_count;
 	if (AudioStatus.num_sources) {
+		active_callback_count++;
 		// Trigger audio interrupt to get new buffer
 		D(bug("stream: triggering irq\n"));
 		SetInterruptFlag(INTFLAG_AUDIO);
@@ -239,6 +266,12 @@ static void stream_func(void *arg, uint8 *stream, int stream_len)
 		// Get size of audio data
 		uint32 apple_stream_info = ReadMacInt32(audio_data + adatStreamInfo);
 		if (apple_stream_info && !main_mute && !speaker_mute) {
+			const uint32 format = ReadMacInt32(apple_stream_info + scd_format);
+			const uint16 source_channels = ReadMacInt16(apple_stream_info + scd_numChannels);
+			const uint16 source_bits = ReadMacInt16(apple_stream_info + scd_sampleSize);
+			const uint32 source_rate = ReadMacInt32(apple_stream_info + scd_sampleRate);
+			const uint32 source_frames = ReadMacInt32(apple_stream_info + scd_sampleCount);
+			const uint32 source_buffer = ReadMacInt32(apple_stream_info + scd_buffer);
 			int work_size = ReadMacInt32(apple_stream_info + scd_sampleCount) * (AudioStatus.sample_size >> 3) * AudioStatus.channels;
 			D(bug("stream: work_size %d\n", work_size));
 			if (work_size > stream_len)
@@ -251,6 +284,23 @@ static void stream_func(void *arg, uint8 *stream, int stream_len)
 				ReadMacInt16(apple_stream_info + scd_numChannels) == 1 &&
 				ReadMacInt16(apple_stream_info + scd_sampleSize) == 8;
 			uint8 *src = Mac2HostAddr(ReadMacInt32(apple_stream_info + scd_buffer));
+#if defined(QD3D_INIT_LOGGING_ENABLED) && QD3D_INIT_LOGGING_ENABLED
+			uint32 hash = 2166136261u;
+			const uint32 source_bytes = source_frames * (source_bits >> 3) * source_channels;
+			const uint32 hash_bytes = source_bytes < 4096u ? source_bytes : 4096u;
+			for (uint32 i = 0; i < hash_bytes; i++)
+				hash = (hash ^ src[i]) * 16777619u;
+			if (active_callback_count <= 32u ||
+			    (active_callback_count % 120u) == 0) {
+				QD3D_AUDIO_LOG("SDL callback run=%llu info=0x%08x buffer=0x%08x format=%c%c%c%c %uHz/%ubit/%uch frames=%u sourceBytes=%u outputBytes=%d hash=%08x",
+				                (unsigned long long)active_callback_count,
+				                apple_stream_info, source_buffer,
+				                format >> 24, (format >> 16) & 0xff,
+				                (format >> 8) & 0xff, format & 0xff,
+				                source_rate >> 16, source_bits, source_channels,
+				                source_frames, source_bytes, work_size, hash);
+			}
+#endif
 			if (dbl)
 				for (int i = 0; i < work_size; i += 2)
 					audio_mix_buf[i] = audio_mix_buf[i + 1] = src[i >> 1];
@@ -290,6 +340,15 @@ void AudioInterrupt(void)
 		r.a[0] = audio_data + adatStreamInfo;
 		r.a[1] = AudioStatus.mixer;
 		Execute68k(audio_data + adatGetSourceData, &r);
+		static uint64 interrupt_count = 0;
+		interrupt_count++;
+		if (interrupt_count <= 32u || (interrupt_count % 120u) == 0) {
+			QD3D_AUDIO_LOG("AudioInterrupt count=%llu mixer=0x%08x result=%d streamInfo=0x%08x sources=%d",
+			                (unsigned long long)interrupt_count,
+			                AudioStatus.mixer, (int32)r.d[0],
+			                ReadMacInt32(audio_data + adatStreamInfo),
+			                AudioStatus.num_sources);
+		}
 		D(bug(" GetSourceData() returns %08lx\n", r.d[0]));
 	} else
 		WriteMacInt32(audio_data + adatStreamInfo, 0);
@@ -308,6 +367,9 @@ void AudioInterrupt(void)
 
 bool audio_set_sample_rate(int index)
 {
+	QD3D_AUDIO_LOG("Set host sample rate index=%d old=%u new=%u",
+	                index, AudioStatus.sample_rate >> 16,
+	                audio_sample_rates[index] >> 16);
 	close_audio();
 	audio_sample_rate_index = index;
 	return open_audio();
@@ -315,6 +377,8 @@ bool audio_set_sample_rate(int index)
 
 bool audio_set_sample_size(int index)
 {
+	QD3D_AUDIO_LOG("Set host sample size index=%d old=%u new=%u",
+	                index, AudioStatus.sample_size, audio_sample_sizes[index]);
 	close_audio();
 	audio_sample_size_index = index;
 	return open_audio();
@@ -322,6 +386,8 @@ bool audio_set_sample_size(int index)
 
 bool audio_set_channels(int index)
 {
+	QD3D_AUDIO_LOG("Set host channels index=%d old=%u new=%u",
+	                index, AudioStatus.channels, audio_channel_counts[index]);
 	close_audio();
 	audio_channel_count_index = index;
 	return open_audio();

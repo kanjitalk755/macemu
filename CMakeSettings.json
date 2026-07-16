@@ -80,6 +80,44 @@
 			"ctestCommandArgs": ""
 		},
 		{
+			"name": "x86-QD3D-RelWithDebInfo",
+			"generator": "Ninja",
+			"configurationType": "RelWithDebInfo",
+			"inheritEnvironments": [ "msvc_x86" ],
+			"buildRoot": "${projectDir}\\out\\build\\${name}",
+			"installRoot": "${projectDir}\\out\\install\\${name}",
+			"cmakeCommandArgs": "",
+			"buildCommandArgs": "",
+			"ctestCommandArgs": "",
+			"variables": [
+				{
+					"name": "BUILD_BASILISKII",
+					"value": "OFF",
+					"type": "BOOL"
+				},
+				{
+					"name": "BUILD_SHEEPSHAVER",
+					"value": "ON",
+					"type": "BOOL"
+				},
+				{
+					"name": "ENABLE_QD3D_INIT_LOGGING",
+					"value": "ON",
+					"type": "BOOL"
+				},
+				{
+					"name": "ENABLE_SHEEPSHAVER_JIT",
+					"value": "ON",
+					"type": "BOOL"
+				},
+				{
+					"name": "GFXACCEL_BACKEND",
+					"value": "opengl",
+					"type": "STRING"
+				}
+			]
+		},
+		{
 			"name": "x86-Release",
 			"generator": "Ninja",
 			"configurationType": "Release",

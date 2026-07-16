@@ -21,6 +21,7 @@
 
 #include <SDL_opengl.h>
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -40,6 +41,45 @@ static bool dsp_valid_depth(uint32_t depth)
 {
 	return depth == 1 || depth == 2 || depth == 4 || depth == 8 ||
 	       depth == 16 || depth == 32;
+}
+
+static uint32_t pack_rgba(uint8_t r, uint8_t g, uint8_t b)
+{
+	/* The desktop OpenGL backends are little-endian; this integer layout is
+	 * byte-for-byte RGBA when uploaded with GL_UNSIGNED_BYTE. */
+	return (uint32_t)r | ((uint32_t)g << 8) |
+	       ((uint32_t)b << 16) | 0xff000000u;
+}
+
+static const uint32_t *rgb555_gamma_lut(const uint8_t *gamma)
+{
+	static std::array<uint32_t, 32768> lut;
+	static std::array<uint8_t, 768> gamma_snapshot;
+	static bool valid = false;
+	bool changed = !valid;
+	if (!changed) {
+		for (uint32_t i = 0; i < gamma_snapshot.size(); i++) {
+			const uint8_t value = gamma ? gamma[i] : (uint8_t)(i & 255u);
+			if (gamma_snapshot[i] != value) {
+				changed = true;
+				break;
+			}
+		}
+	}
+	if (changed) {
+		for (uint32_t i = 0; i < gamma_snapshot.size(); i++)
+			gamma_snapshot[i] = gamma ? gamma[i] : (uint8_t)(i & 255u);
+		for (uint32_t value = 0; value < lut.size(); value++) {
+			const uint8_t r = (uint8_t)(((value >> 10) & 31u) * 255u / 31u);
+			const uint8_t g = (uint8_t)(((value >> 5) & 31u) * 255u / 31u);
+			const uint8_t b = (uint8_t)((value & 31u) * 255u / 31u);
+			lut[value] = pack_rgba(gamma_snapshot[r],
+			                       gamma_snapshot[256u + g],
+			                       gamma_snapshot[512u + b]);
+		}
+		valid = true;
+	}
+	return lut.data();
 }
 
 static bool dsp_back_buffer_layout(uint32_t w, uint32_t h, uint32_t depth,
@@ -174,21 +214,32 @@ static void expand_back_to_rgba(const DSpContextPrivate *ctx, std::vector<uint8_
 	auto apply_gamma = [gamma](uint8_t c, uint32_t plane) -> uint8_t {
 		return gamma ? gamma[plane * 256u + c] : c;
 	};
+	const uint32_t *rgb555_lut = bpp == 16 ? rgb555_gamma_lut(gamma) : nullptr;
+	std::array<uint32_t, 256> palette_rgba = {};
+	if (bpp <= 8) {
+		const uint8_t *pal = ctx->clut_bytes_latched;
+		for (uint32_t i = 0; i < palette_rgba.size(); i++) {
+			palette_rgba[i] = pack_rgba(
+				apply_gamma(pal[i * 3u + 0u], 0),
+				apply_gamma(pal[i * 3u + 1u], 1),
+				apply_gamma(pal[i * 3u + 2u], 2));
+		}
+	}
 	for (uint32_t y = 0; y < h; y++) {
 		const uint8_t *srow = src + (size_t)y * row;
-		uint8_t *drow = out.data() + (size_t)y * w * 4;
+		uint32_t *drow = reinterpret_cast<uint32_t *>(
+			out.data() + (size_t)y * w * 4u);
 		for (uint32_t x = 0; x < w; x++) {
-			uint8_t R = 0, G = 0, B = 0;
 			if (bpp == 32) {
 				/* Guest BE ARGB */
-				R = srow[x * 4 + 1];
-				G = srow[x * 4 + 2];
-				B = srow[x * 4 + 3];
+				drow[x] = pack_rgba(
+					apply_gamma(srow[x * 4u + 1u], 0),
+					apply_gamma(srow[x * 4u + 2u], 1),
+					apply_gamma(srow[x * 4u + 3u], 2));
 			} else if (bpp == 16) {
-				uint16_t be = (uint16_t)((srow[x * 2] << 8) | srow[x * 2 + 1]);
-				R = (uint8_t)(((be >> 10) & 0x1f) * 255 / 31);
-				G = (uint8_t)(((be >> 5) & 0x1f) * 255 / 31);
-				B = (uint8_t)((be & 0x1f) * 255 / 31);
+				const uint16_t be = (uint16_t)(
+					((uint16_t)srow[x * 2u] << 8) | srow[x * 2u + 1u]);
+				drow[x] = rgb555_lut[be & 0x7fffu];
 			} else {
 				uint8_t i = 0;
 				if (bpp == 8) {
@@ -203,15 +254,8 @@ static void expand_back_to_rgba(const DSpContextPrivate *ctx, std::vector<uint8_
 					const uint8_t packed = srow[x >> 3];
 					i = (packed >> (7u - (x & 7u))) & 0x01u;
 				}
-				const uint8_t *pal = ctx->clut_bytes_latched;
-				R = pal[i * 3 + 0];
-				G = pal[i * 3 + 1];
-				B = pal[i * 3 + 2];
+				drow[x] = palette_rgba[i];
 			}
-			drow[x * 4 + 0] = apply_gamma(R, 0);
-			drow[x * 4 + 1] = apply_gamma(G, 1);
-			drow[x * 4 + 2] = apply_gamma(B, 2);
-			drow[x * 4 + 3] = 255;
 		}
 	}
 }
@@ -222,14 +266,17 @@ void DSpEncodeBackBufferBlit(DSpContextPrivate *ctx, void * /*encoder*/, void * 
 
 	/* Upload back buffer into GL texture and cache as compositor overlay */
 	if (ctx->back_texture && GfxGLDeviceMakeCurrent()) {
-		std::vector<uint8_t> rgba;
+		/* DSp swaps every movie frame. Reuse conversion storage and update the
+		 * texture allocated at Reserve time instead of reallocating driver
+		 * storage with glTexImage2D on every swap. */
+		static std::vector<uint8_t> rgba;
 		expand_back_to_rgba(ctx, rgba);
 		const uint32_t w = DSpContextBackBufferWidth(ctx);
 		const uint32_t h = DSpContextBackBufferHeight(ctx);
 		GLuint tex = (GLuint)(uintptr_t)ctx->back_texture;
 		glBindTexture(GL_TEXTURE_2D, tex);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)w, (GLsizei)h, 0,
-		             GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)w, (GLsizei)h,
+		                GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
 
 		/* DSp is the 2D framebuffer beneath RAVE. Publishing it as an overlay
 		 * races and replaces the one-slot RAVE mailbox, hiding all 3D. */
@@ -244,12 +291,17 @@ void DSpEncodeBackBufferBlit(DSpContextPrivate *ctx, void * /*encoder*/, void * 
 		layer.slot = kLayerSlotFramebuffer;
 		layer.blend = kBlendOpaque;
 		layer.alpha = 1.f;
-		FrameDescriptor desc = {};
-		desc.layers = &layer;
-		desc.layer_count = 1;
-		const DMCModeSnapshot *snap = dmc_current_snapshot();
-		desc.generation = snap ? snap->generation : 0;
-		const int32_t submit_result = MetalCompositorSubmitFrame(&desc);
+		int32_t submit_result = kGfxAccelNoErr;
+		const bool submitted =
+			ctx->state == (uint32_t)kDSpContextState_Active;
+		if (submitted) {
+			FrameDescriptor desc = {};
+			desc.layers = &layer;
+			desc.layer_count = 1;
+			const DMCModeSnapshot *snap = dmc_current_snapshot();
+			desc.generation = snap ? snap->generation : 0;
+			submit_result = MetalCompositorSubmitFrame(&desc);
+		}
 #if QD3D_INIT_LOGGING_ENABLED
 		static uint64_t present_count = 0;
 		present_count++;
@@ -260,8 +312,9 @@ void DSpEncodeBackBufferBlit(DSpContextPrivate *ctx, void * /*encoder*/, void * 
 				r_sum += rgba[i + 0]; g_sum += rgba[i + 1]; b_sum += rgba[i + 2];
 				if (rgba[i + 0] || rgba[i + 1] || rgba[i + 2]) nonblack++;
 			}
-			QD3D_RENDER_LOG("DSpPresent frame=%llu ctx=%u display=%ux%u@%u back=%ux%u@%u row=%u bytes=%u nonblack=%llu sums=%llu/%llu/%llu slot=framebuffer submit=%d texture=%u",
+			QD3D_RENDER_LOG("DSpPresent frame=%llu ctx=%u state=%u submitted=%d display=%ux%u@%u back=%ux%u@%u row=%u bytes=%u nonblack=%llu sums=%llu/%llu/%llu slot=framebuffer submit=%d texture=%u",
 			                (unsigned long long)present_count, ctx->handle,
+			                ctx->state, submitted ? 1 : 0,
 			                ctx->attr.displayWidth, ctx->attr.displayHeight,
 			                ctx->attr.displayBestDepth, w, h,
 			                ctx->attr.backBufferBestDepth,

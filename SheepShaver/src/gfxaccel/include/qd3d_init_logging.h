@@ -60,6 +60,8 @@ static inline void log(const char *category, const char *file, int line,
 	::qd3d_init_logging::log("resource", __FILE__, __LINE__, __VA_ARGS__)
 #define QD3D_RENDER_LOG(...) \
 	::qd3d_init_logging::log("render", __FILE__, __LINE__, __VA_ARGS__)
+#define QD3D_AUDIO_LOG(...) \
+	::qd3d_init_logging::log("audio", __FILE__, __LINE__, __VA_ARGS__)
 
 #else
 
@@ -67,6 +69,7 @@ static inline void log(const char *category, const char *file, int line,
 #define QD3D_STATE_LOG(...) do { } while (0)
 #define QD3D_RESOURCE_LOG(...) do { } while (0)
 #define QD3D_RENDER_LOG(...) do { } while (0)
+#define QD3D_AUDIO_LOG(...) do { } while (0)
 
 #endif
 

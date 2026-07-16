@@ -25,6 +25,8 @@
 
 #include <cassert>
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -103,6 +105,17 @@ struct RaveMetalState {
  * A per-draw-context cache is valid only while that context remains the last
  * owner to install fixed-function state. */
 static RaveMetalState *s_draw_state_owner = nullptr;
+
+/* VideoVBL may re-enter the compositor from a guest notice callback.  The
+ * compositor and RAVE use the same compatibility OpenGL context, so presenting
+ * while a RAVE frame is open would replace its FBO and fixed-function state.
+ * Keep this guard set across the notice callbacks as well as the GL draws. */
+static RaveMetalState *s_active_render_pass = nullptr;
+
+extern "C" int RaveGLRenderPassActive(void)
+{
+	return s_active_render_pass != nullptr ? 1 : 0;
+}
 
 static void invalidate_draw_state(RaveMetalState *ms)
 {
@@ -232,8 +245,11 @@ void RaveCreateMetalOverlay(int32_t left, int32_t top, int32_t width, int32_t he
 	s_dst_l = left; s_dst_t = top; s_dst_w = width; s_dst_h = height;
 	if (width > 0 && height > 0)
 		acquire_overlay((uint32_t)width, (uint32_t)height);
-	if (s_overlay_tex)
-		(void)dmc_set_active_owner(kDMCOwnerRAVE);
+	/* Creating a draw context only vends its render target.  Descent creates
+	 * the context while its first QuickTime movie is already playing; claiming
+	 * display ownership here clears the live compositor layers even though no
+	 * RAVE frame exists yet.  NativeRenderEnd performs the ownership transition
+	 * immediately before publishing the first completed overlay. */
 	QD3D_INIT_LOG("RaveCreateMetalOverlay(GL): texture=%u pair=(%u,%u) allocated=%ux%u",
 	              (unsigned)s_overlay_tex, (unsigned)s_overlay_pair[0],
 	              (unsigned)s_overlay_pair[1], s_ow, s_oh);
@@ -283,10 +299,12 @@ void RaveInitMetalResources(RaveDrawPrivate *priv)
 void RaveReleaseMetalResources(RaveDrawPrivate *priv)
 {
 	if (!priv || !priv->metal) return;
+	RaveMetalState *ms = priv->metal;
+	if (s_active_render_pass == ms)
+		s_active_render_pass = nullptr;
 	if (s_draw_state_owner == priv->metal)
 		s_draw_state_owner = nullptr;
 	if (GfxGLDeviceMakeCurrent()) {
-		RaveMetalState *ms = priv->metal;
 		auto &ext = gfx_gl_ext();
 		if (ext.fbo) {
 			if (ms->fbo) ext.DeleteFramebuffers(1, &ms->fbo);
@@ -442,6 +460,40 @@ static bool ensure_draw_buffer_cpu(RaveMetalState *ms, uint32_t pixel_type)
 	return true;
 }
 
+struct NoticeRGB555Tables {
+	std::array<uint16_t, 256> red = {};
+	std::array<uint16_t, 256> green = {};
+	std::array<uint16_t, 256> blue = {};
+	std::array<uint32_t, 32768> bgra = {};
+
+	NoticeRGB555Tables()
+	{
+		for (uint32_t c = 0; c < 256; c++) {
+			red[c] = (uint16_t)((c >> 3) << 10);
+			green[c] = (uint16_t)((c >> 3) << 5);
+			blue[c] = (uint16_t)(c >> 3);
+		}
+		for (uint32_t value = 0; value < bgra.size(); value++) {
+			const uint8_t r5 = (uint8_t)((value >> 10) & 0x1fu);
+			const uint8_t g5 = (uint8_t)((value >> 5) & 0x1fu);
+			const uint8_t b5 = (uint8_t)(value & 0x1fu);
+			const uint8_t r = (uint8_t)((r5 << 3) | (r5 >> 2));
+			const uint8_t g = (uint8_t)((g5 << 3) | (g5 >> 2));
+			const uint8_t b = (uint8_t)((b5 << 3) | (b5 >> 2));
+			/* GL_BGRA/GL_UNSIGNED_BYTE consumes these little-endian bytes as
+			 * B, G, R, A. */
+			bgra[value] = (uint32_t)b | ((uint32_t)g << 8) |
+			              ((uint32_t)r << 16) | 0xff000000u;
+		}
+	}
+};
+
+static const NoticeRGB555Tables &notice_rgb555_tables()
+{
+	static const NoticeRGB555Tables tables;
+	return tables;
+}
+
 /* GL render targets are bottom-up. RAVE's CPU image-buffer contract is a
  * top-down big-endian RGB16 or RGB32 byte stream matching the display. */
 static bool copy_overlay_to_guest(const RaveDrawPrivate *priv,
@@ -465,22 +517,26 @@ static bool copy_overlay_to_guest(const RaveDrawPrivate *priv,
 	if (glGetError() != GL_NO_ERROR) return false;
 	uint8_t *guest = Mac2HostAddr(ms->draw_cpu_mac);
 	if (!guest) return false;
+	const NoticeRGB555Tables &tables = notice_rgb555_tables();
 	for (uint32_t guest_y = 0; guest_y < h; guest_y++) {
 		const uint8_t *src = ms->readback_bgra.data() +
 		                     (size_t)(h - 1u - guest_y) * w * 4u;
 		uint8_t *dst = guest + (size_t)guest_y * ms->draw_cpu_row_bytes;
-		for (uint32_t x = 0; x < w; x++) {
-			const uint8_t b = src[x * 4u + 0u];
-			const uint8_t g = src[x * 4u + 1u];
-			const uint8_t r = src[x * 4u + 2u];
-			const uint8_t a = src[x * 4u + 3u];
-			if (pixel_type == kRaveNoticePixelRGB16) {
-				const uint16_t rgb555 = (uint16_t)(((uint16_t)(r >> 3) << 10) |
-				                                   ((uint16_t)(g >> 3) << 5) |
-				                                   (uint16_t)(b >> 3));
+		if (pixel_type == kRaveNoticePixelRGB16) {
+			for (uint32_t x = 0; x < w; x++) {
+				const uint16_t rgb555 = (uint16_t)(
+					tables.red[src[x * 4u + 2u]] |
+					tables.green[src[x * 4u + 1u]] |
+					tables.blue[src[x * 4u + 0u]]);
 				dst[x * 2u + 0u] = (uint8_t)(rgb555 >> 8);
 				dst[x * 2u + 1u] = (uint8_t)rgb555;
-			} else {
+			}
+		} else {
+			for (uint32_t x = 0; x < w; x++) {
+				const uint8_t b = src[x * 4u + 0u];
+				const uint8_t g = src[x * 4u + 1u];
+				const uint8_t r = src[x * 4u + 2u];
+				const uint8_t a = src[x * 4u + 3u];
 				dst[x * 4u + 0u] = a;
 				dst[x * 4u + 1u] = r;
 				dst[x * 4u + 2u] = g;
@@ -516,33 +572,27 @@ static bool upload_guest_to_overlay(RaveMetalState *ms, uint32_t rect_addr)
 	ms->upload_bgra.resize((size_t)upload_w * upload_h * 4u);
 	const uint8_t *guest = Mac2HostAddr(ms->draw_cpu_mac);
 	if (!guest) return false;
+	const NoticeRGB555Tables &tables = notice_rgb555_tables();
 	for (uint32_t gl_row = 0; gl_row < upload_h; gl_row++) {
 		const uint32_t guest_y = (uint32_t)bottom - 1u - gl_row;
 		const uint8_t *src = guest + (size_t)guest_y * ms->draw_cpu_row_bytes +
 		                     (size_t)(uint32_t)left * bytes_per_pixel;
 		uint8_t *dst = ms->upload_bgra.data() +
 		               (size_t)gl_row * upload_w * 4u;
-		for (uint32_t x = 0; x < upload_w; x++) {
-			uint8_t a = 255, r, g, b;
-			if (pixel_type == kRaveNoticePixelRGB16) {
+		if (pixel_type == kRaveNoticePixelRGB16) {
+			uint32_t *dst32 = reinterpret_cast<uint32_t *>(dst);
+			for (uint32_t x = 0; x < upload_w; x++) {
 				const uint16_t rgb555 = (uint16_t)(((uint16_t)src[x * 2u] << 8) |
 				                                   src[x * 2u + 1u]);
-				const uint8_t r5 = (uint8_t)((rgb555 >> 10) & 0x1f);
-				const uint8_t g5 = (uint8_t)((rgb555 >> 5) & 0x1f);
-				const uint8_t b5 = (uint8_t)(rgb555 & 0x1f);
-				r = (uint8_t)((r5 << 3) | (r5 >> 2));
-				g = (uint8_t)((g5 << 3) | (g5 >> 2));
-				b = (uint8_t)((b5 << 3) | (b5 >> 2));
-			} else {
-				a = src[x * 4u + 0u];
-				r = src[x * 4u + 1u];
-				g = src[x * 4u + 2u];
-				b = src[x * 4u + 3u];
+				dst32[x] = tables.bgra[rgb555 & 0x7fffu];
 			}
-			dst[x * 4u + 0u] = b;
-			dst[x * 4u + 1u] = g;
-			dst[x * 4u + 2u] = r;
-			dst[x * 4u + 3u] = a;
+		} else {
+			for (uint32_t x = 0; x < upload_w; x++) {
+				dst[x * 4u + 0u] = src[x * 4u + 3u];
+				dst[x * 4u + 1u] = src[x * 4u + 2u];
+				dst[x * 4u + 2u] = src[x * 4u + 1u];
+				dst[x * 4u + 3u] = src[x * 4u + 0u];
+			}
 		}
 	}
 
@@ -571,11 +621,17 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 	const uint64_t notice_count = ++notice_counts[selector];
 	const bool log_notice = trace_sample(notice_count);
 	if (selector == 3u || selector == 4u) {
+#if QD3D_INIT_LOGGING_ENABLED
+		const auto notice_start = std::chrono::steady_clock::now();
+#endif
 		if (!copy_overlay_to_guest(priv, ms)) {
 			QD3D_RENDER_LOG("Notice selector=%u callback=0x%08x: overlay readback failed",
 			                selector, callback);
 			return;
 		}
+#if QD3D_INIT_LOGGING_ENABLED
+		const auto readback_done = std::chrono::steady_clock::now();
+#endif
 		if (!ms->notice_device_mac)
 			ms->notice_device_mac = Mac_sysalloc(24);
 		if (!ms->notice_dirty_rect_mac)
@@ -596,17 +652,31 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 		unbind_fbo();
 		call_macos4(callback, priv->drawContextAddr, ms->notice_device_mac,
 		            ms->notice_dirty_rect_mac, refcon);
+#if QD3D_INIT_LOGGING_ENABLED
+		const auto callback_done = std::chrono::steady_clock::now();
+#endif
 		const bool uploaded = upload_guest_to_overlay(
 		    ms, ms->notice_dirty_rect_mac);
 		const bool restored = uploaded || restore_overlay_fbo(ms);
 		ms->pass_active = restored;
+#if QD3D_INIT_LOGGING_ENABLED
 		if (log_notice || !uploaded) {
-			QD3D_RENDER_LOG("Notice selector=%u count=%llu callback=0x%08x refCon=0x%08x buffer=0x%08x pixelType=%u rowBytes=%u dirty=0x%08x upload=%d",
+			const auto upload_done = std::chrono::steady_clock::now();
+			const auto readback_usec = std::chrono::duration_cast<
+				std::chrono::microseconds>(readback_done - notice_start).count();
+			const auto callback_usec = std::chrono::duration_cast<
+				std::chrono::microseconds>(callback_done - readback_done).count();
+			const auto upload_usec = std::chrono::duration_cast<
+				std::chrono::microseconds>(upload_done - callback_done).count();
+			QD3D_RENDER_LOG("Notice selector=%u count=%llu callback=0x%08x refCon=0x%08x buffer=0x%08x pixelType=%u rowBytes=%u dirty=0x%08x upload=%d usec=%lld/%lld/%lld",
 			                selector, (unsigned long long)notice_count, callback,
 			                refcon, ms->draw_cpu_mac,
 			                ms->draw_cpu_pixel_type, ms->draw_cpu_row_bytes,
-			                ms->notice_dirty_rect_mac, uploaded ? 1 : 0);
+			                ms->notice_dirty_rect_mac, uploaded ? 1 : 0,
+			                (long long)readback_usec, (long long)callback_usec,
+			                (long long)upload_usec);
 		}
+#endif
 	} else {
 		call_macos2(callback, priv->drawContextAddr, refcon);
 		if (log_notice) {
@@ -1373,6 +1443,8 @@ int32_t NativeRenderStart(uint32_t drawContextAddr, uint32_t dirtyRectAddr, uint
 			initialTex = s_last_submitted_tex;
 	}
 	if (!bind_overlay_fbo(ms, w, h)) return 1;
+	assert(s_active_render_pass == nullptr);
+	s_active_render_pass = ms;
 	/* Clear/load actions must not inherit the previous draw's write mask or
 	 * scissor rectangle. Draw state is re-applied before every draw call. */
 	glDisable(GL_SCISSOR_TEST);
@@ -1450,6 +1522,8 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 	}
 	RaveMetalState *ms = priv->metal;
 	if (!ms->pass_active) {
+		if (s_active_render_pass == ms)
+			s_active_render_pass = nullptr;
 		QD3D_RENDER_LOG("RenderEnd ignored: frame=%u ctx=0x%08x has no active pass",
 		                priv->frameCount, drawContextAddr);
 		return kQANoErr;
@@ -1530,6 +1604,8 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 		s_write ^= 1;
 		s_overlay_tex = s_overlay_pair[s_write];
 	}
+	assert(s_active_render_pass == ms);
+	s_active_render_pass = nullptr;
 	MetalCompositorSync3DFramePacingForEngine(kGfxFramePacingEngineRAVE);
 	return kQANoErr;
 }
@@ -1543,6 +1619,8 @@ int32_t NativeRenderAbort(uint32_t drawContextAddr)
 		unbind_fbo();
 		ms->pass_active = false;
 	}
+	if (s_active_render_pass == ms)
+		s_active_render_pass = nullptr;
 	invalidate_draw_state(ms);
 	priv->zsortCount = 0;
 	priv->multiTextureActive = false;

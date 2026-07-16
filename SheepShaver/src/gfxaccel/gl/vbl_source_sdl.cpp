@@ -8,6 +8,7 @@
 #include "sysdeps.h"
 #include "vbl_source.h"
 #include "gl_device.h"
+#include "qd3d_init_logging.h"
 
 #include <SDL.h>
 #include <atomic>
@@ -23,20 +24,18 @@ static int s_secondary_count = 0;
 
 static std::atomic<uint64_t> s_tick_count{0};
 static std::atomic<uint64_t> s_cadence_usec{16667};
+static std::atomic<uint64_t> s_last_tick_usec{0};
 static std::atomic<int> s_paused{0};
 static std::atomic<int> s_in_callback{0};
 static bool s_initialized = false;
 
-/* Per-engine next deadlines (microseconds, SDL_GetTicks64 * 1000). */
+/* Per-engine next deadlines on the steady-clock microsecond timeline. */
 static uint64_t s_engine_deadline_usec[kGfxFramePacingEngineCount] = {};
 
 static uint64_t now_usec(void)
 {
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-	return (uint64_t)SDL_GetTicks64() * 1000ull;
-#else
-	return (uint64_t)SDL_GetTicks() * 1000ull;
-#endif
+	return (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+		std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 int32_t vbl_source_init(void * /*cametal_layer*/,
@@ -49,6 +48,9 @@ int32_t vbl_source_init(void * /*cametal_layer*/,
 	s_primary_ctx = ctx;
 	s_tick_count.store(0);
 	s_cadence_usec.store(16667);
+	s_last_tick_usec.store(0);
+	std::memset(s_engine_deadline_usec, 0,
+	            sizeof(s_engine_deadline_usec));
 	s_paused.store(0);
 	s_initialized = true;
 	return 0; /* kGfxAccelNoErr */
@@ -63,6 +65,9 @@ void vbl_source_shutdown(void)
 	std::memset(s_secondary, 0, sizeof(s_secondary));
 	std::memset(s_secondary_ctx, 0, sizeof(s_secondary_ctx));
 	s_tick_count.store(0);
+	s_last_tick_usec.store(0);
+	std::memset(s_engine_deadline_usec, 0,
+	            sizeof(s_engine_deadline_usec));
 }
 
 uint64_t vbl_source_get_cadence_usec(void)
@@ -92,14 +97,10 @@ int vbl_source_in_callback_chain(void)
 
 void vbl_source_signal_3d_pacing(void)
 {
-	const uint64_t now = now_usec();
-	const uint64_t cad = s_cadence_usec.load();
-	for (int i = 0; i < kGfxFramePacingEngineCount; i++) {
-		if (s_engine_deadline_usec[i] < now)
-			s_engine_deadline_usec[i] = now + cad;
-		else
-			s_engine_deadline_usec[i] += cad;
-	}
+	/* A VBL signal anchors the live cadence grid. It must not also advance
+	 * every engine's private deadline: doing both makes the next sync wait
+	 * for the following boundary and creates a structural half-rate cap. */
+	s_last_tick_usec.store(now_usec());
 }
 
 int32_t vbl_source_sync_3d_pacing_for_engine(int32_t engine_id)
@@ -111,18 +112,38 @@ int32_t vbl_source_sync_3d_pacing_for_engine(int32_t engine_id)
 
 	const uint64_t now = now_usec();
 	uint64_t deadline = s_engine_deadline_usec[engine_id];
-	const uint64_t cad = s_cadence_usec.load();
-	if (deadline == 0 || deadline + cad * 4 < now) {
-		/* ticks stopped or first frame — wait one cadence from now */
-		deadline = now + cad;
-		s_engine_deadline_usec[engine_id] = deadline;
+	const uint64_t cad = GfxFramePacingClampCadenceUsec(
+		s_cadence_usec.load());
+	const uint64_t last_tick = s_last_tick_usec.load();
+	const bool tick_is_fresh = last_tick != 0 &&
+		now <= last_tick + cad * GFX_FRAME_PACING_STALE_TICKS;
+	if (!tick_is_fresh) {
+		const uint64_t fallback_deadline = now + cad;
+		if (deadline == 0 || deadline <= now ||
+		    deadline > fallback_deadline + cad)
+			deadline = fallback_deadline;
+	} else if (deadline == 0 || deadline > last_tick + 2u * cad) {
+		/* First sync, cadence change, or long idle: anchor to the first
+		 * boundary following the most recent live tick. */
+		deadline = last_tick + cad;
 	}
 
-	if (deadline > now) {
-		const uint64_t sleep_us = deadline - now;
-		std::this_thread::sleep_for(std::chrono::microseconds(sleep_us));
+	if (tick_is_fresh && deadline <= now) {
+		/* Rendering (or another co-resident engine) already crossed this
+		 * boundary. Consume it without sleeping, then target the next one. */
+		do {
+			deadline += cad;
+		} while (deadline <= now);
+		s_engine_deadline_usec[engine_id] = deadline;
+		return 0;
 	}
-	s_engine_deadline_usec[engine_id] = now_usec() + cad;
+
+	while (deadline <= now)
+		deadline += cad;
+	std::this_thread::sleep_until(
+		std::chrono::steady_clock::time_point(
+			std::chrono::microseconds(deadline)));
+	s_engine_deadline_usec[engine_id] = deadline + cad;
 	return 0;
 }
 
@@ -163,8 +184,23 @@ extern "C" void vbl_source_sdl_tick(double target_ts)
 {
 	if (!s_initialized || s_paused.load())
 		return;
+	/* Match FireVBLCallbackChain on the Metal backend. Guest callbacks can
+	 * pump the event loop and encounter another VBL on this same thread; the
+	 * nested chain must not run the DSp drains or primary callback twice. */
+	if (s_in_callback.exchange(1) != 0) {
+#if QD3D_INIT_LOGGING_ENABLED
+		static uint64_t s_nested_tick_count = 0;
+		++s_nested_tick_count;
+		if (s_nested_tick_count <= 8 ||
+		    (s_nested_tick_count & (s_nested_tick_count - 1u)) == 0 ||
+		    (s_nested_tick_count % 120u) == 0) {
+			QD3D_RENDER_LOG("VBL tick deferred: nested callback chain count=%llu",
+			                (unsigned long long)s_nested_tick_count);
+		}
+#endif
+		return;
+	}
 
-	s_in_callback.store(1);
 	s_tick_count.fetch_add(1);
 	vbl_source_signal_3d_pacing();
 
