@@ -13,6 +13,7 @@
 #include "gfxaccel_resources.h"
 #include "vbl_source.h"
 #include "gl_device.h"
+#include "qd3d_init_logging.h"
 /* Windows GL 1.1 has no GLSL compile entry points; present path uses FFP. */
 
 #include <SDL.h>
@@ -61,6 +62,16 @@ static bool s_gamma_is_identity = true;
 static CompositeLayer s_overlay_cache;
 static bool s_overlay_valid = false;
 static GLuint s_overlay_tex_cache = 0; /* GL name retained as GLuint in void* */
+#if QD3D_INIT_LOGGING_ENABLED
+static uint64_t s_overlay_submit_count = 0;
+static uint64_t s_present_count = 0;
+
+static bool compositor_trace_sample(uint64_t count)
+{
+	return count <= 8 || (count != 0 && (count & (count - 1)) == 0) ||
+	       (count % 120) == 0;
+}
+#endif
 
 /* Present-rect cache (window coords). */
 static std::atomic<uint64_t> s_present_origin{0};
@@ -379,10 +390,13 @@ static void draw_overlay_layer(const CompositeLayer *layer)
 	float ny1 = 1.f - (y0 / (float)s_height) * 2.f;
 
 	glBegin(GL_QUADS);
-	glTexCoord2f(0.f, 0.f); glVertex2f(nx0, ny1);
-	glTexCoord2f(1.f, 0.f); glVertex2f(nx1, ny1);
-	glTexCoord2f(1.f, 1.f); glVertex2f(nx1, ny0);
-	glTexCoord2f(0.f, 1.f); glVertex2f(nx0, ny0);
+	/* RAVE renders y=0 at the top of an OpenGL render target, which lands at
+	 * texture t=1. Flip only the render-target overlay; the uploaded classic
+	 * framebuffer has its own top-down upload mapping. */
+	glTexCoord2f(0.f, 1.f); glVertex2f(nx0, ny1);
+	glTexCoord2f(1.f, 1.f); glVertex2f(nx1, ny1);
+	glTexCoord2f(1.f, 0.f); glVertex2f(nx1, ny0);
+	glTexCoord2f(0.f, 0.f); glVertex2f(nx0, ny0);
 	glEnd();
 
 	glColor4f(1.f, 1.f, 1.f, 1.f);
@@ -526,6 +540,18 @@ void MetalCompositorPresent(void)
 	/* Cached overlay on top */
 	if (s_overlay_valid)
 		draw_overlay_layer(&s_overlay_cache);
+#if QD3D_INIT_LOGGING_ENABLED
+	s_present_count++;
+	if (compositor_trace_sample(s_present_count)) {
+		QD3D_RENDER_LOG("CompositorPresent count=%llu drawable=%dx%d guest=%dx%d overlayValid=%d overlay=%u dst=%.1f,%.1f %.1fx%.1f glError=0x%x",
+		                (unsigned long long)s_present_count, dw, dh, s_width,
+		                s_height, s_overlay_valid ? 1 : 0,
+		                (unsigned)s_overlay_tex_cache,
+		                s_overlay_cache.dst_origin_x, s_overlay_cache.dst_origin_y,
+		                s_overlay_cache.dst_size_w, s_overlay_cache.dst_size_h,
+		                (unsigned)glGetError());
+	}
+#endif
 
 	GfxGLDeviceSwap();
 
@@ -595,6 +621,15 @@ int32_t MetalCompositorSubmitFrame(const struct FrameDescriptor *desc)
 			s_overlay_tex_cache = (GLuint)(uintptr_t)L->source;
 		}
 	}
+#if QD3D_INIT_LOGGING_ENABLED
+	s_overlay_submit_count++;
+	if (compositor_trace_sample(s_overlay_submit_count)) {
+		QD3D_RENDER_LOG("CompositorSubmit count=%llu layers=%u generation=%llu overlayValid=%d overlay=%u",
+		                (unsigned long long)s_overlay_submit_count,
+		                desc->layer_count, (unsigned long long)desc->generation,
+		                s_overlay_valid ? 1 : 0, (unsigned)s_overlay_tex_cache);
+	}
+#endif
 	return kGfxAccelNoErr;
 }
 

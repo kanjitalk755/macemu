@@ -801,8 +801,8 @@ static void ConvertAI16_88(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_
 // but output black). A 2x2 average from the known-good level 0 yields correct RGB *and*
 // alpha at every level (also fixes UT's 1-bit ARGB16 mips dropping the alpha bit, which
 // was the see-through artifact). Deterministic, no dependency on the Metal blit mip path.
-static void RaveUploadGeneratedMips(void *metalTexture, const uint8_t *level0,
-                                    uint32_t w, uint32_t h, uint32_t mipLevels)
+void RaveUploadGeneratedMips(void *metalTexture, const uint8_t *level0,
+                             uint32_t w, uint32_t h, uint32_t mipLevels)
 {
 	if (!metalTexture || mipLevels <= 1 || !level0)
 		return;
@@ -1026,6 +1026,14 @@ bool ConvertPixels(uint32_t pixelType, uint32 srcAddr, uint8_t *dst,
 
 
 
+#if QD3D_INIT_LOGGING_ENABLED
+static bool QD3DResourceTraceSample(uint64_t count)
+{
+	return count <= 32 || (count != 0 && (count & (count - 1)) == 0) ||
+	       (count % 256) == 0;
+}
+#endif
+
 /*
  *  Shared texture creation helper
  *
@@ -1035,11 +1043,23 @@ bool ConvertPixels(uint32_t pixelType, uint32 srcAddr, uint8_t *dst,
 static void RaveCreateTextureFromImages(uint32_t flags, uint32_t pixelType,
                                          uint32 imagesAddr, RaveResourceEntry *entry)
 {
+#if QD3D_INIT_LOGGING_ENABLED
+	static uint64_t createCount = 0;
+	createCount++;
+#endif
 	// Read level 0 TQAImage (16 bytes)
 	uint32_t w        = ReadMacInt32(imagesAddr + 0);
 	uint32_t h        = ReadMacInt32(imagesAddr + 4);
 	uint32_t rowBytes = ReadMacInt32(imagesAddr + 8);
 	uint32_t pixmap   = ReadMacInt32(imagesAddr + 12);
+#if QD3D_INIT_LOGGING_ENABLED
+	if (QD3DResourceTraceSample(createCount)) {
+		QD3D_RESOURCE_LOG("TextureNew count=%llu entry=0x%08x flags=0x%08x pixelType=%u images=0x%08x level0=%ux%u rowBytes=%u pixels=0x%08x",
+		                  (unsigned long long)createCount,
+		                  entry ? entry->mac_addr : 0, flags, pixelType,
+		                  imagesAddr, w, h, rowBytes, pixmap);
+	}
+#endif
 
 	// 4-bit priority at [31:28] per QACalculatePriorityBits. Test: RAVEABITests.testPriorityBits_extraction_matchesSpec
 	entry->priority = (uint8_t)((flags >> 28) & 0xF);
@@ -1175,6 +1195,17 @@ static void RaveCreateTextureFromImages(uint32_t flags, uint32_t pixelType,
 	} else {
 		RAVE_LOG("TextureNew WARN: Mac_sysalloc(%d) failed for cpu_pixel_data", cpuBufSize);
 	}
+#if QD3D_INIT_LOGGING_ENABLED
+	if (QD3DResourceTraceSample(createCount)) {
+		QD3D_RESOURCE_LOG("TextureNew ready count=%llu entry=0x%08x native=%p size=%ux%u mips=%u copied=%d indexed=%d cpu=0x%08x bytes=%u rgbNonzero=%u alphaZero=%u",
+		                  (unsigned long long)createCount, entry->mac_addr,
+		                  entry->metal_texture, entry->width, entry->height,
+		                  entry->mip_levels, entry->pixels_copied ? 1 : 0,
+		                  isIndexed ? 1 : 0, entry->cpu_pixel_mac_addr,
+		                  entry->cpu_pixel_data_size, entry->diag_rgb_nonzero,
+		                  entry->diag_alpha_zero);
+	}
+#endif
 }
 
 
@@ -1248,6 +1279,10 @@ void RaveRealizeDeferredTexture(RaveResourceEntry *entry)
 	// RaveTextureNeedsLivePixmapRefresh keeps polling until the late-filled
 	// pixels show up.
 	entry->pixels_copied = !sourceWasEmpty;
+	QD3D_RESOURCE_LOG("TextureRealize entry=0x%08x native=%p size=%ux%u mips=%u pixelType=%u source=0x%08x empty=%d nonzero=%u rgb=%u alpha=%u",
+	                  entry->mac_addr, entry->metal_texture, w, h, mipLevels,
+	                  pixelType, pixmap, sourceWasEmpty ? 1 : 0,
+	                  sourceStats.nonzero, sourceStats.rgb, sourceStats.alpha);
 
 	RAVE_LOG("TextureRealize: pixelType=%d %dx%d mips=%d pixmap=0x%08x -> metal=%p empty=%d nz=%u a=%u rgb=%u white=%u first[nz/a/rgb]=%u/%u/%u alphaMaskWhite=%d",
 	         pixelType, w, h, mipLevels, pixmap, entry->metal_texture, sourceWasEmpty,
@@ -1265,10 +1300,22 @@ void RaveRealizeDeferredTexture(RaveResourceEntry *entry)
 static void RaveCreateBitmapFromImage(uint32_t pixelType, uint32 imageAddr,
                                        RaveResourceEntry *entry)
 {
+#if QD3D_INIT_LOGGING_ENABLED
+	static uint64_t bitmapCount = 0;
+	bitmapCount++;
+#endif
 	uint32_t w        = ReadMacInt32(imageAddr + 0);
 	uint32_t h        = ReadMacInt32(imageAddr + 4);
 	uint32_t rowBytes = ReadMacInt32(imageAddr + 8);
 	uint32_t pixmap   = ReadMacInt32(imageAddr + 12);
+#if QD3D_INIT_LOGGING_ENABLED
+	if (QD3DResourceTraceSample(bitmapCount)) {
+		QD3D_RESOURCE_LOG("BitmapNew count=%llu entry=0x%08x pixelType=%u image=0x%08x size=%ux%u rowBytes=%u pixels=0x%08x",
+		                  (unsigned long long)bitmapCount,
+		                  entry ? entry->mac_addr : 0, pixelType, imageAddr,
+		                  w, h, rowBytes, pixmap);
+	}
+#endif
 
 	entry->pixel_type = pixelType;
 	entry->width      = w;
@@ -1321,6 +1368,10 @@ static void RaveCreateBitmapFromImage(uint32_t pixelType, uint32 imageAddr,
 static void RaveCreateColorTableData(uint32_t tableType, uint32 pixelDataAddr,
                                       int32_t transparentIndex, RaveResourceEntry *entry)
 {
+#if QD3D_INIT_LOGGING_ENABLED
+	static uint64_t tableCount = 0;
+	tableCount++;
+#endif
 	uint32_t count = (tableType == 0) ? 256 : 16;  // CL8_RGB32 vs CL4_RGB32
 	uint32_t *clut = new uint32_t[count];
 
@@ -1346,6 +1397,14 @@ static void RaveCreateColorTableData(uint32_t tableType, uint32 pixelDataAddr,
 	entry->clut_count = count;
 	entry->transparent_index = (transparentIndex != 0) ? 0 : -1;
 	RaveRememberCL8ColorTableSnapshot(clut, count);
+#if QD3D_INIT_LOGGING_ENABLED
+	if (QD3DResourceTraceSample(tableCount)) {
+		QD3D_RESOURCE_LOG("ColorTableNew count=%llu entry=0x%08x tableType=%u entries=%u pixels=0x%08x transparentFlag=%d firstBGRA=0x%08x",
+		                  (unsigned long long)tableCount,
+		                  entry ? entry->mac_addr : 0, tableType, count,
+		                  pixelDataAddr, transparentIndex, count ? clut[0] : 0);
+	}
+#endif
 
 	RAVE_LOG("ColorTableNew tableType=%d count=%d transparentFlag=%d (idx0 %s)",
 	       tableType, count, transparentIndex,
@@ -1442,6 +1501,11 @@ static void RaveReExpandWithCLUT(RaveResourceEntry *texEntry, RaveResourceEntry 
 	}
 
 	delete[] expanded;
+	QD3D_RESOURCE_LOG("ColorTableBind texture=0x%08x clut=0x%08x native=%p size=%ux%u mips=%u pixelType=%u indexZero=%u rgbNonzero=%u alphaZero=%u",
+	                  texEntry->mac_addr, clutEntry->mac_addr,
+	                  texEntry->metal_texture, w, h, texEntry->mip_levels,
+	                  texEntry->pixel_type, texEntry->diag_index_zero,
+	                  texEntry->diag_rgb_nonzero, texEntry->diag_alpha_zero);
 
 	RAVE_LOG("Re-expanded %s %dx%d with CLUT (%d entries) -> metal=%p",
 	       (texEntry->type == kRaveResourceTexture) ? "texture" : "bitmap",
@@ -1459,8 +1523,8 @@ static void RaveReExpandWithCLUT(RaveResourceEntry *texEntry, RaveResourceEntry 
 int32_t NativeEngineTextureNew(uint32_t flags, uint32_t pixelType,
                                 uint32_t imagesAddr, uint32_t newTexturePtr)
 {
-	fprintf(stderr, "RAVE: TextureNew flags=0x%x pixelType=%d images=0x%x\n",
-	        flags, pixelType, imagesAddr);
+	RAVE_LOG("TextureNew flags=0x%x pixelType=%d images=0x%x",
+	         flags, pixelType, imagesAddr);
 	uint32_t handle = RaveResourceAlloc(kRaveResourceTexture);
 	if (handle == 0) {
 		WriteMacInt32(newTexturePtr, 0);

@@ -34,6 +34,9 @@ typedef void (APIENTRY *PFNGLACTIVETEXTUREPROC)(GLenum);
 typedef void (APIENTRY *PFNGLCLIENTACTIVETEXTUREPROC)(GLenum);
 typedef void (APIENTRY *PFNGLMULTITEXCOORD2FPROC)(GLenum, GLfloat, GLfloat);
 typedef void (APIENTRY *PFNGLMULTITEXCOORD4FPROC)(GLenum, GLfloat, GLfloat, GLfloat, GLfloat);
+typedef void (APIENTRY *PFNGLSECONDARYCOLOR3FPROC)(GLfloat, GLfloat, GLfloat);
+typedef void (APIENTRY *PFNGLBLENDFUNCSEPARATEPROC)(GLenum, GLenum, GLenum, GLenum);
+typedef void (APIENTRY *PFNGLFOGCOORDFPROC)(GLfloat);
 
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
@@ -52,6 +55,14 @@ typedef void (APIENTRY *PFNGLMULTITEXCOORD4FPROC)(GLenum, GLfloat, GLfloat, GLfl
 #define GL_CONSTANT 0x8576
 #define GL_RGB_SCALE 0x8573
 #endif
+#ifndef GL_COLOR_SUM
+#define GL_COLOR_SUM 0x8458
+#endif
+#ifndef GL_FOG_COORDINATE_SOURCE
+#define GL_FOG_COORDINATE_SOURCE 0x8450
+#define GL_FOG_COORDINATE 0x8451
+#define GL_FRAGMENT_DEPTH 0x8452
+#endif
 
 struct GfxGLExt {
 	PFNGLGENFRAMEBUFFERSPROC GenFramebuffers = nullptr;
@@ -69,6 +80,9 @@ struct GfxGLExt {
 	PFNGLCLIENTACTIVETEXTUREPROC ClientActiveTexture = nullptr;
 	PFNGLMULTITEXCOORD2FPROC MultiTexCoord2f = nullptr;
 	PFNGLMULTITEXCOORD4FPROC MultiTexCoord4f = nullptr;
+	PFNGLSECONDARYCOLOR3FPROC SecondaryColor3f = nullptr;
+	PFNGLBLENDFUNCSEPARATEPROC BlendFuncSeparate = nullptr;
+	PFNGLFOGCOORDFPROC FogCoordf = nullptr;
 	bool fbo = false;
 	bool multitex = false;
 };
@@ -124,6 +138,15 @@ inline GfxGLExt &gfx_gl_ext()
 		e.MultiTexCoord4f = (PFNGLMULTITEXCOORD4FPROC)SDL_GL_GetProcAddress("glMultiTexCoord4f");
 		if (!e.MultiTexCoord4f)
 			e.MultiTexCoord4f = (PFNGLMULTITEXCOORD4FPROC)SDL_GL_GetProcAddress("glMultiTexCoord4fARB");
+		e.SecondaryColor3f = (PFNGLSECONDARYCOLOR3FPROC)SDL_GL_GetProcAddress("glSecondaryColor3f");
+		if (!e.SecondaryColor3f)
+			e.SecondaryColor3f = (PFNGLSECONDARYCOLOR3FPROC)SDL_GL_GetProcAddress("glSecondaryColor3fEXT");
+		e.BlendFuncSeparate = (PFNGLBLENDFUNCSEPARATEPROC)SDL_GL_GetProcAddress("glBlendFuncSeparate");
+		if (!e.BlendFuncSeparate)
+			e.BlendFuncSeparate = (PFNGLBLENDFUNCSEPARATEPROC)SDL_GL_GetProcAddress("glBlendFuncSeparateEXT");
+		e.FogCoordf = (PFNGLFOGCOORDFPROC)SDL_GL_GetProcAddress("glFogCoordf");
+		if (!e.FogCoordf)
+			e.FogCoordf = (PFNGLFOGCOORDFPROC)SDL_GL_GetProcAddress("glFogCoordfEXT");
 		e.fbo = e.GenFramebuffers && e.BindFramebuffer && e.FramebufferTexture2D &&
 		        e.GenRenderbuffers && e.BindRenderbuffer && e.RenderbufferStorage &&
 		        e.FramebufferRenderbuffer && e.CheckFramebufferStatus && e.DeleteFramebuffers;

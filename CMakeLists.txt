@@ -38,7 +38,7 @@ option(USE_SDL3          "Use SDL 3 instead of SDL 2" OFF)
 option(ENABLE_GFXACCEL   "SheepShaver graphics accel (NQD/RAVE/GL/DSp)" ON)
 option(ENABLE_QD3D_INIT_LOGGING
   "Log focused SheepShaver QuickDraw 3D/RAVE initialization diagnostics"
-  ON)
+  OFF)
 # GFXACCEL_BACKEND: auto | opengl | metal
 # auto = Metal on Apple, OpenGL elsewhere
 set(GFXACCEL_BACKEND "auto" CACHE STRING "gfxaccel GPU backend (auto|opengl|metal)")

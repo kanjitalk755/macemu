@@ -1,9 +1,11 @@
 /*
- * qd3d_init_logging.h - Focused QuickDraw 3D/RAVE initialization diagnostics
+ * qd3d_init_logging.h - Focused QuickDraw 3D/RAVE diagnostics
  *
  * Enable with the CMake option ENABLE_QD3D_INIT_LOGGING=ON or by defining
  * QD3D_INIT_LOGGING_ENABLED=1 for the SheepShaver target.  This channel is
  * deliberately independent of the high-volume graphics logging controls.
+ * The historical option name is retained, but it now covers init, state,
+ * resource, and rate-limited render-path diagnostics.
  */
 
 #ifndef QD3D_INIT_LOGGING_H
@@ -24,7 +26,8 @@
 
 namespace qd3d_init_logging {
 
-static inline void log(const char *file, int line, const char *format, ...)
+static inline void log(const char *category, const char *file, int line,
+                       const char *format, ...)
 {
 	char message[2048];
 	va_list args;
@@ -35,7 +38,7 @@ static inline void log(const char *file, int line, const char *format, ...)
 
 	char record[2304];
 	std::snprintf(record, sizeof(record),
-	              "[QD3D:init] %s:%d: %s\n", file, line, message);
+	              "[QD3D:%s] %s:%d: %s\n", category, file, line, message);
 	record[sizeof(record) - 1] = '\0';
 
 	std::fputs(record, stderr);
@@ -50,11 +53,20 @@ static inline void log(const char *file, int line, const char *format, ...)
 } // namespace qd3d_init_logging
 
 #define QD3D_INIT_LOG(...) \
-	::qd3d_init_logging::log(__FILE__, __LINE__, __VA_ARGS__)
+	::qd3d_init_logging::log("init", __FILE__, __LINE__, __VA_ARGS__)
+#define QD3D_STATE_LOG(...) \
+	::qd3d_init_logging::log("state", __FILE__, __LINE__, __VA_ARGS__)
+#define QD3D_RESOURCE_LOG(...) \
+	::qd3d_init_logging::log("resource", __FILE__, __LINE__, __VA_ARGS__)
+#define QD3D_RENDER_LOG(...) \
+	::qd3d_init_logging::log("render", __FILE__, __LINE__, __VA_ARGS__)
 
 #else
 
 #define QD3D_INIT_LOG(...) do { } while (0)
+#define QD3D_STATE_LOG(...) do { } while (0)
+#define QD3D_RESOURCE_LOG(...) do { } while (0)
+#define QD3D_RENDER_LOG(...) do { } while (0)
 
 #endif
 

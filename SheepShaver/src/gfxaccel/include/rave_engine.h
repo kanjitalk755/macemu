@@ -372,6 +372,12 @@ extern void RaveRegisterEngine(void);
 // Returns true if RAVE engine has been successfully registered
 extern bool RaveIsRegistered(void);
 
+// Generate and upload a complete BGRA mip chain from level 0. Shared by the
+// resource manager and backend live-refresh paths.
+extern void RaveUploadGeneratedMips(void *metalTexture, const uint8_t *level0,
+                                    uint32_t width, uint32_t height,
+                                    uint32_t mipLevels);
+
 // Install hooks on RAVE enumeration APIs (called from RaveRegisterEngine)
 // Patches TVECTs for QADeviceGetFirstEngine, QADeviceGetNextEngine,
 // QAEngineGestalt, QAEngineCheckDevice, and QADrawContextNew to inject

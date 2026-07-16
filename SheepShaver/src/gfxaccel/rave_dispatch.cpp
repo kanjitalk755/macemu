@@ -20,6 +20,7 @@
 #include "cpu_emulation.h"
 #include "rave_engine.h"
 #include "rave_metal_renderer.h"
+#include "qd3d_init_logging.h"
 
 // RAVE error codes (must match TQAError enum in RAVE.h)
 #define kQANoErr                    0
@@ -168,6 +169,16 @@ uint32 RaveDispatch(uint32 r3, uint32 r4, uint32 r5,
 	uint32 method_id = ReadMacInt32(rave_scratch_addr);
 
 	if (method_id < kRaveDrawMethodCount) {
+#if QD3D_INIT_LOGGING_ENABLED
+		static uint64_t drawDispatchCount[kRaveDrawMethodCount] = {};
+		uint64_t count = ++drawDispatchCount[method_id];
+		if (method_id >= kRaveDrawDrawPoint &&
+		    (count <= 8 || (count & (count - 1)) == 0 || (count % 1024) == 0)) {
+			QD3D_RENDER_LOG("Dispatch method=%u/%s count=%llu r3-r8=%08x,%08x,%08x,%08x,%08x,%08x",
+			                method_id, draw_method_names[method_id],
+			                (unsigned long long)count, r3, r4, r5, r6, r7, r8);
+		}
+#endif
 		// Draw method dispatch (0-34)
 		switch (method_id) {
 		case kRaveDrawSetFloat:
