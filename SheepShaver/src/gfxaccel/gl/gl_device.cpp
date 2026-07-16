@@ -9,6 +9,7 @@
 #include <SDL.h>
 #include <SDL_opengl.h>
 
+#include <cassert>
 #include <cstdio>
 #include <cstring>
 
@@ -91,8 +92,15 @@ bool GfxGLDeviceInit(void)
 
 bool GfxGLDeviceMakeCurrent(void)
 {
-	if (!s_ready || !s_gl_ctx || !sdl_window)
-		return false;
+	assert(s_ready);
+	assert(s_gl_ctx != nullptr);
+	assert(sdl_window != nullptr);
+	/* RAVE calls this at public API boundaries and resource uploads, often
+	 * hundreds of times per frame. SDL_GL_MakeCurrent enters the driver even
+	 * when nothing changed; avoid that round trip on the single render thread. */
+	if (SDL_GL_GetCurrentContext() == s_gl_ctx &&
+	    SDL_GL_GetCurrentWindow() == sdl_window)
+		return true;
 	return SDL_GL_MakeCurrent(sdl_window, s_gl_ctx) == 0;
 }
 
@@ -114,18 +122,20 @@ bool GfxGLDeviceIsReady(void)
 
 void GfxGLDeviceSwap(void)
 {
-	if (!s_ready || !sdl_window)
-		return;
+	assert(s_ready);
+	assert(s_gl_ctx != nullptr);
+	assert(sdl_window != nullptr);
 	SDL_GL_SwapWindow(sdl_window);
 }
 
 void GfxGLDeviceGetDrawableSize(int *out_w, int *out_h)
 {
-	int w = 0, h = 0;
-	if (sdl_window)
-		SDL_GL_GetDrawableSize(sdl_window, &w, &h);
-	if (out_w) *out_w = w;
-	if (out_h) *out_h = h;
+	assert(s_ready);
+	assert(s_gl_ctx != nullptr);
+	assert(sdl_window != nullptr);
+	assert(out_w != nullptr);
+	assert(out_h != nullptr);
+	SDL_GL_GetDrawableSize(sdl_window, out_w, out_h);
 }
 
 void *SharedMetalDevice(void)

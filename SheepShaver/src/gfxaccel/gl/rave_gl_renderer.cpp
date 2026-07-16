@@ -23,12 +23,14 @@
 #include "macos_util.h"
 #include "qd3d_init_logging.h"
 
-#include <SDL_opengl.h>
-#include <vector>
-#include <cstring>
-#include <cstdio>
-#include <cmath>
+#include <cassert>
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+#include <SDL_opengl.h>
 
 #ifndef RAVE_LOG
 #define RAVE_LOG(fmt, ...) fprintf(stderr, "[rave-gl] " fmt "\n", ##__VA_ARGS__)
@@ -72,7 +74,18 @@ struct RaveMetalState {
 	uint32_t z_cpu_mac = 0;
 	uint32_t z_cpu_size = 0;
 	bool z_accessed = false;
+	/* Reused full-frame transfer storage. The notice callback runs every
+	 * frame, so allocating and freeing two ~1.2 MB vectors here was visible
+	 * in both Debug and Release profiles. */
+	std::vector<uint8_t> readback_bgra;
+	std::vector<uint8_t> upload_bgra;
 	std::vector<uint32_t> rtt_handles;
+	bool draw_state_valid = false;
+	bool draw_state_textured = false;
+	bool draw_state_multitexture = false;
+	uint32_t draw_state_multitexture_handle = 0;
+	uint32_t draw_state_multitexture_op = 0;
+	float draw_state_multitexture_factor = 0.f;
 	/* Per-frame diagnostics. Kept here so the trace can distinguish a frame
 	 * that drew black from a frame whose draw calls were never accepted. */
 	uint64_t draw_calls = 0;
@@ -81,8 +94,22 @@ struct RaveMetalState {
 	uint64_t texture_binds = 0;
 	uint64_t missing_textures = 0;
 	uint64_t dropped_draws = 0;
+	uint64_t state_applies = 0;
+	uint64_t state_cache_hits = 0;
 	uint32_t logged_draws = 0;
 };
+
+/* Compatibility OpenGL state is context-global, not RaveDrawPrivate-local.
+ * A per-draw-context cache is valid only while that context remains the last
+ * owner to install fixed-function state. */
+static RaveMetalState *s_draw_state_owner = nullptr;
+
+static void invalidate_draw_state(RaveMetalState *ms)
+{
+	assert(ms != nullptr);
+	ms->draw_state_valid = false;
+	s_draw_state_owner = nullptr;
+}
 
 /* Overlay fleet */
 static GLuint s_overlay_pair[2] = {0, 0};
@@ -256,6 +283,8 @@ void RaveInitMetalResources(RaveDrawPrivate *priv)
 void RaveReleaseMetalResources(RaveDrawPrivate *priv)
 {
 	if (!priv || !priv->metal) return;
+	if (s_draw_state_owner == priv->metal)
+		s_draw_state_owner = nullptr;
 	if (GfxGLDeviceMakeCurrent()) {
 		RaveMetalState *ms = priv->metal;
 		auto &ext = gfx_gl_ext();
@@ -272,6 +301,7 @@ void RaveReleaseMetalResources(RaveDrawPrivate *priv)
 
 static bool bind_overlay_fbo(RaveMetalState *ms, uint32_t w, uint32_t h)
 {
+	assert(ms != nullptr);
 	if (!GfxGLDeviceMakeCurrent()) {
 		QD3D_RENDER_LOG("bind_overlay_fbo: MakeCurrent failed");
 		return false;
@@ -324,6 +354,7 @@ static bool bind_overlay_fbo(RaveMetalState *ms, uint32_t w, uint32_t h)
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glEnable(GL_ALPHA_TEST);
 	glAlphaFunc(GL_GREATER, 0.0f);
+	invalidate_draw_state(ms);
 	return true;
 }
 
@@ -336,7 +367,8 @@ static void unbind_fbo(void)
 
 static bool restore_overlay_fbo(RaveMetalState *ms)
 {
-	if (!ms || !ms->fbo || !ms->color_tex || !GfxGLDeviceMakeCurrent())
+	assert(ms != nullptr);
+	if (!ms->fbo || !ms->color_tex || !GfxGLDeviceMakeCurrent())
 		return false;
 	auto &ext = gfx_gl_ext();
 	if (!ext.fbo) return false;
@@ -351,6 +383,7 @@ static bool restore_overlay_fbo(RaveMetalState *ms)
 	glOrtho(0, (GLdouble)ms->w, (GLdouble)ms->h, 0, 0, -1);
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
+	invalidate_draw_state(ms);
 	return true;
 }
 
@@ -380,6 +413,8 @@ static uint32_t notice_pixel_type(const RaveDrawPrivate *priv)
 
 static uint32_t notice_bytes_per_pixel(uint32_t pixel_type)
 {
+	assert(pixel_type == kRaveNoticePixelRGB16 ||
+	       pixel_type == kRaveNoticePixelRGB32);
 	return pixel_type == kRaveNoticePixelRGB16 ? 2u : 4u;
 }
 
@@ -419,19 +454,20 @@ static bool copy_overlay_to_guest(const RaveDrawPrivate *priv,
 	if (!ext.fbo || !ms->fbo) return false;
 	ext.BindFramebuffer(GL_FRAMEBUFFER, ms->fbo);
 	const uint32_t w = ms->w, h = ms->h;
-	std::vector<uint8_t> pixels((size_t)w * h * 4u);
+	ms->readback_bgra.resize((size_t)w * h * 4u);
 	GLint old_pack = 4;
 	glGetIntegerv(GL_PACK_ALIGNMENT, &old_pack);
 	while (glGetError() != GL_NO_ERROR) {}
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
 	glReadPixels(0, 0, (GLsizei)w, (GLsizei)h,
-	             GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
+	             GL_BGRA, GL_UNSIGNED_BYTE, ms->readback_bgra.data());
 	glPixelStorei(GL_PACK_ALIGNMENT, old_pack);
 	if (glGetError() != GL_NO_ERROR) return false;
 	uint8_t *guest = Mac2HostAddr(ms->draw_cpu_mac);
 	if (!guest) return false;
 	for (uint32_t guest_y = 0; guest_y < h; guest_y++) {
-		const uint8_t *src = pixels.data() + (size_t)(h - 1u - guest_y) * w * 4u;
+		const uint8_t *src = ms->readback_bgra.data() +
+		                     (size_t)(h - 1u - guest_y) * w * 4u;
 		uint8_t *dst = guest + (size_t)guest_y * ms->draw_cpu_row_bytes;
 		for (uint32_t x = 0; x < w; x++) {
 			const uint8_t b = src[x * 4u + 0u];
@@ -477,14 +513,15 @@ static bool upload_guest_to_overlay(RaveMetalState *ms, uint32_t rect_addr)
 	const uint32_t upload_h = (uint32_t)(bottom - top);
 	const uint32_t pixel_type = ms->draw_cpu_pixel_type;
 	const uint32_t bytes_per_pixel = notice_bytes_per_pixel(pixel_type);
-	std::vector<uint8_t> pixels((size_t)upload_w * upload_h * 4u);
+	ms->upload_bgra.resize((size_t)upload_w * upload_h * 4u);
 	const uint8_t *guest = Mac2HostAddr(ms->draw_cpu_mac);
 	if (!guest) return false;
 	for (uint32_t gl_row = 0; gl_row < upload_h; gl_row++) {
 		const uint32_t guest_y = (uint32_t)bottom - 1u - gl_row;
 		const uint8_t *src = guest + (size_t)guest_y * ms->draw_cpu_row_bytes +
 		                     (size_t)(uint32_t)left * bytes_per_pixel;
-		uint8_t *dst = pixels.data() + (size_t)gl_row * upload_w * 4u;
+		uint8_t *dst = ms->upload_bgra.data() +
+		               (size_t)gl_row * upload_w * 4u;
 		for (uint32_t x = 0; x < upload_w; x++) {
 			uint8_t a = 255, r, g, b;
 			if (pixel_type == kRaveNoticePixelRGB16) {
@@ -517,7 +554,7 @@ static bool upload_guest_to_overlay(RaveMetalState *ms, uint32_t rect_addr)
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	glTexSubImage2D(GL_TEXTURE_2D, 0, left, (GLint)ms->h - bottom,
 	                (GLsizei)upload_w, (GLsizei)upload_h,
-	                GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
+	                GL_BGRA, GL_UNSIGNED_BYTE, ms->upload_bgra.data());
 	glPixelStorei(GL_UNPACK_ALIGNMENT, old_unpack);
 	const bool uploaded = glGetError() == GL_NO_ERROR;
 	return restore_overlay_fbo(ms) && uploaded;
@@ -584,6 +621,7 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 
 static void apply_blend(RaveDrawPrivate *priv)
 {
+	assert(priv != nullptr);
 	int blend = (int)priv->state[9].i; /* kQATag_Blend */
 	auto &ext = gfx_gl_ext();
 	if (blend == 2) {
@@ -626,6 +664,7 @@ static void apply_blend(RaveDrawPrivate *priv)
 
 static void apply_depth(RaveDrawPrivate *priv)
 {
+	assert(priv != nullptr);
 	if (!RaveContextUsesMetalDepthAttachment(priv->flags)) {
 		glDisable(GL_DEPTH_TEST);
 		glDepthMask(GL_FALSE);
@@ -650,6 +689,7 @@ static void apply_depth(RaveDrawPrivate *priv)
 
 static void apply_alpha_test(RaveDrawPrivate *priv)
 {
+	assert(priv != nullptr);
 	int func = (int)priv->state[31].i;
 	float ref = priv->state[46].f;
 	if (func == 0 || func == 7) {
@@ -668,6 +708,8 @@ static void apply_alpha_test(RaveDrawPrivate *priv)
 static void configure_bound_texture(RaveDrawPrivate *priv,
 	                                const RaveResourceEntry *entry)
 {
+	assert(priv != nullptr);
+	assert(entry != nullptr);
 	const int standardFilter = (int)priv->state[11].i;
 	const bool glSamplerOverride = priv->state[101].i != 0 ||
 	                               priv->state[102].i != 0 ||
@@ -683,7 +725,7 @@ static void configure_bound_texture(RaveDrawPrivate *priv,
 		/* A mip minification mode on a one-level texture makes the texture
 		 * incomplete. Desktop OpenGL then returns (0,0,0,1), which presents
 		 * exactly like the all-black world reported by Descent II. */
-		minf = entry && entry->mip_levels > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR;
+		minf = entry->mip_levels > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR;
 	} else {
 		minf = standardFilter >= 1 ? GL_LINEAR : GL_NEAREST;
 	}
@@ -701,10 +743,12 @@ static void configure_bound_texture(RaveDrawPrivate *priv,
 
 static GLuint bind_current_texture(RaveDrawPrivate *priv)
 {
+	assert(priv != nullptr);
+	assert(priv->metal != nullptr);
 	uint32_t tex_mac = priv->state[13].i; /* kQATag_Texture */
 	if (!tex_mac) {
 #if QD3D_INIT_LOGGING_ENABLED
-		if (priv->metal) priv->metal->missing_textures++;
+		priv->metal->missing_textures++;
 #endif
 		glDisable(GL_TEXTURE_2D);
 		return 0;
@@ -713,7 +757,7 @@ static GLuint bind_current_texture(RaveDrawPrivate *priv)
 	RaveResourceEntry *entry = RaveResourceGet(handle);
 	if (!entry) {
 #if QD3D_INIT_LOGGING_ENABLED
-		uint64_t missing = priv->metal ? ++priv->metal->missing_textures : 1;
+		uint64_t missing = ++priv->metal->missing_textures;
 		if (trace_sample(missing, 8, 256))
 			QD3D_RENDER_LOG("texture bind rejected: guest=0x%08x has no resource (missing=%llu)",
 			                tex_mac, (unsigned long long)missing);
@@ -728,7 +772,7 @@ static GLuint bind_current_texture(RaveDrawPrivate *priv)
 
 	if (!entry->metal_texture) {
 #if QD3D_INIT_LOGGING_ENABLED
-		uint64_t missing = priv->metal ? ++priv->metal->missing_textures : 1;
+		uint64_t missing = ++priv->metal->missing_textures;
 		if (trace_sample(missing, 8, 256)) {
 			QD3D_RENDER_LOG("texture bind unrealized: guest=0x%08x handle=%u type=%u size=%ux%u pixelType=%u (missing=%llu)",
 			                tex_mac, handle, (unsigned)entry->type, entry->width,
@@ -741,9 +785,8 @@ static GLuint bind_current_texture(RaveDrawPrivate *priv)
 	}
 	GLuint tex = (GLuint)(uintptr_t)entry->metal_texture;
 #if QD3D_INIT_LOGGING_ENABLED
-	if (priv->metal) {
-		priv->metal->texture_binds++;
-		if (priv->metal->texture_binds <= 8 && trace_frame(priv)) {
+	priv->metal->texture_binds++;
+	if (priv->metal->texture_binds <= 8 && trace_frame(priv)) {
 			QD3D_RENDER_LOG("frame=%u textureBind=%llu guest=0x%08x handle=%u gl=%u size=%ux%u mips=%u pixelType=%u filter=%u op=0x%x rgbNonzero=%u alphaZero=%u",
 			                priv->frameCount,
 			                (unsigned long long)priv->metal->texture_binds,
@@ -751,7 +794,6 @@ static GLuint bind_current_texture(RaveDrawPrivate *priv)
 			                entry->mip_levels, entry->pixel_type, priv->state[11].i,
 			                priv->state[12].i, entry->diag_rgb_nonzero,
 			                entry->diag_alpha_zero);
-		}
 	}
 #endif
 	glEnable(GL_TEXTURE_2D);
@@ -779,12 +821,14 @@ static GLuint bind_current_texture(RaveDrawPrivate *priv)
 
 static GLuint bind_texture_unit(RaveDrawPrivate *priv, uint32_t tex_mac, int unit)
 {
+	assert(priv != nullptr);
+	assert(priv->metal != nullptr);
 	auto &ext = gfx_gl_ext();
 	if (ext.multitex && ext.ActiveTexture)
 		ext.ActiveTexture(GL_TEXTURE0 + unit);
 	if (!tex_mac) {
 #if QD3D_INIT_LOGGING_ENABLED
-		if (priv->metal) priv->metal->missing_textures++;
+		priv->metal->missing_textures++;
 #endif
 		glDisable(GL_TEXTURE_2D);
 		return 0;
@@ -793,7 +837,7 @@ static GLuint bind_texture_unit(RaveDrawPrivate *priv, uint32_t tex_mac, int uni
 	RaveResourceEntry *entry = RaveResourceGet(handle);
 	if (!entry) {
 #if QD3D_INIT_LOGGING_ENABLED
-		if (priv->metal) priv->metal->missing_textures++;
+		priv->metal->missing_textures++;
 #endif
 		glDisable(GL_TEXTURE_2D);
 		return 0;
@@ -804,14 +848,14 @@ static GLuint bind_texture_unit(RaveDrawPrivate *priv, uint32_t tex_mac, int uni
 		RaveRefreshTextureFromPixmap(entry);
 	if (!entry->metal_texture) {
 #if QD3D_INIT_LOGGING_ENABLED
-		if (priv->metal) priv->metal->missing_textures++;
+		priv->metal->missing_textures++;
 #endif
 		glDisable(GL_TEXTURE_2D);
 		return 0;
 	}
 	GLuint tex = (GLuint)(uintptr_t)entry->metal_texture;
 #if QD3D_INIT_LOGGING_ENABLED
-	if (priv->metal) priv->metal->texture_binds++;
+	priv->metal->texture_binds++;
 #endif
 	glEnable(GL_TEXTURE_2D);
 	glBindTexture(GL_TEXTURE_2D, tex);
@@ -932,6 +976,7 @@ static float s_current_fog_max_depth = 1.f;
 
 static void apply_fog(RaveDrawPrivate *priv)
 {
+	assert(priv != nullptr);
 	/* Match rave_draw_context / Metal: FogMode=17, FogColor a/r/g/b=18..21,
 	 * FogStart/End/Density/MaxDepth = 22..25. Mode 0 = off.
 	 * RAVE modes: 1=Alpha, 2=Linear, 3=Exp, 4=Exp2. Metal remaps QD3D's
@@ -976,7 +1021,32 @@ static void apply_fog(RaveDrawPrivate *priv)
 
 static void apply_draw_state(RaveDrawPrivate *priv, bool textured)
 {
-	if (!priv || !GfxGLDeviceMakeCurrent()) return;
+	assert(priv != nullptr);
+	assert(priv->metal != nullptr);
+	RaveMetalState *ms = priv->metal;
+	const bool multi = textured && priv->multiTextureActive &&
+	                   priv->multiTextureHandle != 0 &&
+	                   gfx_gl_ext().multitex;
+	if (s_draw_state_owner == ms && ms->draw_state_valid &&
+	    priv->dirty_flags == 0 &&
+	    ms->draw_state_textured == textured &&
+	    ms->draw_state_multitexture == multi &&
+	    ms->draw_state_multitexture_handle == priv->multiTextureHandle &&
+	    ms->draw_state_multitexture_op == priv->multiTextureOp &&
+	    ms->draw_state_multitexture_factor == priv->multiTextureFactor) {
+		/* Resource uploads may have disturbed texture unit 0, so rebind the
+		 * selected texture while leaving the much larger fixed-function state
+		 * block cached. */
+		if (textured)
+			bind_current_texture(priv);
+#if QD3D_INIT_LOGGING_ENABLED
+		ms->state_cache_hits++;
+#endif
+		return;
+	}
+#if QD3D_INIT_LOGGING_ENABLED
+	ms->state_applies++;
+#endif
 	apply_blend(priv);
 	apply_depth(priv);
 	apply_alpha_test(priv);
@@ -1050,6 +1120,14 @@ static void apply_draw_state(RaveDrawPrivate *priv, bool textured)
 			ext.ActiveTexture(GL_TEXTURE0);
 		}
 	}
+	priv->dirty_flags = 0;
+	ms->draw_state_valid = true;
+	ms->draw_state_textured = textured;
+	ms->draw_state_multitexture = multi;
+	ms->draw_state_multitexture_handle = priv->multiTextureHandle;
+	ms->draw_state_multitexture_op = priv->multiTextureOp;
+	ms->draw_state_multitexture_factor = priv->multiTextureFactor;
+	s_draw_state_owner = ms;
 }
 
 static void emit_texcoords(const HostV &v)
@@ -1078,15 +1156,18 @@ static void emit_v(const HostV &v, bool textured, int texture_op)
 		/* GL_BLEND uses the primary color as its incoming object color. */
 		r = v.r; g = v.g; b = v.b;
 	} else if (textured && !(texture_op & 4)) {
-		/* GL_MODULATE is used to preserve RAVE's texture-alpha * vertex-alpha
-		 * rule. For TextureOp_None its primary RGB must be white (texture
-		 * replaces object RGB); for Modulate it must be kd_rgb. The previous
-		 * r*kd value turned textures black whenever the otherwise-unused base
-		 * vertex color was zero, as it is in several classic RAVE clients. */
+		/* GL_MODULATE emulates the RAVE texture operation. TextureOp_None
+		 * replaces the complete object color, including alpha, so the primary
+		 * color must be opaque white. Descent II submits its explosion/death
+		 * sprites with vertex alpha zero and expects their ARGB16 texture alpha
+		 * to remain authoritative. Modulate instead multiplies texture alpha by
+		 * vertex alpha, matching the Metal path. */
 		if (texture_op & 1) {
 			r = v.kd_r; g = v.kd_g; b = v.kd_b;
 		} else {
 			r = g = b = 1.f;
+			if ((texture_op & (2 | 16)) == 0)
+				a = 1.f;
 		}
 		/* Highlight's +ks term is supplied as the post-texture secondary color
 		 * below when the compatibility context exposes that entry point. */
@@ -1125,7 +1206,8 @@ static void emit_v(const HostV &v, bool textured, int texture_op)
 static inline bool zsort_enabled(const RaveDrawPrivate *priv)
 {
 	/* Metal path keys on == 1 (kQATag_ZSortedHint); keep same contract. */
-	return priv && priv->state[29].i == 1;
+	assert(priv != nullptr);
+	return priv->state[29].i == 1;
 }
 
 static void hostv_pack(const HostV &v, float out[RAVE_VERTEX_FLOATS])
@@ -1200,6 +1282,7 @@ static void flush_zsort_buffer(RaveDrawPrivate *priv)
 		priv->state[109].i = tri.glBlendSrc;
 		priv->state[110].i = tri.glBlendDst;
 		priv->state[11].i = (uint32_t)tri.filterMode;
+		invalidate_draw_state(priv->metal);
 		apply_draw_state(priv, tri.textured);
 		glDepthMask(GL_FALSE);
 		HostV a = hostv_unpack(tri.verts[0]);
@@ -1220,6 +1303,7 @@ static void flush_zsort_buffer(RaveDrawPrivate *priv)
 	priv->state[11].i = (uint32_t)saved_filt;
 	priv->zsortCount = 0;
 	apply_depth(priv); /* restore depth write */
+	invalidate_draw_state(priv->metal);
 }
 
 static bool copy_initial_texture(GLuint source, uint32_t w, uint32_t h)
@@ -1304,6 +1388,8 @@ int32_t NativeRenderStart(uint32_t drawContextAddr, uint32_t dirtyRectAddr, uint
 	ms->texture_binds = 0;
 	ms->missing_textures = 0;
 	ms->dropped_draws = 0;
+	ms->state_applies = 0;
+	ms->state_cache_hits = 0;
 	ms->logged_draws = 0;
 #endif
 
@@ -1421,12 +1507,14 @@ int32_t NativeRenderEnd(uint32_t drawContextAddr, uint32_t modifiedRectAddr)
 	GLenum glError = glGetError();
 	if (trace_frame(priv) || ownerResult != 0 || submitResult != 0 || glError != GL_NO_ERROR ||
 	    ms->missing_textures != 0 || ms->dropped_draws != 0) {
-		QD3D_RENDER_LOG("RenderEnd frame=%u ctx=0x%08x active=%d modified=0x%08x draws=%llu textured=%llu vertices=%llu textureBinds=%llu missingTextures=%llu dropped=%llu zsortPending=%u owner=%d/%u submit=%d overlay=%u next=%u generation=%llu glError=0x%x",
+		QD3D_RENDER_LOG("RenderEnd frame=%u ctx=0x%08x active=%d modified=0x%08x draws=%llu textured=%llu vertices=%llu textureBinds=%llu stateApplies=%llu stateCacheHits=%llu missingTextures=%llu dropped=%llu zsortPending=%u owner=%d/%u submit=%d overlay=%u next=%u generation=%llu glError=0x%x",
 		                priv->frameCount, drawContextAddr, wasActive ? 1 : 0,
 		                modifiedRectAddr, (unsigned long long)ms->draw_calls,
 		                (unsigned long long)ms->textured_draws,
 		                (unsigned long long)ms->vertices,
 		                (unsigned long long)ms->texture_binds,
+		                (unsigned long long)ms->state_applies,
+		                (unsigned long long)ms->state_cache_hits,
 		                (unsigned long long)ms->missing_textures,
 		                (unsigned long long)ms->dropped_draws, priv->zsortCount,
 		                ownerResult, snap ? snap->active_owner : UINT32_MAX,
@@ -1455,6 +1543,7 @@ int32_t NativeRenderAbort(uint32_t drawContextAddr)
 		unbind_fbo();
 		ms->pass_active = false;
 	}
+	invalidate_draw_state(ms);
 	priv->zsortCount = 0;
 	priv->multiTextureActive = false;
 	priv->multiTexStagingCount = 0;
@@ -1842,6 +1931,9 @@ int32_t NativeDrawBitmap(uint32_t drawContextAddr, uint32_t vertexAddr, uint32_t
 	glTexCoord2f(1, 1); glVertex3f(x + w, y + h, z);
 	glTexCoord2f(0, 1); glVertex3f(x, y + h, z);
 	glEnd();
+	/* DrawBitmap deliberately overrides fixed-function state. The next RAVE
+	 * draw must not treat the cached state as still resident in GL. */
+	invalidate_draw_state(priv->metal);
 	return kQANoErr;
 }
 
@@ -2062,6 +2154,7 @@ int32_t NativeAccessZBufferEnd(uint32_t drawContextAddr, uint32_t /*dirtyRectAdd
 	glPopAttrib();
 	ms->z_accessed = false;
 	ms->pass_active = true;
+	invalidate_draw_state(ms);
 	return kQANoErr;
 }
 
@@ -2070,6 +2163,7 @@ int32_t NativeClearDrawBuffer(uint32_t drawContextAddr, uint32_t rectAddr, uint3
 	RaveDrawPrivate *priv = GetContextFromDrawAddr(drawContextAddr);
 	if (!priv || !priv->metal || !priv->metal->pass_active) return kQANoErr;
 	if (!GfxGLDeviceMakeCurrent()) return 1;
+	invalidate_draw_state(priv->metal);
 	float cr = priv->state[2].f, cg = priv->state[3].f,
 	      cb = priv->state[4].f, ca = 1.f;
 	if (initialContextAddr) {
@@ -2121,6 +2215,7 @@ int32_t NativeClearZBuffer(uint32_t drawContextAddr, uint32_t rectAddr,
 	RaveDrawPrivate *priv = GetContextFromDrawAddr(drawContextAddr);
 	if (!priv || !priv->metal || !priv->metal->pass_active) return kQANoErr;
 	if (!GfxGLDeviceMakeCurrent()) return 1;
+	invalidate_draw_state(priv->metal);
 	if (!RaveContextUsesMetalDepthAttachment(priv->flags) ||
 	    !RaveEffectiveDepthWriteEnabled(
 	        priv->state[28].i,

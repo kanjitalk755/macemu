@@ -541,8 +541,10 @@ int32 NativeSetFloat(uint32 drawContextAddr, uint32 tag, uint32 valueBits)
 		if (ati_idx < RAVE_ATI_TAG_COUNT) {
 			float value;
 			memcpy(&value, &valueBits, sizeof(float));
-			float oldValue = ctx->ati_state[ati_idx].f;
-			ctx->ati_state[ati_idx].f = value;
+			const uint32 oldBits = ctx->ati_state[ati_idx].i;
+			float oldValue;
+			memcpy(&oldValue, &oldBits, sizeof(float));
+			ctx->ati_state[ati_idx].i = valueBits;
 #if QD3D_INIT_LOGGING_ENABLED
 			if (oldValue != value) {
 				static uint64_t changes = 0;
@@ -553,7 +555,8 @@ int32 NativeSetFloat(uint32 drawContextAddr, uint32 tag, uint32 valueBits)
 					               valueBits);
 			}
 #endif
-			if (ati_idx == kRaveATIDepthWriteEnableIndex) {
+			if (oldBits != valueBits &&
+			    ati_idx == kRaveATIDepthWriteEnableIndex) {
 				ctx->dirty_flags |= 1;
 			}
 			// Activate ATI fog override when fog-related tags are set (indices 2-9)
@@ -574,11 +577,13 @@ int32 NativeSetFloat(uint32 drawContextAddr, uint32 tag, uint32 valueBits)
 	if (tag == 6 || tag == 7) return kQANoErr;
 
 	// Store float bits directly (PPC passes float as uint32 in r5)
-	float value;
+	float value, oldValue;
+	const uint32 oldBits = ctx->state[tag].i;
 	memcpy(&value, &valueBits, sizeof(float));
-	float oldValue = ctx->state[tag].f;
-	ctx->state[tag].f = value;
-	ctx->dirty_flags |= (1 << (tag & 31));
+	memcpy(&oldValue, &oldBits, sizeof(float));
+	ctx->state[tag].i = valueBits;
+	if (oldBits != valueBits)
+		ctx->dirty_flags |= (1u << (tag & 31));
 #if QD3D_INIT_LOGGING_ENABLED
 	if (oldValue != value && ShouldTraceStateTag(tag)) {
 		static uint64_t changes = 0;
@@ -623,7 +628,8 @@ int32 NativeSetInt(uint32 drawContextAddr, uint32 tag, uint32 value)
 					               oldValue, value, value);
 			}
 #endif
-			if (ati_idx == kRaveATIDepthWriteEnableIndex) {
+			if (oldValue != value &&
+			    ati_idx == kRaveATIDepthWriteEnableIndex) {
 				ctx->dirty_flags |= 1;
 			}
 			// Activate ATI fog override when fog-related tags are set (indices 2-9)
@@ -642,7 +648,8 @@ int32 NativeSetInt(uint32 drawContextAddr, uint32 tag, uint32 value)
 
 	uint32 oldValue = ctx->state[tag].i;
 	ctx->state[tag].i = value;
-	ctx->dirty_flags |= (1 << (tag & 31));
+	if (oldValue != value)
+		ctx->dirty_flags |= (1u << (tag & 31));
 #if QD3D_INIT_LOGGING_ENABLED
 	if (oldValue != value && ShouldTraceStateTag(tag)) {
 		static uint64_t changes = 0;
@@ -738,7 +745,8 @@ int32 NativeSetPtr(uint32 drawContextAddr, uint32 tag, uint32 ptr)
 
 	uint32 oldPtr = ctx->state[tag].i;
 	ctx->state[tag].i = ptr;  // Mac address stored as uint32
-	ctx->dirty_flags |= (1 << (tag & 31));
+	if (oldPtr != ptr)
+		ctx->dirty_flags |= (1u << (tag & 31));
 #if QD3D_INIT_LOGGING_ENABLED
 	if (oldPtr != ptr && ShouldTraceStateTag(tag)) {
 		static uint64_t changes = 0;
