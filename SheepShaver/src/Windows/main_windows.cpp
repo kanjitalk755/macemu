@@ -704,11 +704,20 @@ static DWORD WINAPI tick_func(void *arg)
 	uint64 start = GetTicks_usec();
 	int64 ticks = 0;
 	uint64 next = GetTicks_usec();
+	// VIA ticks owed to the guest because delivery was skipped while it was
+	// nested inside interrupt handling (XLM_IRQ_NEST != 0). A real VIA is
+	// level-triggered: a held-off interrupt fires as soon as the handler
+	// returns, so TickCount lags but does not lose time. Dropping ticks
+	// instead starves TickCount/Time Manager progress while the guest
+	// busy-waits at interrupt level (Descent II movie startup), which
+	// stretches its waits even further. Deliver owed ticks at 4x rate,
+	// capped at half a second of backlog.
+	int pending_via_ticks = 0;
 
 	while (!tick_thread_cancel) {
 
 		// Wait
-		next += 16625;
+		next += (pending_via_ticks > 0) ? 16625 / 4 : 16625;
 		int64 delay = next - GetTicks_usec();
 		if (delay > 0)
 			Delay_usec(delay);
@@ -749,21 +758,38 @@ static DWORD WINAPI tick_func(void *arg)
 
 		// Trigger 60Hz interrupt
 		const int32 irq_nest = (int32)ReadMacInt32(XLM_IRQ_NEST);
+		const bool via_still_pending = (InterruptFlags & INTFLAG_VIA) != 0;
 		if (irq_nest == 0) {
 #if QD3D_WAIT_LOGGING_ENABLED
 			if (log_descent_tick && irq_blocked_ticks >= 2)
-				QD3D_WAIT_LOG("60Hz IRQ delivery resumed tick=%u afterBlockedTicks=%u",
-				              ReadMacInt32(0x016a), irq_blocked_ticks);
+				QD3D_WAIT_LOG("60Hz IRQ delivery resumed tick=%u afterBlockedTicks=%u pending=%d",
+				              ReadMacInt32(0x016a), irq_blocked_ticks, pending_via_ticks);
 			irq_blocked_ticks = 0;
 #endif
+			// If the previous VIA interrupt has not been consumed yet, this
+			// delivery merges with it and a TickCount increment is lost; owe
+			// it instead of forgetting it. Never gate delivery on the flag:
+			// during early boot the guest does not consume interrupts at all,
+			// and withholding delivery would wedge startup.
+			if (via_still_pending) {
+				if (pending_via_ticks < 30)
+					pending_via_ticks++;
+			} else if (pending_via_ticks > 0) {
+				pending_via_ticks--;
+			}
 			SetInterruptFlag(INTFLAG_VIA);
 			TriggerInterrupt();
 		} else {
+			// Guest is nested in interrupt handling; the tick is not delivered
+			// at all, so owe it for catch-up.
+			if (pending_via_ticks < 30)
+				pending_via_ticks++;
 #if QD3D_WAIT_LOGGING_ENABLED
 			irq_blocked_ticks++;
 			if (log_descent_tick && (irq_blocked_ticks == 2 || (irq_blocked_ticks % 30) == 0))
-				QD3D_WAIT_LOG("60Hz IRQ delivery blocked tick=%u consecutiveTicks=%u irqNest=%d",
-				              ReadMacInt32(0x016a), irq_blocked_ticks, irq_nest);
+				QD3D_WAIT_LOG("60Hz IRQ delivery blocked tick=%u consecutiveTicks=%u irqNest=%d viaPending=%d",
+				              ReadMacInt32(0x016a), irq_blocked_ticks, irq_nest,
+				              via_still_pending ? 1 : 0);
 #endif
 		}
 	}

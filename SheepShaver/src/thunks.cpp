@@ -116,6 +116,11 @@ uint32 NativeOpcode(int selector)
 	case NATIVE_DSP_DISPATCH:
 		opcode = POWERPC_NATIVE_OP(0, selector);
 		break;
+	case NATIVE_MICROSECONDS:
+		// FN=1: the single patched instruction acts as the whole function
+		// (execute_sheep sets pc = lr after the native op).
+		opcode = POWERPC_NATIVE_OP(1, selector);
+		break;
 	default:
 		abort();
 	}

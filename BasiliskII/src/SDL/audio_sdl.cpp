@@ -304,18 +304,8 @@ void audio_exit_stream()
 
 static int audio_prefetch_func(void *arg)
 {
-	int prefetched_source_count = 0;
 	while (!SDL_AtomicGet(&audio_prefetch_quit)) {
 		const int source_count = AudioStatus.num_sources;
-		if (source_count != prefetched_source_count) {
-			SDL_LockAudio();
-			const int discarded = SDL_AudioStreamAvailable(audio_prefetch_stream);
-			SDL_AudioStreamClear(audio_prefetch_stream);
-			SDL_UnlockAudio();
-			QD3D_AUDIO_LOG("SDL prefetch topology sources=%d->%d discarded=%d",
-			                prefetched_source_count, source_count, discarded);
-			prefetched_source_count = source_count;
-		}
 		if (source_count == 0) {
 			SDL_Delay(AUDIO_PREFETCH_RETRY_MS);
 			continue;
@@ -324,7 +314,11 @@ static int audio_prefetch_func(void *arg)
 		SDL_LockAudio();
 		const int queued = SDL_AudioStreamAvailable(audio_prefetch_stream);
 		SDL_UnlockAudio();
-		if (queued >= audio_callback_bytes) {
+		/* Keep two host blocks queued. With a single block, any interrupt
+		 * service delay longer than one callback period (seen: 20-30 ms while
+		 * the guest busy-waits at interrupt level during movie startup) drains
+		 * the stream to zero and the callback emits audible silence. */
+		if (queued >= 2 * audio_callback_bytes) {
 			SDL_Delay(AUDIO_PREFETCH_RETRY_MS);
 			continue;
 		}

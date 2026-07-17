@@ -302,6 +302,7 @@ struct RaveDrawPrivate {
 	int32_t        left, top;
 	uint32_t       drawContextAddr; // Mac address of TQADrawContext
 	uint32_t       deviceAddr;      // Mac address of the context's TQADevice
+	uint32_t       noticePixelType; // CPU image-buffer format, resolved at creation
 	struct RaveMetalState *metal;   // Metal resources, opaque to .cpp
 
 	// Vertex staging buffer for geometry submission

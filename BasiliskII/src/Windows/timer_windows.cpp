@@ -117,6 +117,25 @@ void Microseconds(uint32 &hi, uint32 &lo)
 		last_tick = tick;
 		last_value = value;
 		calls_this_tick++;
+#if DESCENT_MOVIE_DIAGNOSTICS
+		// One-shot dump of the movie busy-wait loop code. A burst of 500+
+		// Microseconds() calls within one tick only happens inside Descent's
+		// movie-startup polling loop; the loop code has been observed at
+		// 0x232450..0x2356ac across launches.
+		static bool movie_loop_dumped;
+		if (!movie_loop_dumped && calls_this_tick == 500) {
+			movie_loop_dumped = true;
+			const uint32 base = 0x00230000, size = 0x8000;
+			if (uint8 *host = Mac2HostAddr(base)) {
+				if (FILE *f = fopen("descent_movie_loop.bin", "wb")) {
+					fwrite(host, 1, size, f);
+					fclose(f);
+					QD3D_WAIT_LOG("Movie-loop dump guestBase=0x%08x bytes=0x%x tick=%u",
+					              base, size, tick);
+				}
+			}
+		}
+#endif
 	} else {
 		calls_this_tick = 0;
 	}

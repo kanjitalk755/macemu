@@ -23,6 +23,7 @@
 #include "macos_util.h"
 #include "main.h"
 #include "cpu_emulation.h"
+#include "audio.h"
 
 #if defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED
 #include "qd3d_init_logging.h"
@@ -490,7 +491,9 @@ int16 PrimeTime(uint32 tm, int32 time)
 			// then re-installed using InsXTime(). Since tmWakeUp was set, this is case (b).
 			// The remaining time was saved in tmCount by RmvTime().
 			if (time == 0) {
-				timer_mac2host_time(delay, ReadMacInt16(tm + tmCount));
+				// tmCount is written 32-bit by RmvTime() and may be a negative
+				// microsecond count; a 16-bit read mangles both value and sign.
+				timer_mac2host_time(delay, (int32)ReadMacInt32(tm + tmCount));
 			}
 
 			// Yes, calculate wakeup time relative to last scheduled time
@@ -663,10 +666,21 @@ void TimerInterrupt(void)
 			uint32 addr = ReadMacInt32(tm + tmAddr);
 			if (addr) {
 				D(bug("Calling TimeTask %08lx, addr %08lx\n", tm, addr));
+				#if QD3D_WAIT_LOGGING_ENABLED && defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
+				// Snapshot the tracked Sound Manager source PB immediately
+				// before and after the task callback so a movie moreRtn's
+				// effect on the PB is attributable to this exact fire.
+				if (log_descent_timer)
+					AudioDiagnosticPoll();
+				#endif
 				M68kRegisters r;
 				r.a[0] = addr;
 				r.a[1] = tm;
 				Execute68k(r.a[0], &r);
+				#if QD3D_WAIT_LOGGING_ENABLED && defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
+				if (log_descent_timer)
+					AudioDiagnosticPoll();
+				#endif
 				D(bug(" returned from TimeTask\n"));
 			}
 			#if QD3D_WAIT_LOGGING_ENABLED

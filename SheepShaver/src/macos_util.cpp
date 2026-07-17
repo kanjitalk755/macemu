@@ -315,6 +315,39 @@ uint32 FindLibSymbol(const char *lib_str, const char *sym_str)
 
 
 /*
+ *  Patch InterfaceLib's Microseconds() with a native implementation
+ *
+ *  The library routine reaches the _Microseconds trap through Mixed Mode,
+ *  which costs a full PPC->68k emulator round trip per call. PPC games that
+ *  poll it heavily (Descent II's movie timing calls it hundreds of times per
+ *  tick) turn that overhead into visible stalls. Replace the routine's first
+ *  instruction with the FN=1 NATIVE_MICROSECONDS opcode, which services the
+ *  call inside the PPC interpreter and returns via LR. The 68k _Microseconds
+ *  trap (EMUL_OP in the patched ROM) is unaffected.
+ */
+
+static void PatchInterfaceLibMicroseconds()
+{
+#if EMULATED_PPC
+	const uint32 tvect = FindLibSymbol("\014InterfaceLib", "\014Microseconds");
+	if (tvect == 0) {
+		printf("WARNING: InterfaceLib Microseconds not found, native patch skipped\n");
+		return;
+	}
+	const uint32 code = ReadMacInt32(tvect);
+	if (code == 0) {
+		printf("WARNING: InterfaceLib Microseconds has null code pointer\n");
+		return;
+	}
+	D(bug("InterfaceLib Microseconds TVECT at %08x, code at %08x (first insn %08x)\n",
+	      tvect, code, ReadMacInt32(code)));
+	WriteMacInt32(code, NativeOpcode(NATIVE_MICROSECONDS));
+	FlushCodeCache(code, code + 4);
+#endif
+}
+
+
+/*
  *  Find CallUniversalProc() TVector
  */
 
@@ -363,6 +396,8 @@ void InitCallUniversalProc()
 		printf("FATAL: Can't find DisposePtr()\n");
 		QuitEmulator();
 	}
+
+	PatchInterfaceLibMicroseconds();
 }
 
 

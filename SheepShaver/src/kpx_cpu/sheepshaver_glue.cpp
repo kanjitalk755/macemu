@@ -35,6 +35,8 @@ extern "C" void catalyst_pump_appkit_events(void);
 #include "emul_op.h"
 #include "rom_patches.h"
 #include "macos_util.h"
+#include "timer.h"
+#include "audio.h"
 #include "block-alloc.hpp"
 #include "sigsegv.h"
 #include "cpu/ppc/ppc-cpu.hpp"
@@ -1132,16 +1134,141 @@ void HandleInterrupt(powerpc_registers *r)
 			repeated_sample_count++;
 		else
 			repeated_sample_count = 1;
+		// While the ROM 68k emulator runs (MODE_68K), the 68k PC lives in
+		// PPC r24 and 68k D0-D7/A0-A6 in r8-r23 (the EMUL_OP register
+		// convention). Sample the 68k PC so 68k busy-wait loops (Descent's
+		// MVE movie player is 68k code) can be located and dumped.
+		const bool in_68k = ReadMacInt32(XLM_RUN_MODE) == MODE_68K;
+		const uint32 pc68k = in_68k ? r->gpr[24] : 0;
 		if ((diagnostic_interrupt_count % 6) == 0 || repeated_sample_count == 4) {
-			QD3D_WAIT_LOG("Guest CPU sample=%u tick=%u runMode=%u pc=0x%08x lr=0x%08x ctr=0x%08x sp=0x%08x toc=0x%08x repeatedPC=%u flags=0x%08x irqNest=%d",
+			QD3D_WAIT_LOG("Guest CPU sample=%u tick=%u runMode=%u pc=0x%08x lr=0x%08x ctr=0x%08x sp=0x%08x toc=0x%08x pc68k=0x%08x repeatedPC=%u flags=0x%08x irqNest=%d",
 			              diagnostic_interrupt_count, ReadMacInt32(0x016a),
 			              ReadMacInt32(XLM_RUN_MODE), r->pc, r->lr, r->ctr,
-			              r->gpr[1], r->gpr[2], repeated_sample_count,
+			              r->gpr[1], r->gpr[2], pc68k, repeated_sample_count,
 			              InterruptFlags, (int32)ReadMacInt32(XLM_IRQ_NEST));
 		}
+		// One-shot dump of the code around a repeatedly sampled application PC
+		// (and its LR call site) so the busy-wait condition can be disassembled
+		// offline. Application code only; guest addresses are logged above.
+#if DESCENT_MOVIE_DIAGNOSTICS
+		static bool wait_loop_dumped;
+		if (!wait_loop_dumped && repeated_sample_count >= 4 &&
+		    r->pc >= 0x4000 && r->pc < 0x40000000) {
+			wait_loop_dumped = true;
+			const uint32 window = 0x1000;
+			struct { const char *name; uint32 base; } dumps[2] = {
+				{ "descent_wait_pc.bin", r->pc - window },
+				{ "descent_wait_lr.bin", r->lr - window },
+			};
+			for (int i = 0; i < 2; i++) {
+				if (dumps[i].base < 0x4000 || dumps[i].base >= 0x40000000)
+					continue;
+				uint8 *host = Mac2HostAddr(dumps[i].base);
+				if (!host)
+					continue;
+				if (FILE *f = fopen(dumps[i].name, "wb")) {
+					fwrite(host, 1, window * 2, f);
+					fclose(f);
+					QD3D_WAIT_LOG("Wait-loop dump %s guestBase=0x%08x bytes=0x%x pc=0x%08x lr=0x%08x",
+					              dumps[i].name, dumps[i].base, window * 2,
+					              r->pc, r->lr);
+				}
+			}
+		}
+#endif
 		previous_sample_pc = r->pc;
 	}
 #endif
+
+#if DESCENT_MOVIE_DIAGNOSTICS
+	// --- Descent II movie-loop diagnostic --------------------------------
+	// Independent of the QD3D log channels so it survives reconfigures.
+	// While the ROM 68k emulator runs (MODE_68K), the 68k PC lives in PPC
+	// r24 and 68k D0-D7/A0-A6 in r8-r23. Descent II's MVE movie player is
+	// 68k code that busy-waits ~1s at movie start; dump each code region
+	// the loop visits so its exit condition can be disassembled.
+	{
+		static bool loop_68k_dumped;
+		static uint32 prev_pc68k;
+		static uint32 rep_68k;
+		static uint32 seen_68k;
+		static uint32 seen_68k_movie;
+		if (ReadMacInt32(XLM_RUN_MODE) == MODE_68K &&
+		    ReadMacInt32(0x0910) == 0x0a446573 &&
+		    ReadMacInt32(0x0914) == 0x63656e74 &&
+		    (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900) {
+			const uint32 pc68k = r->gpr[24];
+			if (pc68k >= 0x4000 && pc68k < 0x40000000) {
+				seen_68k++;
+				// Match repeats within a 2KB window: poll loops with trap
+				// calls span far more than one instruction.
+				if (pc68k - (prev_pc68k & ~0x7ffu) < 0x800u)
+					rep_68k++;
+				else
+					rep_68k = 1;
+				prev_pc68k = pc68k;
+				// The movie stall is the phase with a second Apple Mixer
+				// source; only that phase is of interest for the dump.
+				const bool movie_active = AudioStatus.num_sources >= 2;
+				if (movie_active)
+					seen_68k_movie++;
+				else
+					seen_68k_movie = 0;
+				char msg[256];
+				if ((seen_68k & 3) == 0) {
+					snprintf(msg, sizeof(msg),
+					         "[QD3D:wait] 68k sample n=%u pc68k=0x%08x rep=%u movie=%u d0-d3=%08x/%08x/%08x/%08x a0-a3=%08x/%08x/%08x/%08x tick=%u\n",
+					         seen_68k, pc68k, rep_68k, seen_68k_movie,
+					         r->gpr[8], r->gpr[9], r->gpr[10], r->gpr[11],
+					         r->gpr[16], r->gpr[17], r->gpr[18], r->gpr[19],
+					         ReadMacInt32(0x016a));
+					fputs(msg, stderr);
+					fflush(stderr);
+#ifdef _WIN32
+					OutputDebugStringA(msg);
+#endif
+				}
+				// Dump every distinct code region the movie-phase busy path
+				// visits (the loop cycles through several modules), up to 8.
+				static uint32 dumped_bases[8];
+				static int dumped_count;
+				if (movie_active && dumped_count < 8) {
+					bool covered = false;
+					for (int i = 0; i < dumped_count; i++) {
+						if (pc68k - dumped_bases[i] < 0x2000u) {
+							covered = true;
+							break;
+						}
+					}
+					if (!covered) {
+						const uint32 window = 0x1000;
+						const uint32 base = pc68k - window;
+						uint8 *host = Mac2HostAddr(base);
+						char name[48];
+						snprintf(name, sizeof(name),
+						         "descent_68k_loop_%d.bin", dumped_count);
+						FILE *f = host ? fopen(name, "wb") : NULL;
+						if (f) {
+							fwrite(host, 1, window * 2, f);
+							fclose(f);
+							dumped_bases[dumped_count++] = base;
+							snprintf(msg, sizeof(msg),
+							         "[QD3D:wait] 68k-loop dump %s base=0x%08x pc68k=0x%08x movieSeen=%u tick=%u\n",
+							         name, base, pc68k, seen_68k_movie,
+							         ReadMacInt32(0x016a));
+							fputs(msg, stderr);
+							fflush(stderr);
+#ifdef _WIN32
+							OutputDebugStringA(msg);
+#endif
+						}
+					}
+				}
+				(void)loop_68k_dumped;
+			}
+		}
+	}
+#endif /* DESCENT_MOVIE_DIAGNOSTICS */
 
 	// Do nothing if interrupts are disabled
 	if (int32(ReadMacInt32(XLM_IRQ_NEST)) > 0)
@@ -1358,6 +1485,21 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 	case NATIVE_NAMED_CHECK_LOAD_INVOC:
 		named_check_load_invoc(gpr(3), gpr(4), gpr(5));
 		break;
+	case NATIVE_MICROSECONDS: {
+		// Native replacement for InterfaceLib Microseconds(UnsignedWide *).
+		// The library implementation reaches the _Microseconds trap through
+		// Mixed Mode, costing a full PPC->68k emulator round trip per call
+		// (~60us); Descent II's movie startup calls it hundreds of times per
+		// tick. This services the call without leaving the PPC interpreter.
+		const uint32 wide = gpr(3);
+		if (wide) {
+			uint32 hi, lo;
+			Microseconds(hi, lo);
+			WriteMacInt32(wide + 0, hi);
+			WriteMacInt32(wide + 4, lo);
+		}
+		break;
+	}
 	case NATIVE_RAVE_DISPATCH: {
 #if !defined(ENABLE_GFXACCEL)
 		gpr(3) = (uint32)-1;

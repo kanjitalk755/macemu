@@ -80,6 +80,25 @@ static void FreeContextHandle(uint32_t handle)
 	}
 }
 
+static uint32_t GDeviceDrawBufferPixelType(uint32_t gdeviceH)
+{
+	const uint32_t kRGB16 = 1;
+	const uint32_t kRGB32 = 3;
+	const uint32_t gdevice = gdeviceH ? ReadMacInt32(gdeviceH) : 0;
+	const uint32_t pixMapH = gdevice
+	    ? ReadMacInt32(gdevice + GDEVICE_OFF_PMAP) : 0;
+	const uint32_t pixMap = pixMapH ? ReadMacInt32(pixMapH) : 0;
+	if (!pixMap)
+		return kRGB16;
+
+	/* A 32-bit GDevice plausibly means the client draws 32-bit data; any
+	 * other depth (including 8-bit screens) maps to the RAGE-class 16-bit
+	 * 1555 draw buffer, which is what era clients software-render into. */
+	const uint16_t pixelSize = (uint16_t)ReadMacInt16(
+	    pixMap + DSP_MAINDEVICE_PIXMAP_OFF_PIXELSIZE);
+	return pixelSize == 32 ? kRGB32 : kRGB16;
+}
+
 uint32_t RaveDeviceDrawBufferPixelType(uint32_t deviceAddr)
 {
 	/* RAVE pixel types: RGB16=1 and RGB32=3. A GDevice's QuickDraw
@@ -87,30 +106,27 @@ uint32_t RaveDeviceDrawBufferPixelType(uint32_t deviceAddr)
 	 * is the actual bit depth needed by the CPU image-buffer contract. */
 	const uint32_t kRGB16 = 1;
 	const uint32_t kRGB32 = 3;
-	if (!deviceAddr)
-		return kRGB32;
+	if (!deviceAddr) {
+		/* A NULL TQADevice means "whatever buffer the driver renders into".
+		 * On the ATI RAGE family that buffer is always 16-bit 1555, and
+		 * MechWarrior 2 6500 software-draws its HUD into the image buffer
+		 * as big-endian 555 regardless of screen depth (verified by dumping
+		 * the notice buffer around its BufferComposite callback). Advertise
+		 * the ATI-faithful format. */
+		return kRGB16;
+	}
 
 	const uint32_t deviceType = ReadMacInt32(deviceAddr + kRaveDeviceOff_Type);
 	if (deviceType == kRaveDeviceTypeMemory) {
 		const uint32_t pixelType = ReadMacInt32(
 		    deviceAddr + kRaveDeviceOff_MemoryPixelType);
-		return pixelType == kRGB16 ? kRGB16 : kRGB32;
+		return pixelType == kRGB32 ? kRGB32 : kRGB16;
 	}
 	if (deviceType != kRaveDeviceTypeGDevice)
-		return kRGB32;
+		return kRGB16;
 
-	const uint32_t gdeviceH = ReadMacInt32(
-	    deviceAddr + kRaveDeviceOff_GDeviceHandle);
-	const uint32_t gdevice = gdeviceH ? ReadMacInt32(gdeviceH) : 0;
-	const uint32_t pixMapH = gdevice
-	    ? ReadMacInt32(gdevice + GDEVICE_OFF_PMAP) : 0;
-	const uint32_t pixMap = pixMapH ? ReadMacInt32(pixMapH) : 0;
-	if (!pixMap)
-		return kRGB32;
-
-	const uint16_t pixelSize = (uint16_t)ReadMacInt16(
-	    pixMap + DSP_MAINDEVICE_PIXMAP_OFF_PIXELSIZE);
-	return pixelSize == 16 ? kRGB16 : kRGB32;
+	return GDeviceDrawBufferPixelType(
+	    ReadMacInt32(deviceAddr + kRaveDeviceOff_GDeviceHandle));
 }
 
 /*
@@ -313,8 +329,12 @@ int32 NativeDrawPrivateNew(uint32 drawContextAddr, uint32 deviceAddr,
 	ctx->flags  = flags;
 	ctx->drawContextAddr = drawContextAddr;
 	ctx->deviceAddr = deviceAddr;
+	/* Resolve the CPU image-buffer format NOW: clients may pass a
+	 * stack-allocated TQADevice (MechWarrior 2 does), so the struct is only
+	 * guaranteed valid during this call. */
+	ctx->noticePixelType = RaveDeviceDrawBufferPixelType(deviceAddr);
 	QD3D_INIT_LOG("NativeDrawPrivateNew: device draw-buffer pixelType=%u",
-	              RaveDeviceDrawBufferPixelType(deviceAddr));
+	              ctx->noticePixelType);
 
 	// Initialize state defaults per RAVE spec
 	InitStateDefaults(ctx, flags);

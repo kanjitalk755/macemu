@@ -412,17 +412,15 @@ enum {
 
 static uint32_t notice_pixel_type(const RaveDrawPrivate *priv)
 {
-	/* The image-buffer callback is part of the display-device contract. Some
-	 * classic clients (notably Descent II 6500 OEM) draw according to the
-	 * active GDevice depth even though they are also given pixelType. Follow
-	 * the context's live device instead of always exposing the Metal backend's
-	 * RGB32 staging format. Fall back to DMC for malformed devices. */
-	if (priv && priv->deviceAddr) {
-		const uint32_t pixel_type = RaveDeviceDrawBufferPixelType(priv->deviceAddr);
-		if (pixel_type == kRaveNoticePixelRGB16 ||
-		    pixel_type == kRaveNoticePixelRGB32)
-			return pixel_type;
-	}
+	/* The image-buffer format was resolved when the context was created.
+	 * It must NOT be re-derived from priv->deviceAddr here: clients may pass
+	 * a stack-allocated TQADevice to QADrawContextNew (MechWarrior 2 does),
+	 * so by notice time that memory holds garbage — re-walking it produced
+	 * an RGB32 answer for a game that software-renders 555 into the buffer. */
+	if (priv &&
+	    (priv->noticePixelType == kRaveNoticePixelRGB16 ||
+	     priv->noticePixelType == kRaveNoticePixelRGB32))
+		return priv->noticePixelType;
 	const DMCModeSnapshot *snap = dmc_current_snapshot();
 	return snap && snap->depth == 16 ? kRaveNoticePixelRGB16
 	                                 : kRaveNoticePixelRGB32;
@@ -669,10 +667,11 @@ static void fire_notice_method(RaveDrawPrivate *priv, uint32_t selector)
 				std::chrono::microseconds>(callback_done - readback_done).count();
 			const auto upload_usec = std::chrono::duration_cast<
 				std::chrono::microseconds>(upload_done - callback_done).count();
-			QD3D_RENDER_LOG("Notice selector=%u count=%llu callback=0x%08x refCon=0x%08x buffer=0x%08x pixelType=%u rowBytes=%u dirty=0x%08x upload=%d usec=%lld/%lld/%lld",
+			QD3D_RENDER_LOG("Notice selector=%u count=%llu callback=0x%08x refCon=0x%08x buffer=0x%08x pixelType=%u rowBytes=%u device=0x%08x cachedType=%u dirty=0x%08x upload=%d usec=%lld/%lld/%lld",
 			                selector, (unsigned long long)notice_count, callback,
 			                refcon, ms->draw_cpu_mac,
 			                ms->draw_cpu_pixel_type, ms->draw_cpu_row_bytes,
+			                priv->deviceAddr, priv->noticePixelType,
 			                ms->notice_dirty_rect_mac, uploaded ? 1 : 0,
 			                (long long)readback_usec, (long long)callback_usec,
 			                (long long)upload_usec);
@@ -975,28 +974,30 @@ static bool accept_draw_without_logging(RaveDrawPrivate *priv)
 
 #if QD3D_GRAPHICS_LOGGING_ENABLED
 static void record_draw(RaveDrawPrivate *priv, const char *kind, uint32_t vertices,
-	                    bool textured, const HostV *first)
+	                    bool textured, const HostV *first, int vertex_mode = -1)
 {
 	if (!priv || !priv->metal) return;
 	RaveMetalState *ms = priv->metal;
 	ms->draw_calls++;
 	ms->vertices += vertices;
 	if (textured) ms->textured_draws++;
-	if (trace_frame(priv) && ms->logged_draws < 8) {
+	/* Traced frames log every draw (bounded): HUD/overlay draws land at the
+	 * end of a frame and would never appear under a small cap. */
+	if (trace_frame(priv) && ms->logged_draws < 2048) {
 		ms->logged_draws++;
 		if (first) {
-			QD3D_RENDER_LOG("frame=%u draw=%llu kind=%s vertices=%u textured=%d first[x/y/z/w]=%.3f/%.3f/%.5f/%.5f rgba=%.3f/%.3f/%.3f/%.3f uvOverW=%.5f/%.5f kd=%.3f/%.3f/%.3f texture=0x%08x op=0x%x",
+			QD3D_RENDER_LOG("frame=%u draw=%llu kind=%s mode=%d vertices=%u textured=%d first[x/y/z/w]=%.3f/%.3f/%.5f/%.5f rgba=%.3f/%.3f/%.3f/%.3f uvOverW=%.5f/%.5f kd=%.3f/%.3f/%.3f texture=0x%08x op=0x%x",
 			                priv->frameCount, (unsigned long long)ms->draw_calls,
-			                kind, vertices, textured ? 1 : 0,
+			                kind, vertex_mode, vertices, textured ? 1 : 0,
 			                first->x, first->y, first->z, first->invW,
 			                first->r, first->g, first->b, first->a,
 			                first->u_ow, first->v_ow, first->kd_r,
 			                first->kd_g, first->kd_b, priv->state[13].i,
 			                priv->state[12].i);
 		} else {
-			QD3D_RENDER_LOG("frame=%u draw=%llu kind=%s vertices=%u textured=%d texture=0x%08x op=0x%x",
+			QD3D_RENDER_LOG("frame=%u draw=%llu kind=%s mode=%d vertices=%u textured=%d texture=0x%08x op=0x%x",
 			                priv->frameCount, (unsigned long long)ms->draw_calls,
-			                kind, vertices, textured ? 1 : 0,
+			                kind, vertex_mode, vertices, textured ? 1 : 0,
 			                priv->state[13].i, priv->state[12].i);
 		}
 	}
@@ -1717,7 +1718,7 @@ int32_t NativeDrawVGouraud(uint32_t drawContextAddr, uint32_t nVertices, uint32_
 #if QD3D_GRAPHICS_LOGGING_ENABLED
 	HostV traceFirst = read_gouraud_v(verticesAddr);
 #endif
-	record_draw(priv, "VGouraud", nVertices, false, &traceFirst);
+	record_draw(priv, "VGouraud", nVertices, false, &traceFirst, (int)vertexMode);
 	bool fan = false;
 	GLenum mode = map_vertex_mode(vertexMode, fan);
 	const bool zsort = zsort_enabled(priv) && (fan || vertexMode == 3 || vertexMode == 4 || vertexMode == 5);
@@ -1787,7 +1788,7 @@ int32_t NativeDrawVTexture(uint32_t drawContextAddr, uint32_t nVertices, uint32_
 #if QD3D_GRAPHICS_LOGGING_ENABLED
 	HostV traceFirst = read_texture_v(verticesAddr);
 #endif
-	record_draw(priv, "VTexture", nVertices, true, &traceFirst);
+	record_draw(priv, "VTexture", nVertices, true, &traceFirst, (int)vertexMode);
 	bool fan = false;
 	GLenum mode = map_vertex_mode(vertexMode, fan);
 	const bool zsort = zsort_enabled(priv) && (fan || vertexMode == 3 || vertexMode == 4 || vertexMode == 5);
@@ -1994,6 +1995,13 @@ int32_t NativeDrawBitmap(uint32_t drawContextAddr, uint32_t vertexAddr, uint32_t
 	traceFirst.r = traceFirst.g = traceFirst.b = 1.f; traceFirst.a = alpha;
 #endif
 	record_draw(priv, "Bitmap", 4, true, &traceFirst);
+#if QD3D_GRAPHICS_LOGGING_ENABLED
+	if (trace_frame(priv))
+		QD3D_RENDER_LOG("Bitmap frame=%u mac=0x%08x handle=%u size=%ux%u pixelType=%u pos=%.1f/%.1f z=%.4f alpha=%.3f",
+		                priv->frameCount, bitmapMacAddr, handle,
+		                entry->width, entry->height, entry->pixel_type,
+		                x, y, z, alpha);
+#endif
 	float w = entry->width > 0 ? (float)entry->width : 1.f;
 	float h = entry->height > 0 ? (float)entry->height : 1.f;
 	float scaleX = priv->state[52].f;
@@ -2047,9 +2055,12 @@ int32_t NativeDrawTriMeshGouraud(uint32_t drawContextAddr, uint32_t numTriangles
 	if (!zsort)
 		glBegin(GL_TRIANGLES);
 	for (uint32 t = 0; t < numTriangles; t++) {
-		uint32 i0 = ReadMacInt32(trianglesAddr + t * 12 + 0);
-		uint32 i1 = ReadMacInt32(trianglesAddr + t * 12 + 4);
-		uint32 i2 = ReadMacInt32(trianglesAddr + t * 12 + 8);
+		/* TQAIndexedTriangle is 16 bytes: triangleFlags (backfacing hint,
+		 * ignored) followed by vertices[3]. */
+		uint32 triAddr = trianglesAddr + t * 16;
+		uint32 i0 = ReadMacInt32(triAddr + 4);
+		uint32 i1 = ReadMacInt32(triAddr + 8);
+		uint32 i2 = ReadMacInt32(triAddr + 12);
 		if (i0 >= priv->vertexStagingCount || i1 >= priv->vertexStagingCount || i2 >= priv->vertexStagingCount)
 			continue;
 		if (zsort) {
@@ -2094,9 +2105,12 @@ int32_t NativeDrawTriMeshTexture(uint32_t drawContextAddr, uint32_t numTriangles
 	if (!zsort)
 		glBegin(GL_TRIANGLES);
 	for (uint32 t = 0; t < numTriangles; t++) {
-		uint32 i0 = ReadMacInt32(trianglesAddr + t * 12 + 0);
-		uint32 i1 = ReadMacInt32(trianglesAddr + t * 12 + 4);
-		uint32 i2 = ReadMacInt32(trianglesAddr + t * 12 + 8);
+		/* TQAIndexedTriangle is 16 bytes: triangleFlags (backfacing hint,
+		 * ignored) followed by vertices[3]. */
+		uint32 triAddr = trianglesAddr + t * 16;
+		uint32 i0 = ReadMacInt32(triAddr + 4);
+		uint32 i1 = ReadMacInt32(triAddr + 8);
+		uint32 i2 = ReadMacInt32(triAddr + 12);
 		if (i0 >= priv->vertexStagingCount || i1 >= priv->vertexStagingCount || i2 >= priv->vertexStagingCount)
 			continue;
 		if (zsort) {

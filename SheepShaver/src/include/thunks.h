@@ -74,6 +74,7 @@ enum {
   NATIVE_RAVE_DISPATCH,
   NATIVE_OPENGL_DISPATCH,
   NATIVE_DSP_DISPATCH,     /* fourth engine */
+  NATIVE_MICROSECONDS,     /* InterfaceLib Microseconds(UnsignedWide *) */
   NATIVE_OP_MAX
 };
 

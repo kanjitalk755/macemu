@@ -28,6 +28,13 @@
 #define QD3D_WAIT_LOGGING_ENABLED 0
 #endif
 
+/* Descent II first-movie investigation instrumentation: guest 68k-loop code
+ * dumps and related one-shot file writers. Compiled out by default; flip to
+ * 1 to resume the investigation (state notes: qd3d-session-2026-07-16.md). */
+#ifndef DESCENT_MOVIE_DIAGNOSTICS
+#define DESCENT_MOVIE_DIAGNOSTICS 0
+#endif
+
 #if QD3D_INIT_LOGGING_ENABLED || QD3D_GRAPHICS_LOGGING_ENABLED || \
     QD3D_AUDIO_LOGGING_ENABLED || QD3D_MEDIA_LOGGING_ENABLED || \
     QD3D_WAIT_LOGGING_ENABLED
