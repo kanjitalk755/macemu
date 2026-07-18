@@ -104,6 +104,16 @@ bool GfxGLDeviceMakeCurrent(void)
 	return SDL_GL_MakeCurrent(sdl_window, s_gl_ctx) == 0;
 }
 
+void GfxGLDeviceReleaseCurrent(void)
+{
+	/* Unbind the GL context from the calling thread so another thread can make
+	 * it current. Used around an in-place mode switch: the redraw thread (which
+	 * normally owns the context) releases it at its park point so the emul
+	 * thread can reformat compositor resources, then re-binds on resume. */
+	if (s_gl_ctx && sdl_window)
+		SDL_GL_MakeCurrent(sdl_window, nullptr);
+}
+
 void GfxGLDeviceShutdown(void)
 {
 	if (s_gl_ctx) {

@@ -30,7 +30,10 @@
 #include "audio.h"
 #include "audio_defs.h"
 
-#if defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
+/* SheepShaver stages qd3d_init_logging.h (DESCENT_MOVIE_DIAGNOSTICS). */
+#if defined(SHEEPSHAVER)
+#include "qd3d_init_logging.h"
+#elif defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
 #include "qd3d_init_logging.h"
 #else
 #ifndef QD3D_AUDIO_LOGGING_ENABLED
@@ -38,6 +41,14 @@
 #endif
 #define QD3D_AUDIO_LOG(...) do { } while (0)
 #endif
+#ifndef DESCENT_MOVIE_DIAGNOSTICS
+#define DESCENT_MOVIE_DIAGNOSTICS 0
+#endif
+#ifndef DESCENT_MOVIE_PREFETCH_DEPTH_BLOCKS
+#define DESCENT_MOVIE_PREFETCH_DEPTH_BLOCKS 12
+#endif
+
+#include <cstdio>
 
 #define DEBUG 0
 #include "debug.h"
@@ -317,8 +328,21 @@ static int audio_prefetch_func(void *arg)
 		/* Keep two host blocks queued. With a single block, any interrupt
 		 * service delay longer than one callback period (seen: 20-30 ms while
 		 * the guest busy-waits at interrupt level during movie startup) drains
-		 * the stream to zero and the callback emits audible silence. */
-		if (queued >= 2 * audio_callback_bytes) {
+		 * the stream to zero and the callback emits audible silence.
+		 *
+		 * Movie phase (num_sources >= 2): pull much deeper. QuickTime holds the
+		 * intro video until its sound clock reaches the video's media time, and
+		 * that clock only advances as GetSourceData drains the mixed source.
+		 * The game prepares the music source ~1s late, so video runs ~1s ahead
+		 * and QuickTime freezes it ~0.85s while audio plays out (descent-movie
+		 * §34-35). Pulling GetSourceData far ahead of real-time output drains
+		 * the source clock faster -> QuickTime resyncs sooner. The prefetch
+		 * stream buffers the extra audio; the SDL callback still drains it at
+		 * true playback rate, so audio pitch/quality is unchanged. */
+		const int prefetch_target = (AudioStatus.num_sources >= 2)
+			? DESCENT_MOVIE_PREFETCH_DEPTH_BLOCKS * audio_callback_bytes
+			: 2 * audio_callback_bytes;
+		if (queued >= prefetch_target) {
 			SDL_Delay(AUDIO_PREFETCH_RETRY_MS);
 			continue;
 		}
@@ -444,7 +468,33 @@ static void stream_func(void *arg, uint8 *stream, int stream_len)
 		if (copied > 0 && !main_mute && !speaker_mute)
 			SDL_MixAudio(stream, audio_mix_buf, copied, get_audio_volume());
 	}
-	
+
+	/* Light audible-output pulse: peak sample of what is actually sent to
+	 * the device, one line per callback (~11/s), movie phase onward, capped.
+	 * Distinguishes "host emits silence" from "buffers rotate but content
+	 * is quiet" without heavy diagnostics. */
+	{
+		static uint32 mix_pulse_n;
+		static bool mix_pulse_armed;
+		if (source_count >= 1)
+			mix_pulse_armed = true;
+		if (mix_pulse_armed && mix_pulse_n < 500) {
+			mix_pulse_n++;
+			int peak = 0;
+			const int16 *s = (const int16 *)stream;
+			const int n = stream_len / 2;
+			for (int i = 0; i < n; i++) {
+				int v = s[i];
+				if (v < 0) v = -v;
+				if (v > peak) peak = v;
+			}
+			fprintf(stderr,
+			        "[QD3D:wait] mixPulse n=%u tick=%u sources=%d peak=%d\n",
+			        mix_pulse_n, ReadMacInt32(0x016a), source_count, peak);
+			fflush(stderr);
+		}
+	}
+
 #if defined(BINCUE)
 #if QD3D_AUDIO_LOGGING_ENABLED
 	const uint64 cd_mix_counter = SDL_GetPerformanceCounter();
@@ -469,6 +519,14 @@ static void stream_func(void *arg, uint8 *stream, int stream_len)
 
 void AudioInterrupt(void)
 {
+	/* Reentrancy guard: AudioStreamHostMix calls the source's moreRtn, which
+	 * can hit A193/Microseconds and invoke AudioServicePendingInterrupt while
+	 * we are already inside AudioInterrupt. Re-entering here corrupts the
+	 * mixer/PB state and crashes the PPC interpreter (execute_illegal). */
+	if (audio_interrupt_in_service)
+		return;
+	audio_interrupt_in_service = true;
+
 	D(bug("AudioInterrupt\n"));
 	audio_fetch_bytes = 0;
 
@@ -498,9 +556,113 @@ void AudioInterrupt(void)
 				audio_fetch_bytes = bytes;
 			}
 		}
+		/* Streaming sources the mixer refuses to service are mixed in
+		 * host-side (Descent II intro MVE audio). */
+		AudioStreamHostMix(audio_fetch_buf, &audio_fetch_bytes,
+		                   audio_callback_bytes);
 #if QD3D_AUDIO_LOGGING_ENABLED
 		AudioDiagnosticPoll();
 #endif
+#if DESCENT_MOVIE_DIAGNOSTICS
+		/* Movie phase: rich GetSourceData trace (starve, SCD, sample hash). */
+		if (AudioStatus.num_sources >= 2) {
+			static int last_bytes = -1;
+			static uint32 last_buf;
+			static uint32 irq_n;
+			static uint32 zero_streak;
+			static uint32 first_nonempty_n;
+			irq_n++;
+			const int bytes = audio_fetch_bytes;
+			uint32 scd_fmt = 0, scd_count = 0, scd_buf = 0;
+			uint16 scd_ch = 0, scd_ss = 0;
+			uint32 scd_rate = 0;
+			uint32 hash = 0;
+			if (info) {
+				scd_fmt = ReadMacInt32(info + scd_format);
+				scd_ch = ReadMacInt16(info + scd_numChannels);
+				scd_ss = ReadMacInt16(info + scd_sampleSize);
+				scd_rate = ReadMacInt32(info + scd_sampleRate);
+				scd_count = ReadMacInt32(info + scd_sampleCount);
+				scd_buf = ReadMacInt32(info + scd_buffer);
+				if (bytes > 0 && scd_buf) {
+					uint8 *host = Mac2HostAddr(scd_buf);
+					if (host) {
+						hash = 2166136261u;
+						const int n = bytes > 64 ? 64 : bytes;
+						for (int i = 0; i < n; i++)
+							hash = (hash ^ host[i]) * 16777619u;
+					}
+				}
+			}
+			if (bytes == 0)
+				zero_streak++;
+			else {
+				if (!first_nonempty_n)
+					first_nonempty_n = irq_n;
+				zero_streak = 0;
+			}
+			const bool changed = bytes != last_bytes || scd_buf != last_buf;
+			const bool early = irq_n <= 40;
+			const bool periodic = (irq_n % 8) == 0;
+			if (changed || bytes == 0 || early || periodic) {
+				char msg[448];
+				std::snprintf(msg, sizeof(msg),
+				              "[QD3D:wait] AudioInterrupt tick=%u n=%u sources=%d "
+				              "info=0x%08x bytes=%d zeroStreak=%u firstNonEmptyN=%u "
+				              "result=%d fmt=%c%c%c%c ch=%u ss=%u rate=%u "
+				              "sampleCount=%u buf=0x%08x hash=%08x\n",
+				              ReadMacInt32(0x016a), irq_n, AudioStatus.num_sources,
+				              info, bytes, zero_streak, first_nonempty_n,
+				              (int32)r.d[0],
+				              (scd_fmt >> 24) & 0xff, (scd_fmt >> 16) & 0xff,
+				              (scd_fmt >> 8) & 0xff, scd_fmt & 0xff,
+				              scd_ch, scd_ss, scd_rate >> 16, scd_count, scd_buf, hash);
+				std::fputs(msg, stderr);
+				std::fflush(stderr);
+#ifdef _WIN32
+				OutputDebugStringA(msg);
+#endif
+				if (bytes == 0 && last_bytes > 0) {
+					std::snprintf(msg, sizeof(msg),
+					              "[QD3D:wait] AudioInterrupt starve tick=%u n=%u "
+					              "wasBytes=%d zeroStreak=%u info=0x%08x\n",
+					              ReadMacInt32(0x016a), irq_n, last_bytes,
+					              zero_streak, info);
+					std::fputs(msg, stderr);
+					std::fflush(stderr);
+#ifdef _WIN32
+					OutputDebugStringA(msg);
+#endif
+				}
+				last_bytes = bytes;
+				last_buf = scd_buf;
+			}
+		}
+#endif
+		/* Light audio liveness pulse (movie phase only, always compiled):
+		 * a handful of lines per second so a plain run can confirm mixer
+		 * content without DESCENT_MOVIE_DIAGNOSTICS (which stretches the
+		 * intro thrash badly). */
+		if (AudioStatus.num_sources >= 1) {
+			static uint32 pulse_n;
+			static uint32 pulse_last_hash;
+			pulse_n++;
+			if (pulse_n <= 8 || (pulse_n & 3) == 0) {
+				uint32 hash = 0;
+				if (audio_fetch_bytes > 0) {
+					hash = 2166136261u;
+					const int n = audio_fetch_bytes > 64 ? 64 : audio_fetch_bytes;
+					for (int i = 0; i < n; i++)
+						hash = (hash ^ audio_fetch_buf[i]) * 16777619u;
+				}
+				fprintf(stderr,
+				        "[QD3D:wait] audioPulse n=%u bytes=%d hash=%08x same=%d tick=%u\n",
+				        pulse_n, audio_fetch_bytes, hash,
+				        hash == pulse_last_hash, ReadMacInt32(0x016a));
+				fflush(stderr);
+				pulse_last_hash = hash;
+			}
+		}
 		D(bug(" GetSourceData() returns %08lx\n", r.d[0]));
 	} else
 		WriteMacInt32(audio_data + adatStreamInfo, 0);
@@ -508,6 +670,8 @@ void AudioInterrupt(void)
 	// Signal stream function
 	SDL_SemPost(audio_irq_done_sem);
 	D(bug("AudioInterrupt done\n"));
+
+	audio_interrupt_in_service = false;
 }
 
 

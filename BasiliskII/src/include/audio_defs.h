@@ -28,6 +28,7 @@
 enum {
 	badComponentSelector = (int32)0x80008002,
 	noHardwareErr = -200,
+	notEnoughHardwareErr = -201,
 	badChannel = -205,
 	siInvalidSampleRate	= -225,
 	siInvalidSampleSize	= -226,
@@ -61,6 +62,11 @@ enum {
 	kSoundComponentPlaySourceBufferSelect = kDelegatedSoundComponentSelectors + 8
 };
 
+/* PlaySourceBuffer actions (Sound.h) */
+enum {
+	kSourcePaused = 1
+};
+
 // Sound information selectors
 const uint32 siNumberChannels		= FOURCC('c','h','a','n');	// current number of channels
 const uint32 siChannelAvailable		= FOURCC('c','h','a','v');	// number of channels available
@@ -72,6 +78,7 @@ const uint32 siHardwareMute			= FOURCC('h','m','u','t');	// mute state of all ha
 const uint32 siHardwareVolume		= FOURCC('h','v','o','l');	// volume level of all hardware
 const uint32 siHardwareVolumeSteps	= FOURCC('h','s','t','p');	// number of volume steps for hardware
 const uint32 siHardwareBusy			= FOURCC('h','w','b','s');	// sound hardware is in use
+const uint32 siSoundClock			= FOURCC('s','c','l','k');	// sound clock component (per source)
 const uint32 siHardwareFormat       = FOURCC('h','w','f','m');  // hardware format
 const uint32 siCompressionFactor	= FOURCC('c','m','f','a');	// compression info (output is uncompressed PCM)
 const uint32 siHeadphoneMute		= FOURCC('p','m','u','t');	// mute state of headphone

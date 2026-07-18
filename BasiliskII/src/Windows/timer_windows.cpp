@@ -23,20 +23,34 @@
 #include "main.h"
 #include "macos_util.h"
 #include "timer.h"
+#include "audio.h"
 
-#if defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED
+/* Always include when available so DESCENT_MOVIE_DIAGNOSTICS is independent
+ * of cmake wait-logging. SheepShaver stages this header; Basilisk II may not. */
+#if defined(SHEEPSHAVER) || (defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED)
 #include "qd3d_init_logging.h"
+#else
+#ifndef QD3D_WAIT_LOGGING_ENABLED
+#define QD3D_WAIT_LOGGING_ENABLED 0
+#endif
+#ifndef DESCENT_MOVIE_DIAGNOSTICS
+#define DESCENT_MOVIE_DIAGNOSTICS 0
+#endif
+#define QD3D_WAIT_LOG(...) do { } while (0)
+#endif
+#ifndef DESCENT_MOVIE_USEC_COALESCE_US
+/* Coalesce Microseconds under thrash: guest GetTime/sync loops can hammer
+ * A193 tens of thousands of times/sec and starve drawing + audio IRQ.
+ * Applies whenever any sound source is active (all apps). 0 disables. */
+#define DESCENT_MOVIE_USEC_COALESCE_US 1000
+#endif
+#if QD3D_WAIT_LOGGING_ENABLED
 static bool timer_windows_descent_ii_is_current_application()
 {
 	return ReadMacInt32(0x0910) == 0x0a446573 &&
 	       ReadMacInt32(0x0914) == 0x63656e74 &&
 	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
 }
-#else
-#ifndef QD3D_WAIT_LOGGING_ENABLED
-#define QD3D_WAIT_LOGGING_ENABLED 0
-#endif
-#define QD3D_WAIT_LOG(...) do { } while (0)
 #endif
 
 #define DEBUG 0
@@ -91,12 +105,50 @@ void timer_init(void)
 void Microseconds(uint32 &hi, uint32 &lo)
 {
 	D(bug("Microseconds\n"));
+#if DESCENT_MOVIE_USEC_COALESCE_US > 0
+	/* Any active sound source can host a busy-poll sync loop. Coalesce the
+	 * host QPC sample so the emul thread has time for audio IRQ + drawing. */
+	if (AudioStatus.num_sources >= 1) {
+		static uint32 cache_hi, cache_lo;
+		static uint64 cache_qpc;
+		static bool cache_valid;
+		LARGE_INTEGER now_qpc;
+		QueryPerformanceCounter(&now_qpc);
+		const uint64 min_delta =
+			(uint64)DESCENT_MOVIE_USEC_COALESCE_US * frequency / 1000000ull;
+		if (cache_valid &&
+		    (uint64)now_qpc.QuadPart - cache_qpc < min_delta &&
+		    min_delta > 0) {
+			hi = cache_hi;
+			lo = cache_lo;
+			return;
+		}
+		LARGE_INTEGER tt;
+		tt.QuadPart = TICKS2USECS(now_qpc.QuadPart - mac_boot_ticks);
+		hi = tt.HighPart;
+		lo = tt.LowPart;
+		cache_hi = hi;
+		cache_lo = lo;
+		cache_qpc = (uint64)now_qpc.QuadPart;
+		cache_valid = true;
+#if QD3D_WAIT_LOGGING_ENABLED
+		goto descent_usec_logged;
+#else
+		return;
+#endif
+	}
+#endif
+	{
 	LARGE_INTEGER tt;
 	QueryPerformanceCounter(&tt);
 	tt.QuadPart = TICKS2USECS(tt.QuadPart - mac_boot_ticks);
 	hi = tt.HighPart;
 	lo = tt.LowPart;
+	}
 #if QD3D_WAIT_LOGGING_ENABLED
+#if DESCENT_MOVIE_USEC_COALESCE_US > 0
+descent_usec_logged:
+#endif
 	static uint32 last_tick;
 	static uint32 calls_this_tick;
 	static uint64 first_value;
@@ -140,6 +192,26 @@ void Microseconds(uint32 &hi, uint32 &lo)
 		calls_this_tick = 0;
 	}
 #endif
+}
+
+
+/*
+ *  Uncoalesced Microseconds: always a fresh QPC read, no 1 ms coalesce.
+ *
+ *  The coalesce in Microseconds() returns an identical value for up to 1 ms.
+ *  A caller that busy-waits for the clock to advance past a target (QuickTime's
+ *  movie sound clock) then spins tens of thousands of times per second while
+ *  the value is frozen. This path gives it a monotonic, fine-grained value so
+ *  each wait resolves in far fewer polls (descent-movie §32).
+ */
+
+void MicrosecondsRaw(uint32 &hi, uint32 &lo)
+{
+	LARGE_INTEGER tt;
+	QueryPerformanceCounter(&tt);
+	tt.QuadPart = TICKS2USECS(tt.QuadPart - mac_boot_ticks);
+	hi = tt.HighPart;
+	lo = tt.LowPart;
 }
 
 

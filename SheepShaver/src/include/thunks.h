@@ -75,6 +75,9 @@ enum {
   NATIVE_OPENGL_DISPATCH,
   NATIVE_DSP_DISPATCH,     /* fourth engine */
   NATIVE_MICROSECONDS,     /* InterfaceLib Microseconds(UnsignedWide *) */
+  NATIVE_CINEPAK_DISPATCH, /* QuickTime Cinepak ('cvid') decompressor component */
+  NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK, /* JIT-register native Cinepak when someone asks for an image decompressor */
+  NATIVE_FINDNEXTCOMPONENT_CINEPAK_HOOK, /* Same trigger on FindNextComponent (the path QuickTime's ICM actually uses) */
   NATIVE_OP_MAX
 };
 

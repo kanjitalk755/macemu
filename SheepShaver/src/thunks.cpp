@@ -121,6 +121,19 @@ uint32 NativeOpcode(int selector)
 		// (execute_sheep sets pc = lr after the native op).
 		opcode = POWERPC_NATIVE_OP(1, selector);
 		break;
+	case NATIVE_CINEPAK_DISPATCH:
+		// FN=0: executed from the generic [opcode; blr] thunk, so fall
+		// through to the blr like the other dispatch selectors.
+		opcode = POWERPC_NATIVE_OP(0, selector);
+		break;
+	case NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK:
+	case NATIVE_FINDNEXTCOMPONENT_CINEPAK_HOOK:
+		// FN=1: these patch the FIRST INSTRUCTION of an InterfaceLib export
+		// (like NATIVE_MICROSECONDS); the handler is the whole function and
+		// execute_sheep returns via pc = lr. FN=0 here would fall through
+		// into the original function body after the hook ran.
+		opcode = POWERPC_NATIVE_OP(1, selector);
+		break;
 	default:
 		abort();
 	}

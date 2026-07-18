@@ -27,8 +27,11 @@
 #define ACCEL_LOGGING_H
 
 #ifndef ACCEL_LOGGING_ENABLED
-#define ACCEL_LOGGING_ENABLED 0   /* ship default OFF; toggle via tools/gfxlog.sh */
+#define ACCEL_LOGGING_ENABLED 0   /* ship default OFF */
 #endif
+
+/* Shared always-on stderr + OutputDebugStringA sink (never behind a log #if). */
+#include "gfx_debug_sink.h"
 
 #ifdef __cplusplus
 #if ACCEL_LOGGING_ENABLED

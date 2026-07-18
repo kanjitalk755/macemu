@@ -659,11 +659,11 @@ extern bool dsp_logging_enabled;
     if (dsp_logging_enabled && ACCEL_LOG_VERBOSE) os_log(dsp_log, fmt, ##__VA_ARGS__); \
 } while (0)
 #else
-#define DSP_LOG(fmt, ...) do { \
-    if (dsp_logging_enabled) printf("DSp: " fmt "\n", ##__VA_ARGS__); \
+#define DSP_LOG(...) do { \
+    if (dsp_logging_enabled) GFX_DEBUG_EMIT("DSp: ", __VA_ARGS__); \
 } while (0)
-#define DSP_VLOG(fmt, ...) do { \
-    if (dsp_logging_enabled && ACCEL_LOG_VERBOSE) printf("DSp: " fmt "\n", ##__VA_ARGS__); \
+#define DSP_VLOG(...) do { \
+    if (dsp_logging_enabled && ACCEL_LOG_VERBOSE) GFX_DEBUG_EMIT("DSp: ", __VA_ARGS__); \
 } while (0)
 #endif
 #else

@@ -25,6 +25,7 @@
  */
 
 #include <string.h>
+#include <cstdio>
 
 #include "sysdeps.h"
 #include "rom_patches.h"
@@ -64,6 +65,10 @@ const uint32 ZERO_SCRAP_PATCH_SPACE = 0x2fcf80;
 const uint32 PUT_SCRAP_PATCH_SPACE = 0x2fcfc0;
 const uint32 GET_SCRAP_PATCH_SPACE = 0x2fd100;
 const uint32 ADDR_MAP_PATCH_SPACE = 0x2fd140;
+/* Host ClockGetTime intercept: EMUL_OP then optional JMP to original A82A. */
+extern const uint32 COMPONENT_DISPATCH_PATCH_SPACE = 0x2fd280;
+/* ROM offset of original A82A body (set in PatchROM when stub is built). */
+static uint32 g_a82a_orig_off;
 
 // Global variables
 int ROMType;				// ROM type
@@ -704,6 +709,8 @@ bool PatchROM(void)
 	if (!check_rom_patch_space(GET_SCRAP_PATCH_SPACE, 0x40))
 		return false;
 	if (!check_rom_patch_space(ADDR_MAP_PATCH_SPACE - 10 * 4, 0x100))
+		return false;
+	if (!check_rom_patch_space(COMPONENT_DISPATCH_PATCH_SPACE, 0x40))
 		return false;
 
 	// Apply patches
@@ -2312,6 +2319,11 @@ static bool patch_68k(void)
 	base = ROMBase + ReadMacInt32(ROMBase + 0x22);
 	WriteMacInt32(base + 4 * (0xa9fd & 0x3ff), GET_SCRAP_PATCH_SPACE);
 
+	/* A82A host-clock experiments disabled (black screen / silence). Leave
+	 * trap and guest code alone. Patch space reserved but unused. */
+	(void)COMPONENT_DISPATCH_PATCH_SPACE;
+	(void)g_a82a_orig_off;
+
 	// Patch SynchIdleTime()
 	if (PrefsFindBool("idlewait")) {
 		base = find_rom_trap(0xabf7) + 4;						// SynchIdleTime()
@@ -2480,4 +2492,15 @@ void InstallDrivers(void)
 	dce = ReadMacInt32(r.a[0]);
 	WriteMacInt32(dce + dCtlDriver, ROMBase + sony_offset + 0x600);
 	WriteMacInt16(dce + dCtlFlags, 0x4e00);
+
+}
+
+/*
+ * Intentionally empty — rebinding A82A (table poke and/or SetToolTrap) still
+ * crashes this build when activated at movie start. Stub is prepared in
+ * PatchROM for future work; see descent-movie-session §22.7.
+ */
+void InstallComponentDispatchPatch(void)
+{
+	(void)g_a82a_orig_off;
 }

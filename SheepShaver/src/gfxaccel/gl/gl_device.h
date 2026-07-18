@@ -19,6 +19,9 @@ bool GfxGLDeviceInit(void);
 /* Make the gfxaccel GL context current on this thread. */
 bool GfxGLDeviceMakeCurrent(void);
 
+/* Unbind the GL context from the calling thread (so another thread can bind). */
+void GfxGLDeviceReleaseCurrent(void);
+
 /* Release the gfxaccel GL context. Idempotent. */
 void GfxGLDeviceShutdown(void);
 

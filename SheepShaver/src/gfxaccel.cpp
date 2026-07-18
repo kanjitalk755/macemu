@@ -28,6 +28,7 @@
 #include "dsp_engine.h"
 #include "nqd_accel.h"
 #include "qd3d_init_logging.h"
+#include "cinepak_hooks.h"
 
 #define DEBUG 0
 #include "debug.h"
@@ -832,4 +833,12 @@ void VideoInstallAccel(void)
 		DSpInit();
 		DSpInstallHooks();
 	}
+
+	// Register the native Cinepak ('imdc'/'cvid') decompressor. This runs in
+	// native-op context (VideoInstallAccel is invoked via
+	// NATIVE_VIDEO_INSTALL_ACCEL), where RegisterComponent's nested guest
+	// call is safe — unlike InitCallUniversalProc's EMUL_OP context.
+	// Idempotent + retried each accRun tick until the Component Manager is
+	// up, mirroring the DSp/RAVE late-binding pattern.
+	CinepakRegisterFromNative();
 }

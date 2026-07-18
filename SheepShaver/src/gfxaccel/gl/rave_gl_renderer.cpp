@@ -36,8 +36,9 @@
 
 #include <SDL_opengl.h>
 
+#include "gfx_debug_sink.h"
 #ifndef RAVE_LOG
-#define RAVE_LOG(fmt, ...) fprintf(stderr, "[rave-gl] " fmt "\n", ##__VA_ARGS__)
+#define RAVE_LOG(...) GFX_DEBUG_EMIT("[rave-gl] ", __VA_ARGS__)
 #endif
 #define kQANoErr 0
 #define kQANotSupported 3

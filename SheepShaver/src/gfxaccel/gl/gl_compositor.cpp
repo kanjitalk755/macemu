@@ -6,6 +6,7 @@
  */
 
 #include "sysdeps.h"
+#include "cpu_emulation.h"   /* ReadMacInt32 (guest tick at 0x016a) */
 #include "video.h"
 #include "video_blit.h"
 #include "metal_compositor.h"
@@ -35,10 +36,9 @@ extern "C" int RaveGLRenderPassActive(void);
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
-#define COMPOSITOR_LOG(fmt, ...) \
-	do { fprintf(stderr, "[compositor] " fmt "\n", ##__VA_ARGS__); } while (0)
-#define COMPOSITOR_ERR(fmt, ...) \
-	do { fprintf(stderr, "[compositor ERROR] " fmt "\n", ##__VA_ARGS__); } while (0)
+#include "gfx_debug_sink.h"
+#define COMPOSITOR_LOG(...) GFX_DEBUG_EMIT("[compositor] ", __VA_ARGS__)
+#define COMPOSITOR_ERR(...) GFX_DEBUG_EMIT("[compositor ERROR] ", __VA_ARGS__)
 
 // ---------------------------------------------------------------------------
 // State
@@ -137,10 +137,26 @@ static bool classic_framebuffer_needs_upload(void)
 	const size_t bytes = visible_framebuffer_bytes();
 	assert(bytes == 0 || s_buffer != nullptr);
 	if (!s_classic_fb_texture_valid ||
-	    bytes != s_classic_fb_upload_baseline.size())
+	    bytes != s_classic_fb_upload_baseline.size()) {
+#if DESCENT_HITCH_DEBUG
+		static int s_nu_force_log = 0;
+		if (s_nu_force_log++ < 40)
+			gfx_debug::emit("[compositor] ",
+				"needsUpload FORCE valid=%d bytes=%zu baseSize=%zu",
+				s_classic_fb_texture_valid ? 1 : 0,
+				bytes, s_classic_fb_upload_baseline.size());
+#endif
 		return true;
-	return bytes != 0 &&
-	       std::memcmp(s_buffer, s_classic_fb_upload_baseline.data(), bytes) != 0;
+	}
+	const bool diff = bytes != 0 &&
+		std::memcmp(s_buffer, s_classic_fb_upload_baseline.data(), bytes) != 0;
+#if DESCENT_HITCH_DEBUG
+	static int s_nu_diff_log = 0;
+	if (s_nu_diff_log++ < 40)
+		gfx_debug::emit("[compositor] ",
+			"needsUpload memcmp diff=%d bytes=%zu", diff ? 1 : 0, bytes);
+#endif
+	return diff;
 }
 
 static void remember_classic_framebuffer_upload(void)
@@ -652,7 +668,8 @@ int MetalCompositorInit(int width, int height, int depth, int row_bytes,
 	vbl_source_init(nullptr, nullptr, nullptr);
 
 	s_init = true;
-	COMPOSITOR_LOG("Init %dx%d depth=%d rb=%d pitch=%d bpp=%d",
+	COMPOSITOR_LOG("Init tick=%u %dx%d depth=%d rb=%d pitch=%d bpp=%d",
+	               ReadMacInt32(0x016a),
 	               width, height, depth, row_bytes, pitch, s_bits_per_pixel);
 	return 0;
 }
@@ -712,7 +729,12 @@ void MetalCompositorPresent(void)
 	const uint64_t now_usec = compositor_now_usec();
 	const uint64_t cadence_usec = GfxFramePacingClampCadenceUsec(
 		vbl_source_get_cadence_usec());
-	const bool do_draw = s_last_present_usec == 0 ||
+	/* A pending classic-framebuffer upload (forced after a depth switch that
+	 * invalidated the upload baseline) must not be starved by the cadence
+	 * gate — otherwise the first 16bpp frame after a mid-movie SetDepth holds
+	 * on screen for the full cadence window (Descent II intro hitch). */
+	const bool do_draw = !s_classic_fb_texture_valid ||
+	                     s_last_present_usec == 0 ||
 	                     now_usec - s_last_present_usec >= cadence_usec;
 
 	/* Drive VBL secondary callbacks (DSp drains etc.) every call. */
@@ -807,6 +829,58 @@ void MetalCompositorPresent(void)
 
 	GfxGLDeviceSwap();
 
+#if DESCENT_HITCH_DEBUG
+	/* Present heartbeat (throttled). Confirms the emul-thread present path is
+	 * actually swapping frames during a suspected freeze. The two hashes both
+	 * sample s_buffer: fbHash over the full frame, sBufRegion over just the
+	 * movie sub-rect (rows 60..372) that Cinepak writes, so we can tell a
+	 * content freeze from a GPU-upload freeze. */
+	{
+		static uint64_t s_hb_last_usec = 0;
+		static uint64_t s_hb_frames = 0;
+		++s_hb_frames;
+		const uint64_t hb_now = compositor_now_usec();
+		if (s_hb_last_usec == 0)
+			s_hb_last_usec = hb_now;
+		if (hb_now - s_hb_last_usec >= 250000) {
+			uint32_t fbhash = 2166136261u;
+			uint32_t regionhash = 2166136261u;
+			uint32_t macRegion = 2166136261u;   /* same region via live VM map */
+			const size_t vb = visible_framebuffer_bytes();
+			if (s_buffer && vb) {
+				const uint8_t *b = (const uint8_t *)s_buffer;
+				for (size_t i = 0; i < vb; i += 257)
+					fbhash = (fbhash ^ b[i]) * 16777619u;
+				const size_t rb = (size_t)s_row_bytes;
+				if (rb != 0 && vb >= (size_t)372 * rb) {
+					const uint8_t *rbp = b + (size_t)60 * rb;
+					for (size_t i = 0; i < (size_t)312 * rb; i += 257)
+						regionhash = (regionhash ^ rbp[i]) * 16777619u;
+				}
+			}
+			/* Cinepak writes through Mac2HostAddr(guest screen base). If this
+			 * differs from sBufRegion during the freeze, s_buffer is stale
+			 * relative to the live framebuffer mapping (dual mapping). */
+			const uint8_t *mb = Mac2HostAddr(0x20000000);
+			const size_t mrb = (size_t)s_row_bytes;
+			if (mb && mrb != 0 && vb >= (size_t)372 * mrb) {
+				const uint8_t *mrbp = mb + (size_t)60 * mrb;
+				for (size_t i = 0; i < (size_t)312 * mrb; i += 257)
+					macRegion = (macRegion ^ mrbp[i]) * 16777619u;
+			}
+			gfx_debug::emit("[compositor] ",
+				"presentHB frames=%llu dtUsec=%llu tick=%u classicOccluded=%d classicUploaded=%d sBuf=%p macBuf=%p vbBytes=%zu fbHash=%08x sBufRegion=%08x macRegion=%08x",
+				(unsigned long long)s_hb_frames,
+				(unsigned long long)(hb_now - s_hb_last_usec),
+				ReadMacInt32(0x016a),
+				classic_occluded ? 1 : 0, classic_uploaded ? 1 : 0,
+				s_buffer, (void *)mb, vb, fbhash, regionhash, macRegion);
+			s_hb_last_usec = hb_now;
+			s_hb_frames = 0;
+		}
+	}
+#endif
+
 	/* Update present rect to full window for cursor mapping. */
 	atomic_store_explicit(&s_present_origin, 0, std::memory_order_relaxed);
 	atomic_store_explicit(&s_present_size,
@@ -826,7 +900,7 @@ void MetalCompositorShutdown(void)
 	dmc_unsubscribe("compositor");
 	s_init = false;
 	s_buffer = nullptr;
-	COMPOSITOR_LOG("Shutdown");
+	COMPOSITOR_LOG("Shutdown tick=%u", ReadMacInt32(0x016a));
 }
 
 int MetalCompositorResize(int width, int height, int depth, int row_bytes,
@@ -858,6 +932,21 @@ int MetalCompositorResize(int width, int height, int depth, int row_bytes,
 int MetalCompositorIsInitialized(void)
 {
 	return s_init ? 1 : 0;
+}
+
+void MetalCompositorReleaseGLContext(void)
+{
+	GfxGLDeviceReleaseCurrent();
+}
+
+int MetalCompositorCurrentMode(int *out_width, int *out_height, int *out_depth)
+{
+	if (!s_init)
+		return 0;
+	if (out_width)  *out_width  = s_width;
+	if (out_height) *out_height = s_height;
+	if (out_depth)  *out_depth  = s_depth;
+	return 1;
 }
 
 int32_t MetalCompositorSubmitFrame(const struct FrameDescriptor *desc)

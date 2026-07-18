@@ -40,6 +40,49 @@
 #define DEBUG 0
 #include "debug.h"
 
+/* Per-tick PPC block-execution accounting (diagnostic). Defined here in the
+ * interpreter's hot block loop; read+reset from gfx_tickprof_boundary() in
+ * sheepshaver_glue.cpp. Self-contained so this core file needs no gfxaccel
+ * header. Toggled by the same GFX_TICKPROF define (default on when unset). */
+#ifndef GFX_TICKPROF_ENABLED
+#define GFX_TICKPROF_ENABLED 1
+#endif
+#if GFX_TICKPROF_ENABLED
+#define GFX_PPC_HIST_N 12
+uint64 gfx_ppc_blocks = 0;
+uint64 gfx_ppc_insns  = 0;
+uint64 gfx_68k_insns  = 0;
+uint32 gfx_ppc_hist_pc[GFX_PPC_HIST_N]  = {0};
+uint32 gfx_ppc_hist_cnt[GFX_PPC_HIST_N] = {0};
+// Associative hot-block counter keyed on 4KB page of the block entry PC.
+static inline void gfx_ppc_hist_add(uint32 pc, uint32 weight)
+{
+	const uint32 key = pc & ~0xfffu;
+	for (int i = 0; i < GFX_PPC_HIST_N; i++) {
+		if (gfx_ppc_hist_cnt[i] == 0) { gfx_ppc_hist_pc[i] = key; gfx_ppc_hist_cnt[i] = weight; return; }
+		if (gfx_ppc_hist_pc[i] == key) { gfx_ppc_hist_cnt[i] += weight; return; }
+	}
+	// Table full: decay all so a new hot page can displace a cold one.
+	for (int i = 0; i < GFX_PPC_HIST_N; i++)
+		if (gfx_ppc_hist_cnt[i] > weight) gfx_ppc_hist_cnt[i] -= weight;
+		else gfx_ppc_hist_cnt[i] = 0;
+}
+// 68k-PC histogram keyed on 256-byte granularity (routine-level).
+uint32 gfx_68k_hist_pc[GFX_PPC_HIST_N]  = {0};
+uint32 gfx_68k_hist_cnt[GFX_PPC_HIST_N] = {0};
+void gfx_68k_hist_add(uint32 pc, uint32 weight)
+{
+	const uint32 key = pc & ~0xffu;
+	for (int i = 0; i < GFX_PPC_HIST_N; i++) {
+		if (gfx_68k_hist_cnt[i] == 0) { gfx_68k_hist_pc[i] = key; gfx_68k_hist_cnt[i] = weight; return; }
+		if (gfx_68k_hist_pc[i] == key) { gfx_68k_hist_cnt[i] += weight; return; }
+	}
+	for (int i = 0; i < GFX_PPC_HIST_N; i++)
+		if (gfx_68k_hist_cnt[i] > weight) gfx_68k_hist_cnt[i] -= weight;
+		else gfx_68k_hist_cnt[i] = 0;
+}
+#endif
+
 #if PPC_PROFILE_GENERIC_CALLS
 uint32 powerpc_cpu::generic_calls_count[PPC_I(MAX)];
 static int generic_calls_ids[PPC_I(MAX)];
@@ -685,6 +728,26 @@ void powerpc_cpu::execute(uint32 entry)
 			// Execute all cached blocks
 		  pdi_execute:
 			for (;;) {
+#if GFX_TICKPROF_ENABLED
+				gfx_ppc_blocks++;
+				gfx_ppc_insns += bi->size;
+				gfx_ppc_hist_add(bi->pc, bi->size);
+				// Each pass through the 68k emulator's opcode-fetch head is exactly
+				// one emulated 68k instruction: a direct, register-free 68k insn count.
+				if (bi->pc == 0x40c66080) {
+					gfx_68k_insns++;
+					// r24 is the live 68k PC here (this block begins with
+					// lhau r27,2(r24)). Throttle-sample it for the hot 68k routine.
+					if ((gfx_68k_insns & 0xff) == 0)
+						gfx_68k_hist_add(gpr(24) & ~0xffu, 1);
+				}
+				// While the ROM 68k emulator (page 0x40b1xxxx) interprets guest 68k
+				// code, the live 68k PC is in PPC r24. Histogram it densely so the
+				// hammered QuickTime 68k routine can be identified.
+				// Sample the live 68k PC (r24) whenever a block begins at the
+				// emulator opcode-fetch head (0x40c66080). Every opcode dispatch
+				// re-enters there, so this is dense and always a real 68k PC.
+#endif
 				const int r = bi->size % 4;
 				di = bi->di + r;
 				int n = (bi->size + 3) / 4;

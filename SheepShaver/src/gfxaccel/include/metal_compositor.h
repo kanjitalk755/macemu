@@ -228,6 +228,24 @@ int MetalCompositorResize(int width, int height, int depth, int row_bytes,
 int MetalCompositorIsInitialized(void);
 
 /*
+ * MetalCompositorCurrentMode.
+ *
+ * Report the width/height/depth the compositor is currently configured for
+ * (what is on screen right now). Any of the out-pointers may be NULL. Returns 1
+ * if the compositor is initialized (values written), 0 otherwise (untouched).
+ *
+ * Used by video_sdl2.cpp to distinguish a depth-only switch (same resolution ->
+ * lightweight MetalCompositorResize) from a resolution switch (full reopen).
+ */
+int MetalCompositorCurrentMode(int *out_width, int *out_height, int *out_depth);
+
+/* Unbind the compositor's GL context from the calling thread so another thread
+ * can make it current (used for an in-place mode switch: the redraw thread
+ * releases it, the emul thread reformats, then the redraw thread re-binds on its
+ * next present via GfxGLDeviceMakeCurrent). No-op on non-GL backends. */
+void MetalCompositorReleaseGLContext(void);
+
+/*
  * MetalCompositorSubmitFrame.
  *
  * Production semantics:

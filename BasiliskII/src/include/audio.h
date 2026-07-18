@@ -29,6 +29,32 @@ using std::vector;
 
 extern int32 AudioDispatch(uint32 params, uint32 ti);
 
+/* Optional: stash 68k A7 so DESCENT_MOVIE_DIAGNOSTICS can log call stacks
+ * from StopSource/PlaySourceBuffer/etc. Safe no-op when diagnostics off. */
+extern void DescentMovieDiagNote68kStack(uint32 a7);
+
+/* ComponentInstance returned by the first successful siSoundClock GetInfo call.
+ * Used by SheepShaver's ComponentDispatch intercept so the movie's sound clock
+ * advances continuously (device time) instead of starting from 0 per source. */
+extern uint32 AudioGetSoundClockCI(void);
+
+/* Service pending INTFLAG_AUDIO from a thrash hot path (e.g. Microseconds).
+ * Reentrancy-safe; no-op if audio is not open or flag not set.
+ * Must not run Time Manager / VIA from thrash (nested moreRtn → illegal PPC). */
+extern void AudioServicePendingInterrupt(void);
+
+/* Shared reentrancy guard for AudioInterrupt. Declared here so the SDL callback
+ * implementation and AudioServicePendingInterrupt agree on whether an interrupt
+ * is already in progress (the crash path: moreRtn → A193 → service audio nested
+ * inside the running AudioInterrupt). */
+extern bool audio_interrupt_in_service;
+
+/* Host-side servicing of a "streaming" source (PlaySourceBuffer start with an
+ * empty PB + moreRtn): the Apple Mixer never mixes such a source, so pull the
+ * chunk stream via moreRtn ourselves and mix it into the fetched block.
+ * Called from AudioInterrupt after GetSourceData. */
+extern void AudioStreamHostMix(uint8 *buf, int *bytes, int want_bytes);
+
 extern bool AudioAvailable;		// Flag: audio output available (from the software point of view)
 
 extern int16 SoundInOpen(uint32 pb, uint32 dce);
@@ -43,9 +69,10 @@ extern void AudioExit(void);
 extern void AudioReset(void);
 
 extern void AudioInterrupt(void);
-#if defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
+/* Declared unconditionally so callers don't depend on QD3D_AUDIO_LOGGING_ENABLED
+ * being defined before audio.h is included (include-order fragility). The
+ * definition and its call sites are still gated by the macro in the .cpp TUs. */
 extern void AudioDiagnosticPoll(void);
-#endif
 
 extern void audio_enter_stream(void);
 extern void audio_exit_stream(void);
@@ -94,7 +121,9 @@ enum {
 	adatData = 168,				// SoundComponentData struct
 	adatMixer = 196,			// Mac address of mixer, returned by adatOpenMixer
 	adatStreamInfo = 200,		// Mac address of stream info, returned by adatGetSourceData
-	SIZEOF_adat = 204
+	adatCallMoreRtn = 204,		// 68k code to call a SoundParamBlock moreRtn (pascal Boolean(pb*))
+	adatStreamPbVar = 216,		// SoundParamBlockPtr variable passed to moreRtn
+	SIZEOF_adat = 220
 };
 
 extern uint32 audio_data;		// Mac address of global data area

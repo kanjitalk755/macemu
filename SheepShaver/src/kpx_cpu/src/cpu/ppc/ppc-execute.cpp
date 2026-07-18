@@ -524,7 +524,7 @@ void powerpc_cpu::execute_fp_arith(uint32 opcode)
 		if (!FPSCR_VE_field::test(fpscr()))
 			fp_classify(d);
 	}
-	
+
 	// Set CR1 (FX, FEX, VX, VOX) if instruction has Rc set
 	if (Rc::test(opcode))
 		record_cr1();
@@ -1700,7 +1700,7 @@ void powerpc_cpu::execute_vector_sum(uint32 opcode)
 	typename VB::type const & vB = VB::const_ref(this, opcode);
 	typename VD::type & vD = VD::ref(this, opcode);
 	typename VD::element_type d;
-	
+
 	switch (SZ) {
 	case 1: // vsum
 		d = VB::get_element(vB, 3);

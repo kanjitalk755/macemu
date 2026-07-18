@@ -35,6 +35,13 @@ extern int ROMType;
 extern bool DecodeROM(uint8 *data, uint32 size);
 extern bool PatchROM(void);
 extern void InstallDrivers(void);
+/* Re-bind A82A to host ClockGetTime stub (SetToolTrap). Safe to call often. */
+extern void InstallComponentDispatchPatch(void);
+
+/* ROM scratch space for the targeted ComponentDispatch fallback thunk.
+ * The inline A82A patch writes the original trap word here and resumes the
+ * 68k at this address when the CI is not the sound clock. */
+extern const uint32 COMPONENT_DISPATCH_PATCH_SPACE;
 
 extern void AddSifter(uint32 type, int16 id);
 extern bool FindSifter(uint32 type, int16 id);

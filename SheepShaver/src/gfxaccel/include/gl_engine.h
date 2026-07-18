@@ -1443,10 +1443,10 @@ extern bool gl_logging_enabled;
 #define GL_METAL_LOG(fmt, ...)  do { if (gl_logging_enabled) os_log(gl_metal_log, fmt, ##__VA_ARGS__); } while (0)
 #define GL_METAL_VLOG(fmt, ...) do { if (gl_logging_enabled && ACCEL_LOG_VERBOSE) os_log(gl_metal_log, fmt, ##__VA_ARGS__); } while (0)
 #else
-#define GL_LOG(fmt, ...)        do { if (gl_logging_enabled) printf("GL: " fmt "\n", ##__VA_ARGS__); } while (0)
-#define GL_VLOG(fmt, ...)       do { if (gl_logging_enabled && ACCEL_LOG_VERBOSE) printf("GL: " fmt "\n", ##__VA_ARGS__); } while (0)
-#define GL_METAL_LOG(fmt, ...)  do { if (gl_logging_enabled) printf("GL_METAL: " fmt "\n", ##__VA_ARGS__); } while (0)
-#define GL_METAL_VLOG(fmt, ...) do { if (gl_logging_enabled && ACCEL_LOG_VERBOSE) printf("GL_METAL: " fmt "\n", ##__VA_ARGS__); } while (0)
+#define GL_LOG(...)        do { if (gl_logging_enabled) GFX_DEBUG_EMIT("GL: ", __VA_ARGS__); } while (0)
+#define GL_VLOG(...)       do { if (gl_logging_enabled && ACCEL_LOG_VERBOSE) GFX_DEBUG_EMIT("GL: ", __VA_ARGS__); } while (0)
+#define GL_METAL_LOG(...)  do { if (gl_logging_enabled) GFX_DEBUG_EMIT("GL_METAL: ", __VA_ARGS__); } while (0)
+#define GL_METAL_VLOG(...) do { if (gl_logging_enabled && ACCEL_LOG_VERBOSE) GFX_DEBUG_EMIT("GL_METAL: ", __VA_ARGS__); } while (0)
 #endif
 #else /* !ACCEL_LOGGING_ENABLED */
 static constexpr bool gl_logging_enabled = false;

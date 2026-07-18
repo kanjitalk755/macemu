@@ -372,6 +372,8 @@ if(ENABLE_GFXACCEL)
     "${GA}/rave_draw_context.cpp"
     "${GA}/rave_engine.cpp"
     "${GA}/rave_thunks.cpp"
+    "${GA}/cinepak_decoder.cpp"
+    "${GA}/cinepak_hooks.cpp"
   )
 
   # Resolve backend

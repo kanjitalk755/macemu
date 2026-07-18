@@ -314,8 +314,8 @@ void sigusr2_handler(int sig, siginfo_t *sip, void *scp)
 void *TOC;
 void *R13;
 
-extern "C" void EmulOp(void *r, uint32 pc, int selector);
-void EmulOp(void *r, uint32 pc, int selector)
+extern "C" void EmulOp(void *r, uint32 *pc, int selector);
+void EmulOp(void *r, uint32 *pc, int selector)
 {
 }
 

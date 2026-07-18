@@ -8,6 +8,7 @@
 #define GFX_LOG_H
 
 #include "accel_logging.h"
+#include "gfx_debug_sink.h"
 #include <stdio.h>
 
 #ifdef __APPLE__
@@ -17,11 +18,13 @@
 #define GFX_OS_LOG_AVAILABLE 0
 #endif
 
-/* Generic fprintf-backed logger used by OpenGL backends and non-Apple builds. */
+/* Generic logger (runtime `tag`) routed through the shared stderr +
+ * OutputDebugStringA sink. The tag is dynamic, so it is folded into the body
+ * with an empty prefix. */
 #define GFX_FPRINTF_LOG(tag, fmt, ...) \
-	do { fprintf(stderr, "[%s] " fmt "\n", tag, ##__VA_ARGS__); } while (0)
+	::gfx_debug::emit("", "[%s] " fmt, (tag), ##__VA_ARGS__)
 
 #define GFX_FPRINTF_ERR(tag, fmt, ...) \
-	do { fprintf(stderr, "[%s ERROR] " fmt "\n", tag, ##__VA_ARGS__); } while (0)
+	::gfx_debug::emit("", "[%s ERROR] " fmt, (tag), ##__VA_ARGS__)
 
 #endif /* GFX_LOG_H */

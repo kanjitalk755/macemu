@@ -219,7 +219,7 @@ void block_cache< block_info, block_allocator >::add_to_cl_list(block_info *bi)
 	if (cache_tags[cl])
 		cache_tags[cl]->prev_same_cl_p = &bce->next_same_cl;
 	bce->next_same_cl = cache_tags[cl];
-	
+
 	cache_tags[cl] = bce;
 	bce->prev_same_cl_p = &cache_tags[cl];
 }
@@ -245,11 +245,11 @@ template< class block_info, template<class T> class block_allocator >
 void block_cache< block_info, block_allocator >::add_to_active_list(block_info *bi)
 {
 	entry * bce = (entry *)bi;
-	
+
 	if (active)
 		active->prev_p = &bce->next;
 	bce->next = active;
-	
+
 	active = bce;
 	bce->prev_p = &active;
 }
@@ -258,11 +258,11 @@ template< class block_info, template<class T> class block_allocator >
 void block_cache< block_info, block_allocator >::add_to_dormant_list(block_info *bi)
 {
 	entry * bce = (entry *)bi;
-	
+
 	if (dormant)
 		dormant->prev_p = &bce->next;
 	bce->next = dormant;
-	
+
 	dormant = bce;
 	bce->prev_p = &dormant;
 }

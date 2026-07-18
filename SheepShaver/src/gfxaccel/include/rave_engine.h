@@ -519,13 +519,13 @@ extern bool rave_logging_enabled;
 		os_log(rave_log, fmt, ##__VA_ARGS__); \
 } while (0)
 #else
-#define RAVE_LOG(fmt, ...) do { \
+#define RAVE_LOG(...) do { \
 	if (rave_logging_enabled) \
-		printf("RAVE: " fmt "\n", ##__VA_ARGS__); \
+		GFX_DEBUG_EMIT("RAVE: ", __VA_ARGS__); \
 } while (0)
-#define RAVE_VLOG(fmt, ...) do { \
+#define RAVE_VLOG(...) do { \
 	if (rave_logging_enabled && ACCEL_LOG_VERBOSE) \
-		printf("RAVE: " fmt "\n", ##__VA_ARGS__); \
+		GFX_DEBUG_EMIT("RAVE: ", __VA_ARGS__); \
 } while (0)
 #endif
 

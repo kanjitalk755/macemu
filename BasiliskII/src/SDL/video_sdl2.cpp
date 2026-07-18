@@ -70,6 +70,7 @@
 #include "video_blit.h"
 #include "vm_alloc.h"
 #include "cdrom.h"
+#include "audio.h"
 
 #if defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED
 #include "qd3d_init_logging.h"
@@ -88,6 +89,8 @@ static bool video_descent_ii_is_current_application()
 
 #if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
 #include "metal_compositor.h"
+#include "gl_device.h"
+#include "gfx_debug_sink.h"
 #include "display_mode_controller.h"
 #include "gfxaccel_resources.h"
 #include "nqd_accel.h"
@@ -742,6 +745,74 @@ static float get_mag_rate()
 	return m < 1 ? 1 : m > 4 ? 4 : m;
 }
 
+/* (Re)create the guest + host SDL surfaces for the given depth, wrapping the
+ * current the_buffer. Frees any existing pair first. Requires sdl_texture and
+ * sdl_renderer to already exist (i.e. the window/GL context stay untouched).
+ * Returns guest_surface, or NULL on failure. Shared by init_sdl_video and the
+ * in-place depth switch so the latter never rebuilds the window/GL context. */
+static SDL_Surface *create_guest_host_surfaces(int width, int height, int depth, int pitch)
+{
+	delete_sdl_video_surfaces();
+
+	switch (depth) {
+		case VIDEO_DEPTH_1BIT:
+		case VIDEO_DEPTH_2BIT:
+		case VIDEO_DEPTH_4BIT:
+			guest_surface = SDL_CreateRGBSurface(0, width, height, 8, 0, 0, 0, 0);
+			break;
+		case VIDEO_DEPTH_8BIT:
+#ifdef ENABLE_VOSF
+			guest_surface = SDL_CreateRGBSurface(0, width, height, 8, 0, 0, 0, 0);
+#else
+			guest_surface = SDL_CreateRGBSurfaceFrom(the_buffer, width, height, 8, pitch, 0, 0, 0, 0);
+#endif
+			break;
+		case VIDEO_DEPTH_16BIT:
+			guest_surface = SDL_CreateRGBSurface(0, width, height, 16, 0xf800, 0x07e0, 0x001f, 0);
+			break;
+		case VIDEO_DEPTH_32BIT:
+#ifdef ENABLE_VOSF
+			guest_surface = SDL_CreateRGBSurface(0, width, height, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
+#else
+			guest_surface = SDL_CreateRGBSurfaceFrom(the_buffer, width, height, 32, pitch, 0xff000000, 0x00ff0000, 0x0000ff00, 0x000000ff);
+#endif
+			host_surface = guest_surface;
+			break;
+		default:
+			printf("WARNING: An unsupported depth of %d was used\n", depth);
+			return NULL;
+	}
+	if (!guest_surface)
+		return NULL;
+
+	/* On the GL/compositor path there is no SDL renderer/texture (the compositor
+	 * presents from the_buffer via its own GL context). host_surface is only
+	 * needed for the SDL-renderer blit path, so skip it when there's no texture
+	 * to query its format from. */
+	if (!host_surface && sdl_texture == NULL)
+		host_surface = guest_surface;
+
+	if (!host_surface) {
+		Uint32 texture_format;
+		if (SDL_QueryTexture(sdl_texture, &texture_format, NULL, NULL, NULL) != 0) {
+			printf("ERROR: Unable to get the SDL texture's pixel format: %s\n", SDL_GetError());
+			return NULL;
+		}
+		int bpp;
+		Uint32 Rmask, Gmask, Bmask, Amask;
+		if (!SDL_PixelFormatEnumToMasks(texture_format, &bpp, &Rmask, &Gmask, &Bmask, &Amask)) {
+			printf("ERROR: Unable to determine format for host SDL_surface: %s\n", SDL_GetError());
+			return NULL;
+		}
+		host_surface = SDL_CreateRGBSurface(0, width, height, bpp, Rmask, Gmask, Bmask, Amask);
+		if (!host_surface) {
+			printf("ERROR: Unable to create host SDL_surface: %s\n", SDL_GetError());
+			return NULL;
+		}
+	}
+	return guest_surface;
+}
+
 static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flags, int pitch)
 {
     if (guest_surface) {
@@ -906,7 +977,6 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
         shutdown_sdl_video();
         return NULL;
     }
-
     if (!host_surface) {
     	Uint32 texture_format;
     	if (SDL_QueryTexture(sdl_texture, &texture_format, NULL, NULL, NULL) != 0) {
@@ -914,7 +984,6 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
     		shutdown_sdl_video();
     		return NULL;
     	}
-
     	int bpp;
     	Uint32 Rmask, Gmask, Bmask, Amask;
     	if (!SDL_PixelFormatEnumToMasks(texture_format, &bpp, &Rmask, &Gmask, &Bmask, &Amask)) {
@@ -922,7 +991,6 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
     		shutdown_sdl_video();
     		return NULL;
     	}
-
         host_surface = SDL_CreateRGBSurface(0, width, height, bpp, Rmask, Gmask, Bmask, Amask);
         if (!host_surface) {
         	printf("ERROR: Unable to create host SDL_surface: %s\n", SDL_GetError());
@@ -1123,8 +1191,11 @@ void driver_base::init()
 	}
 #endif
 	if (!use_vosf) {
-		// Allocate memory for frame buffer
-		the_buffer_size = (aligned_height + 2) * pitch;
+		// Allocate memory for frame buffer. Size to the worst-case depth (32bpp)
+		// so an in-place depth switch (switch_depth_in_place) can reinterpret the
+		// SAME allocation at a deeper mode without ever moving the host address
+		// (which would break the guest's fixed Mac2HostAddr framebuffer mapping).
+		the_buffer_size = (aligned_height + 2) * (VIDEO_MODE_X << 2);
 		the_buffer_copy = (uint8 *)calloc(1, the_buffer_size);
 		the_buffer = (uint8 *)vm_acquire_framebuffer(the_buffer_size);
 		if (the_buffer == VM_MAP_FAILED || the_buffer == NULL || the_buffer_copy == NULL) {
@@ -1913,6 +1984,35 @@ void VideoVBL(void)
 	present_sdl_video();
 #endif
 
+	/* Light video liveness pulse (movie phase onward, capped): sparse hash
+	 * of the Mac framebuffer per VBL so a plain run shows exactly when the
+	 * guest stops/resumes drawing, without heavy diagnostics. */
+	{
+		static uint32 vid_pulse_n;
+		static uint32 vid_prev_hash;
+		static uint32 vid_lines;
+		static bool vid_armed;
+		if (AudioStatus.num_sources >= 1)
+			vid_armed = true;
+		if (vid_armed && vid_lines < 600 && the_buffer && the_buffer_size) {
+			vid_pulse_n++;
+			uint32 hash = 2166136261u;
+			const uint32 *fb = (const uint32 *)the_buffer;
+			const uint32 words = the_buffer_size / 4;
+			for (uint32 i = 0; i < words; i += 61)
+				hash = (hash ^ fb[i]) * 16777619u;
+			const bool changed = hash != vid_prev_hash;
+			if (changed || (vid_pulse_n & 15) == 0) {
+				vid_lines++;
+				fprintf(stderr,
+				        "[QD3D:wait] vidPulse n=%u tick=%u changed=%d hash=%08x\n",
+				        vid_pulse_n, ReadMacInt32(0x016a), changed ? 1 : 0, hash);
+				fflush(stderr);
+			}
+			vid_prev_hash = hash;
+		}
+	}
+
 	// Temporarily give up frame buffer lock (this is the point where
 	// we are suspended when the user presses Ctrl-Tab)
 	UNLOCK_FRAME_BUFFER;
@@ -2187,12 +2287,126 @@ static bool is_cursor_in_mac_screen()
 }
 #endif
 
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+/* Fast path for a depth-only mode switch at the same resolution (e.g. Descent
+ * II's movie player calling SetDepth(16) mid-playback, 8bpp -> 16bpp). The full
+ * video_close()/video_open() tears down and rebuilds the SDL window and the GL
+ * compositor (shader recompile + VBL thread restart) — a single multi-hundred-ms
+ * host stall that freezes the movie. Here we keep the window, GL context,
+ * shaders and VBL thread alive and only reallocate the frame buffer + reformat
+ * the compositor texture via MetalCompositorResize. Returns true if handled. */
+static bool switch_depth_in_place(SDL_monitor_desc &monitor)
+{
+	const VIDEO_MODE &mode = monitor.get_current_mode();
+	if (!drv || !MetalCompositorIsInitialized()) {
+		gfx_debug::emit("[video] ", "switchDepthInPlace SKIP drv=%p compInit=%d",
+		                (void *)drv, MetalCompositorIsInitialized());
+		return false;
+	}
+	/* Same resolution only; a size change still needs the full reopen. The
+	 * compositor is the source of truth for what is currently on screen —
+	 * drv->mode already reflects the NEW mode by the time we run. */
+	int live_x = 0, live_y = 0, live_depth = 0;
+	if (!MetalCompositorCurrentMode(&live_x, &live_y, &live_depth)) {
+		gfx_debug::emit("[video] ", "switchDepthInPlace SKIP no-current-mode");
+		return false;
+	}
+	if ((int)VIDEO_MODE_X != live_x || (int)VIDEO_MODE_Y != live_y) {
+		gfx_debug::emit("[video] ", "switchDepthInPlace SKIP res new=%dx%d live=%dx%d newDepth=%d liveDepth=%d",
+		                (int)VIDEO_MODE_X, (int)VIDEO_MODE_Y, live_x, live_y,
+		                (int)VIDEO_MODE_DEPTH, live_depth);
+		return false;
+	}
+
+	const uint64 t0 = GetTicks_usec();
+
+	int pitch = VIDEO_MODE_X;
+	switch (VIDEO_MODE_DEPTH) {
+		case VIDEO_DEPTH_16BIT: pitch <<= 1; break;
+		case VIDEO_DEPTH_32BIT: pitch <<= 2; break;
+	}
+	const int aligned_height = (VIDEO_MODE_Y + 15) & ~15;
+	const uint32 new_size = (aligned_height + 2) * pitch;
+
+	/* VOSF buffer/handler swap is out of scope; fall back to the full path. */
+	if (use_vosf)
+		return false;
+
+	/* CRITICAL: never move the_buffer. The guest framebuffer is a fixed Mac
+	 * address (screen_base) whose host mapping (Mac2HostAddr) is established
+	 * once; reallocating the_buffer at a new host address aliases the guest's
+	 * decoder writes away from what the compositor reads (movie freeze). The
+	 * allocation is sized to worst-case depth at driver init, so a deeper mode
+	 * always fits. If it somehow does not, decline to the full reopen. */
+	if (new_size > the_buffer_size) {
+		gfx_debug::emit("[video] ", "switchDepthInPlace DECLINE size new=%u cap=%u",
+		                (unsigned)new_size, (unsigned)the_buffer_size);
+		return false;
+	}
+
+	/* Caller (video_mode_change) has already parked the redraw thread, which
+	 * released the compositor's GL context at its park point. Make it current on
+	 * THIS thread so we can reformat compositor resources; the redraw thread
+	 * re-binds automatically on its next present. */
+	if (!GfxGLDeviceMakeCurrent()) {
+		gfx_debug::emit("[video] ", "switchDepthInPlace DECLINE make-current-failed");
+		return false;
+	}
+
+	set_mac_frame_buffer(monitor, VIDEO_MODE_DEPTH, true);
+
+	/* Reformat the compositor texture FIRST, while our GL context binding is
+	 * fresh. create_guest_host_surfaces below touches the SDL renderer/texture,
+	 * which can steal the current GL context — doing it after would make the
+	 * compositor's internal MakeCurrent fail (rc=-1). Same host buffer, new
+	 * depth/pitch/row_bytes. */
+	int rc = MetalCompositorResize(VIDEO_MODE_X, VIDEO_MODE_Y, VIDEO_MODE_DEPTH,
+	                               VIDEO_MODE_ROW_BYTES, pitch, the_buffer, the_buffer_size);
+	if (rc == 0)
+		drv->s = create_guest_host_surfaces(VIDEO_MODE_X, VIDEO_MODE_Y, VIDEO_MODE_DEPTH, pitch);
+
+	bool ok;
+	if (rc != 0 || drv->s == NULL) {
+		set_mac_frame_buffer(monitor, live_depth, true);
+		int live_pitch = live_x;
+		if (live_depth == VIDEO_DEPTH_16BIT) live_pitch <<= 1;
+		else if (live_depth == VIDEO_DEPTH_32BIT) live_pitch <<= 2;
+		drv->s = create_guest_host_surfaces(live_x, live_y, live_depth, live_pitch);
+		ok = false;
+	} else {
+		ok = true;
+	}
+
+	/* Hand the context back so the redraw thread can re-bind it on resume. */
+	GfxGLDeviceReleaseCurrent();
+
+#if DESCENT_HITCH_DEBUG
+	gfx_debug::emit("[video] ", "switchDepthInPlace %s depth=%d %dx%d rc=%d usec=%llu buf=%p screenBase=%08x",
+	                ok ? "OK" : "DECLINE", (int)VIDEO_MODE_DEPTH,
+	                (int)VIDEO_MODE_X, (int)VIDEO_MODE_Y, rc,
+	                (unsigned long long)(GetTicks_usec() - t0),
+	                (void *)the_buffer, (unsigned)screen_base);
+#endif
+	return ok;
+}
+#endif
+
 void SDL_monitor_desc::switch_to_current_mode(void)
 {
-	// Close and reopen display
 	LOCK_EVENTS;
-	video_close();
-	video_open();
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+	/* Try the lightweight in-place depth switch first (movie SetDepth path). */
+	if (!(drv && switch_depth_in_place(*this)))
+#endif
+	{
+		// Full close and reopen display (resolution change, or fast path declined)
+		const uint64 t0 = GetTicks_usec();
+		video_close();
+		video_open();
+		QD3D_WAIT_LOG("switchModeFull tick=%u usec=%llu",
+		              ReadMacInt32(0x016a),
+		              (unsigned long long)(GetTicks_usec() - t0));
+	}
 	UNLOCK_EVENTS;
 
 	if (drv == NULL) {
@@ -2805,6 +3019,16 @@ static void update_display_static(driver_base *drv)
 // XXX use NQD bounding boxes to help detect dirty areas?
 static void update_display_static_bbox(driver_base *drv)
 {
+	if (drv->s == NULL)
+		return;
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+	/* Compositor presents from the_buffer via GL; the SDL-surface blit here is
+	 * vestigial and its drv->s pitch can mismatch the guest row bytes after an
+	 * in-place depth switch (overrun). Skip it when the compositor is active. */
+	if (MetalCompositorIsInitialized())
+		return;
+#endif
+
 	const VIDEO_MODE &mode = drv->mode;
 	bool blit = (int)VIDEO_MODE_DEPTH == VIDEO_DEPTH_16BIT;
 
@@ -3041,6 +3265,13 @@ static int redraw_func(void *arg)
 
 		// Pause if requested (during video mode switches)
 		if (thread_stop_req) {
+#if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
+			// Release the GL context so the emul thread can reformat compositor
+			// resources during an in-place depth switch. Re-bound automatically
+			// on the next present via GfxGLDeviceMakeCurrent.
+			if (MetalCompositorIsInitialized())
+				MetalCompositorReleaseGLContext();
+#endif
 			thread_stop_ack = true;
 			continue;
 		}

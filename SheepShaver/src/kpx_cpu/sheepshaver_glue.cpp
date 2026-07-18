@@ -44,19 +44,16 @@ extern "C" void catalyst_pump_appkit_events(void);
 #include "cpu/ppc/ppc-instructions.hpp"
 #include "thunks.h"
 
-#if defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED
+/* Always pull the header so DESCENT_MOVIE_DIAGNOSTICS works without cmake
+ * wait-logging. Channel macros still compile out when their switches are off. */
 #include "qd3d_init_logging.h"
+#if QD3D_WAIT_LOGGING_ENABLED
 static bool cpu_descent_ii_is_current_application()
 {
 	return ReadMacInt32(0x0910) == 0x0a446573 &&
 	       ReadMacInt32(0x0914) == 0x63656e74 &&
 	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
 }
-#else
-#ifndef QD3D_WAIT_LOGGING_ENABLED
-#define QD3D_WAIT_LOGGING_ENABLED 0
-#endif
-#define QD3D_WAIT_LOG(...) do { } while (0)
 #endif
 
 // Used for NativeOp trampolines
@@ -69,6 +66,7 @@ static bool cpu_descent_ii_is_current_application()
 #include "rave_engine.h"
 #include "gl_engine.h"
 #include "dsp_engine.h"
+#include "cinepak_hooks.h"
 #endif
 
 #include <stdio.h>
@@ -210,6 +208,7 @@ public:
 
 	// Diagnostic accessors (crash-context dump, vm watch logging)
 	uint32 cur_pc()			{ return pc(); }
+	uint32 cur_lr()			{ return lr(); }
 	uint32 cur_gpr(int i)	{ return gpr(i); }
 
 	// Make sure the SIGSEGV handler can access CPU registers
@@ -260,6 +259,111 @@ void sheepshaver_cpu::call_execute_emul_op(powerpc_cpu * cpu, uint32 emul_op) {
 	static_cast<sheepshaver_cpu *>(cpu)->execute_emul_op(emul_op);
 }
 
+#if GFX_TICKPROF_ENABLED
+// PPC block-execution counters, defined in the interpreter hot loop (ppc-cpu.cpp).
+#define GFX_PPC_HIST_N 12
+extern uint64 gfx_ppc_blocks;
+extern uint64 gfx_ppc_insns;
+extern uint64 gfx_68k_insns;
+extern uint32 gfx_ppc_hist_pc[GFX_PPC_HIST_N];
+extern uint32 gfx_ppc_hist_cnt[GFX_PPC_HIST_N];
+extern uint32 gfx_68k_hist_pc[GFX_PPC_HIST_N];
+extern uint32 gfx_68k_hist_cnt[GFX_PPC_HIST_N];
+/*
+ *  Per-VIA-tick emu-thread wall-time accounting (diagnostic).
+ *
+ *  Buckets accumulate host usec spent inside each emu-thread consumer. At every
+ *  guest-tick boundary (0x016a advances) the totals are logged and reset. The
+ *  reported "unacc" = tick wall-clock minus the sum of the buckets, i.e. time
+ *  spent in the raw PPC/68k interpreter loop (or anything unbracketed). All
+ *  single-thread (emul) access — no locking.
+ */
+namespace {
+	struct GfxTickProf {
+		uint64 emul_op_us;   uint32 emul_op_n;
+		uint64 native_us;    uint32 native_n;   // RAVE/GL/DSp dispatch
+		uint64 cinepak_us;   uint32 cinepak_n;
+		uint32 last_tick;
+		uint64 tick_wall0;
+	};
+	GfxTickProf g_tp = { 0,0, 0,0, 0,0, 0xffffffff, 0 };
+
+	// Scoped timer: adds elapsed usec into *acc and bumps *n on scope exit.
+	struct GfxTickScope {
+		uint64 *acc; uint32 *n; uint64 t0;
+		GfxTickScope(uint64 *a, uint32 *c) : acc(a), n(c), t0(GetTicks_usec()) {}
+		~GfxTickScope() { *acc += GetTicks_usec() - t0; ++*n; }
+	};
+}
+
+// Called from every emu-thread funnel; emits + resets the buckets when the guest
+// 60Hz tick advances so each line describes exactly one guest tick.
+static void gfx_tickprof_boundary()
+{
+	const uint32 tick = ReadMacInt32(0x016a);
+	if (tick == g_tp.last_tick)
+		return;
+	const uint64 now = GetTicks_usec();
+	// Emit only while audio is active (the movie phase) so the log stays focused
+	// on the handoff; accumulation is always on but idle-desktop ticks are quiet.
+	if (g_tp.last_tick != 0xffffffff && AudioStatus.num_sources >= 1) {
+		const uint64 wall = now - g_tp.tick_wall0;
+		const uint64 acct = g_tp.emul_op_us + g_tp.native_us + g_tp.cinepak_us;
+		const uint64 unacc = wall > acct ? wall - acct : 0;
+		// Find the two hottest 4KB code pages this tick.
+		int h0 = -1, h1 = -1;
+		for (int i = 0; i < GFX_PPC_HIST_N; i++) {
+			if (gfx_ppc_hist_cnt[i] == 0) continue;
+			if (h0 < 0 || gfx_ppc_hist_cnt[i] > gfx_ppc_hist_cnt[h0]) { h1 = h0; h0 = i; }
+			else if (h1 < 0 || gfx_ppc_hist_cnt[i] > gfx_ppc_hist_cnt[h1]) { h1 = i; }
+		}
+		int k0 = -1;
+		for (int i = 0; i < GFX_PPC_HIST_N; i++)
+			if (gfx_68k_hist_cnt[i] && (k0 < 0 || gfx_68k_hist_cnt[i] > gfx_68k_hist_cnt[k0])) k0 = i;
+		// One-shot dump of the hottest PPC code pages (once per distinct page) so
+		// pages absent from the on-disk ROM can be disassembled.
+		static uint32 tp_dumped[16] = {0}; static int tp_dumped_n = 0;
+		uint32 dump_pgs[3] = {
+			(h0 >= 0 && gfx_ppc_hist_cnt[h0] > 300000) ? gfx_ppc_hist_pc[h0] : 0,
+			(h1 >= 0 && gfx_ppc_hist_cnt[h1] > 300000) ? gfx_ppc_hist_pc[h1] : 0,
+			(k0 >= 0 && gfx_68k_hist_cnt[k0] > 5000) ? (gfx_68k_hist_pc[k0] & ~0xfffu) : 0 };
+		for (int d = 0; d < 3; d++) {
+			uint32 pg = dump_pgs[d];
+			if (!pg) continue;
+			bool seen = false;
+			for (int i = 0; i < tp_dumped_n; i++) if (tp_dumped[i] == pg) seen = true;
+			if (!seen && tp_dumped_n < 16) {
+				tp_dumped[tp_dumped_n++] = pg;
+				char nm[64]; snprintf(nm, sizeof nm, "hotpage_%08x.bin", pg);
+				FILE *f = fopen(nm, "wb");
+				if (f) { for (uint32 a = pg; a < pg + 0x1000; a++) fputc(ReadMacInt8(a), f); fclose(f); }
+				QD3D_WAIT_LOG("tickProf dumped hotpage=0x%08x -> %s", pg, nm);
+			}
+		}
+		QD3D_WAIT_LOG("tickProf tick=%u wallUs=%llu emulOp=%llu/%u native=%llu/%u "
+		              "cinepak=%llu/%u unaccUs=%llu ppcInsns=%llu blocks=%llu "
+		              "insns68k=%llu hot0=0x%08x/%u k68kCum=0x%08x/%u",
+		              g_tp.last_tick, (unsigned long long)wall,
+		              (unsigned long long)g_tp.emul_op_us, g_tp.emul_op_n,
+		              (unsigned long long)g_tp.native_us, g_tp.native_n,
+		              (unsigned long long)g_tp.cinepak_us, g_tp.cinepak_n,
+		              (unsigned long long)unacc,
+		              (unsigned long long)gfx_ppc_insns, (unsigned long long)gfx_ppc_blocks,
+		              (unsigned long long)gfx_68k_insns,
+		              h0 >= 0 ? gfx_ppc_hist_pc[h0] : 0, h0 >= 0 ? gfx_ppc_hist_cnt[h0] : 0,
+		              k0 >= 0 ? gfx_68k_hist_pc[k0] : 0, k0 >= 0 ? gfx_68k_hist_cnt[k0] : 0);
+	}
+	g_tp.emul_op_us = g_tp.native_us = g_tp.cinepak_us = 0;
+	g_tp.emul_op_n = g_tp.native_n = g_tp.cinepak_n = 0;
+	gfx_ppc_insns = gfx_ppc_blocks = gfx_68k_insns = 0;
+	for (int i = 0; i < GFX_PPC_HIST_N; i++) {
+		gfx_ppc_hist_pc[i] = 0; gfx_ppc_hist_cnt[i] = 0;
+	}
+	g_tp.last_tick = tick;
+	g_tp.tick_wall0 = now;
+}
+#endif /* GFX_TICKPROF_ENABLED */
+
 // Execute EMUL_OP routine
 void sheepshaver_cpu::execute_emul_op(uint32 emul_op)
 {
@@ -273,7 +377,17 @@ void sheepshaver_cpu::execute_emul_op(uint32 emul_op)
 	r68.a[7] = gpr(1);
 	uint32 saved_cr = get_cr() & 0xff9fffff; // mask_operand::compute(11, 8)
 	uint32 saved_xer = get_xer();
-	EmulOp(&r68, gpr(24), emul_op);
+	uint32 pc = gpr(24);
+#if GFX_TICKPROF_ENABLED
+	gfx_tickprof_boundary();
+	// r24 is the real 68k PC at every EMUL_OP entry. Histogram it so the 68k
+	// routine issuing the traps QuickTime hammers is identified (routine-level).
+	{ extern void gfx_68k_hist_add(uint32, uint32); gfx_68k_hist_add(pc, 1); }
+	{ GfxTickScope _tp(&g_tp.emul_op_us, &g_tp.emul_op_n);
+	  EmulOp(&r68, &pc, emul_op); }
+#else
+	EmulOp(&r68, &pc, emul_op);
+#endif
 	set_cr(saved_cr);
 	set_xer(saved_xer);
 	for (int i = 0; i < 8; i++)
@@ -281,6 +395,7 @@ void sheepshaver_cpu::execute_emul_op(uint32 emul_op)
 	for (int i = 0; i < 7; i++)
 		gpr(16 + i) = r68.a[i];
 	gpr(1) = r68.a[7];
+	gpr(24) = pc;
 	WriteMacInt32(XLM_RUN_MODE, MODE_68K);
 }
 
@@ -789,6 +904,63 @@ inline void sheepshaver_cpu::get_resource(uint32 old_get_resource)
 // PowerPC CPU emulator
 static sheepshaver_cpu *ppc_cpu = NULL;
 
+#if QD3D_WAIT_LOGGING_ENABLED && defined(_WIN32)
+/* Host-timer PPC profiler.
+ *
+ * The IRQ-driven guest sampler cannot see inside a masked-IRQ freeze (the movie
+ * one-time OPEN setup runs multiple seconds of PPC with interrupts off, so the
+ * guest tick counter and the VIA sampler both stall). This host thread reads the
+ * live PPC pc/lr on a wall-clock cadence, independent of the guest, so whatever
+ * QuickTime routine burns those seconds is captured by address.
+ *
+ * The reads are intentionally lock-free and racy: we only need approximate hot
+ * PCs, and pc()/lr() are single 32-bit fields. Gated + Windows-only (diagnostic).
+ */
+#include <windows.h>
+static volatile bool s_ppc_prof_run = false;
+static HANDLE s_ppc_prof_thread = NULL;
+
+static DWORD WINAPI ppc_profiler_main(LPVOID)
+{
+	uint32 last_tick = 0;
+	uint64 last_tick_wall = GetTicks_usec();
+	uint32 stall_samples = 0;
+	while (s_ppc_prof_run) {
+		Sleep(2);
+		sheepshaver_cpu *cpu = ppc_cpu;
+		if (!cpu)
+			continue;
+		const uint32 tick = ReadMacInt32(0x016a);
+		const uint64 now = GetTicks_usec();
+		if (tick != last_tick) {
+			last_tick = tick;
+			last_tick_wall = now;
+			stall_samples = 0;
+			continue;
+		}
+		/* Guest tick has not advanced in real time: a wall-clock stall. Sample
+		 * every loop (~2 ms) once the stall passes ~24 ms so even a short
+		 * movie-phase hitch (a few dropped frames) yields a PC trail. Cap the
+		 * per-stall sample count so a genuine long freeze cannot flood. */
+		if (now - last_tick_wall >= 24000ull && stall_samples < 64) {
+			QD3D_WAIT_LOG("PPCprof STALL pc=0x%08x lr=0x%08x r2=0x%08x stallUs=%llu tick=%u",
+			              cpu->cur_pc(), cpu->cur_lr(), cpu->cur_gpr(2),
+			              (unsigned long long)(now - last_tick_wall), tick);
+		}
+		stall_samples++;
+	}
+	return 0;
+}
+
+static void ppc_profiler_start(void)
+{
+	if (s_ppc_prof_thread)
+		return;
+	s_ppc_prof_run = true;
+	s_ppc_prof_thread = CreateThread(NULL, 0, ppc_profiler_main, NULL, 0, NULL);
+}
+#endif /* QD3D_WAIT_LOGGING_ENABLED && _WIN32 */
+
 void FlushCodeCache(uintptr start, uintptr end)
 {
 	D(bug("FlushCodeCache(%08x, %08x)\n", start, end));
@@ -1017,6 +1189,10 @@ void init_emul_ppc(void)
 
 #if EMUL_TIME_STATS
 	emul_start_time = clock();
+#endif
+
+#if QD3D_WAIT_LOGGING_ENABLED && defined(_WIN32) && defined(ENABLE_PPC_PROFILER)
+	ppc_profiler_start();
 #endif
 }
 
@@ -1361,6 +1537,10 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 	native_exec_count++;
 	const clock_t native_exec_start = clock();
 #endif
+#if GFX_TICKPROF_ENABLED
+	gfx_tickprof_boundary();
+	const uint64 tp_native_t0 = GetTicks_usec();
+#endif
 
 	switch (selector) {
 	case NATIVE_PATCH_NAME_REGISTRY:
@@ -1498,6 +1678,31 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 			WriteMacInt32(wide + 0, hi);
 			WriteMacInt32(wide + 4, lo);
 		}
+#if ENABLE_NATIVE_MICROSECONDS_PATCH
+		/* Keep mixer rotating if guest thrash-polls Microseconds from PPC.
+		 * NATIVE_MICROSECONDS is FN=1: execute_sheep does pc() = lr() right
+		 * after this returns. AudioServicePendingInterrupt may run a source's
+		 * moreRtn via Execute68k (nested guest execution), which clobbers
+		 * lr/ctr and the stack — without save/restore the FN=1 return lands on
+		 * a garbage PC (observed: illegal 'mfsr' 0x7c0004a6 mid-movie). Mirror
+		 * the RAVE/GL/DSp/Cinepak dispatch guard.
+		 *
+		 * The whole thrash-mixer path is superseded by the native Cinepak
+		 * decoder and gated off (ENABLE_NATIVE_MICROSECONDS_PATCH, default 0),
+		 * since the InterfaceLib patch that reaches this op is no longer
+		 * installed. Kept behind the switch to revive the timing experiment. */
+		{
+			uint32 saved_lr = lr();
+			uint32 saved_ctr = ctr();
+			uint32 saved_sp = gpr(1);
+			uint32 saved_r2 = gpr(2);
+			AudioServicePendingInterrupt();
+			if (lr() != saved_lr) { lr() = saved_lr; }
+			if (ctr() != saved_ctr) { ctr() = saved_ctr; }
+			if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
+			if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
+		}
+#endif
 		break;
 	}
 	case NATIVE_RAVE_DISPATCH: {
@@ -1701,12 +1906,72 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 		break;
 #endif
 	}
+	case NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK:
+	case NATIVE_FINDNEXTCOMPONENT_CINEPAK_HOOK: {
+#if !defined(ENABLE_GFXACCEL)
+		gpr(3) = 0;
+		break;
+#else
+		/* FN=1 first-instruction hooks: execute_sheep does pc() = lr() right
+		 * after this returns, and the handlers run call_macos (nested guest
+		 * execution) which clobbers LR/CTR — save/restore is mandatory or the
+		 * return lands in the nested callee instead of the real caller. */
+		uint32 saved_lr = lr();
+		uint32 saved_ctr = ctr();
+		uint32 saved_sp = gpr(1);
+		uint32 saved_r2 = gpr(2);
+
+		if (selector == NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK)
+			gpr(3) = CinepakOpenDefaultComponentHook(gpr(3), gpr(4));
+		else
+			gpr(3) = CinepakFindNextComponentHook(gpr(3), gpr(4));
+
+		if (lr() != saved_lr) { lr() = saved_lr; }
+		if (ctr() != saved_ctr) { ctr() = saved_ctr; }
+		if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
+		if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
+		break;
+#endif
+	}
+	case NATIVE_CINEPAK_DISPATCH: {
+#if !defined(ENABLE_GFXACCEL)
+		gpr(3) = (uint32)-50; /* paramErr */
+		break;
+#else
+		/* Component entry (via routine descriptor): pure host work, but keep
+		 * the same register-preservation pattern for safety. */
+		uint32 saved_lr = lr();
+		uint32 saved_ctr = ctr();
+		uint32 saved_sp = gpr(1);
+		uint32 saved_r2 = gpr(2);
+
+		gpr(3) = CinepakDispatch(gpr(3));
+
+		if (lr() != saved_lr) { lr() = saved_lr; }
+		if (ctr() != saved_ctr) { ctr() = saved_ctr; }
+		if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
+		if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
+		break;
+#endif
+	}
 	default:
 		printf("FATAL: NATIVE_OP called with bogus selector %d\n", selector);
 		QuitEmulator();
 		break;
 	}
 
+#if GFX_TICKPROF_ENABLED
+	{
+		const uint64 tp_dt = GetTicks_usec() - tp_native_t0;
+		if (selector == NATIVE_CINEPAK_DISPATCH ||
+		    selector == NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK ||
+		    selector == NATIVE_FINDNEXTCOMPONENT_CINEPAK_HOOK) {
+			g_tp.cinepak_us += tp_dt; ++g_tp.cinepak_n;
+		} else {
+			g_tp.native_us += tp_dt; ++g_tp.native_n;
+		}
+	}
+#endif
 #if EMUL_TIME_STATS
 	native_exec_time += (clock() - native_exec_start);
 #endif
@@ -1720,7 +1985,20 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 
 void Execute68k(uint32 pc, M68kRegisters *r)
 {
+#if QD3D_WAIT_LOGGING_ENABLED
+	/* Tripwire: name any single 68k call that burns real wall time (the movie
+	 * one-time setup freeze is an uninterruptible ~1s guest call that the
+	 * IRQ-driven sampler cannot catch). Logs entry pc + duration for calls
+	 * over the threshold. */
+	const uint64 exec68k_t0 = GetTicks_usec();
 	ppc_cpu->execute_68k(pc, r);
+	const uint64 exec68k_us = GetTicks_usec() - exec68k_t0;
+	if (exec68k_us >= 100000ull)
+		QD3D_WAIT_LOG("Execute68k SLOW pc=0x%08x usec=%llu tick=%u",
+		              pc, (unsigned long long)exec68k_us, ReadMacInt32(0x016a));
+#else
+	ppc_cpu->execute_68k(pc, r);
+#endif
 }
 
 /*

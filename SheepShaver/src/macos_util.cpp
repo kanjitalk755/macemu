@@ -29,10 +29,17 @@
 #include "macos_util.h"
 #include "thunks.h"
 #include "prefs.h"
+#if defined(ENABLE_GFXACCEL)
+#include "cinepak_hooks.h"
+#endif
 #include <algorithm>
 
 #define DEBUG 0
 #include "debug.h"
+
+/* ENABLE_NATIVE_MICROSECONDS_PATCH (default 0) lives in emul_op.h — the
+ * InterfaceLib Microseconds patch is superseded by the native Cinepak decoder
+ * and its audio thrash-mixer crashed. See that header for the full rationale. */
 
 
 // Function pointers
@@ -326,6 +333,7 @@ uint32 FindLibSymbol(const char *lib_str, const char *sym_str)
  *  trap (EMUL_OP in the patched ROM) is unaffected.
  */
 
+#if ENABLE_NATIVE_MICROSECONDS_PATCH
 static void PatchInterfaceLibMicroseconds()
 {
 #if EMULATED_PPC
@@ -345,6 +353,7 @@ static void PatchInterfaceLibMicroseconds()
 	FlushCodeCache(code, code + 4);
 #endif
 }
+#endif /* ENABLE_NATIVE_MICROSECONDS_PATCH */
 
 
 /*
@@ -397,7 +406,18 @@ void InitCallUniversalProc()
 		QuitEmulator();
 	}
 
+#if ENABLE_NATIVE_MICROSECONDS_PATCH
 	PatchInterfaceLibMicroseconds();
+#endif
+
+#if defined(ENABLE_GFXACCEL)
+	/* Hook Component Manager searches (OpenDefaultComponent AND
+	   FindNextComponent). On the first request for an image decompressor
+	   ('imdc'), we register our native Cinepak component just-in-time —
+	   newest registration is found first — then both hooks restore
+	   themselves. */
+	CinepakInstallHooks();
+#endif
 }
 
 

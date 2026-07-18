@@ -31,6 +31,7 @@ extern int16 InsTime(uint32 tm, uint16 trap);
 extern int16 RmvTime(uint32 tm);
 extern int16 PrimeTime(uint32 tm, int32 time);
 extern void Microseconds(uint32 &hi, uint32 &lo);
+extern void MicrosecondsRaw(uint32 &hi, uint32 &lo);
 
 extern uint32 TimerDateTime(void);
 

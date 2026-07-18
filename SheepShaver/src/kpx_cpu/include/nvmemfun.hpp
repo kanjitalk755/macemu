@@ -158,15 +158,15 @@ class nv_mem_fun1_t : public std::binary_function<T, A, R> {
 public:
 	nv_mem_fun1_t(pmf_t pmf) : pf(nv_mem_fun_of<pmf_t, pf_t>(pmf)) {
 	#ifdef __MINGW32__
-		init_func();				
+		init_func();
 	#endif
 	}
 	R operator()(T *p, A x) const { return (*pf)(p, x); }
-	
+
 	#ifdef __MINGW32__
-	
+
 	#define NVMEMFUN_THUNK_DEBUG 0
-	
+
 private:
 	#ifdef __MINGW64__
 	#define DO_CONVENTION_CALL_PF_PLACEHOLDER 0x123456789abcdef0
@@ -179,17 +179,17 @@ private:
 	static int do_convention_call_code_len;
 	static int do_convention_call_pf_offset;
 	unsigned char * do_convention_call_instance_copy;
-	
+
 	static void init_do_convention_call() {
 		if (do_convention_call_init_done) return;
-		
+
 		const int max_code_bytes = 100;
 		#ifdef __MINGW64__
 		const unsigned char last_code_byte_value = 0xff; // JMP
 		#else
 		const unsigned char last_code_byte_value = 0xc3;
 		#endif
-		
+
 		// figure out the size of the function
 		unsigned char * func_pos = (unsigned char *) &do_convention_call;
 		int i;
@@ -203,7 +203,7 @@ private:
 		#if NVMEMFUN_THUNK_DEBUG
 		printf("do_convention_call func size %d ", do_convention_call_code_len);
 		#endif
-		
+
 		// find the position of the pf placeholder in the function
 		int placeholder_matches = 0;
 		for (i = 0; i < do_convention_call_code_len - 3; i++) {
@@ -223,17 +223,17 @@ private:
 		#endif
 
 		assert(placeholder_matches == 1);
-		
+
 		do_convention_call_init_done = true;
 	}
-	
+
 	void init_func() {
 		if (!do_convention_call_init_done) {
 			init_do_convention_call();
 		}
-		
+
 		// copy do_convention_call and patch in the address of pf
-		
+
 		do_convention_call_instance_copy = (unsigned char *)VirtualAlloc(NULL, do_convention_call_code_len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 		// Thunk buffer needs to be around while default_call_conv_ptr() is still in use,
 		// longer than nv_mem_fun1_t lifetime
@@ -241,11 +241,11 @@ private:
 		if (do_convention_call_instance_copy == NULL) return;
 		unsigned char * func_pos = (unsigned char *) &do_convention_call;
 		memcpy((void *)do_convention_call_instance_copy, func_pos, do_convention_call_code_len);
-			
+
 		// replace byte sequence in buf copy
 		*(pf_t*)(do_convention_call_instance_copy + do_convention_call_pf_offset) = pf;
-		
-		#if NVMEMFUN_THUNK_DEBUG	
+
+		#if NVMEMFUN_THUNK_DEBUG
 		printf("patching do_convention_call to %x; func size %d ", do_convention_call_instance_copy, do_convention_call_code_len);
 		for (int i = 0 ; i < do_convention_call_code_len; i ++) {
 			printf("%02x ", do_convention_call_instance_copy[i]);
@@ -262,20 +262,20 @@ private:
 	// Each instance makes its own copy of do_convention_call in a buffer and patches the address of pf into it
 	static R do_convention_call(T * obj, A x) {
 		pf_t fn = (pf_t) DO_CONVENTION_CALL_PF_PLACEHOLDER;
-		return (*fn)(obj, x);		
+		return (*fn)(obj, x);
 	}
-	
+
 public:
 
 	default_call_conv_pf_t default_call_conv_ptr() const { return (default_call_conv_pf_t) do_convention_call_instance_copy; }
-	
-	#else 
+
+	#else
 
 	pf_t ptr() const { return pf; }
 
 	#endif
-	
-	
+
+
 };
 
 template< class R, class T, class A >

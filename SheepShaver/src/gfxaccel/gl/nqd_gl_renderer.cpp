@@ -21,12 +21,15 @@
 bool nqd_metal_available = false;
 
 #if ACCEL_LOGGING_ENABLED
-bool nqd_logging_enabled = true;
-#define NQD_LOG(fmt, ...) do { if (nqd_logging_enabled) fprintf(stderr, "[nqd] " fmt "\n", ##__VA_ARGS__); } while (0)
+/* Gate from GFXACCEL_LOG (unset/"all"/list-containing-"nqd" => on), matching
+ * the DSp/RAVE/GL subsystems' control plane. Sink is the shared stderr +
+ * OutputDebugStringA emitter (gfx_debug_sink.h), always compiled in. */
+bool nqd_logging_enabled = accel_log_detail::subsystem_on("nqd");
+#define NQD_LOG(...) do { if (nqd_logging_enabled) GFX_DEBUG_EMIT("[nqd] ", __VA_ARGS__); } while (0)
 #else
-#define NQD_LOG(fmt, ...) do {} while (0)
+#define NQD_LOG(...) do {} while (0)
 #endif
-#define NQD_ERR(fmt, ...) do { fprintf(stderr, "[nqd ERROR] " fmt "\n", ##__VA_ARGS__); } while (0)
+#define NQD_ERR(...) do { GFX_DEBUG_EMIT("[nqd ERROR] ", __VA_ARGS__); } while (0)
 
 extern uint32 RAMBase;
 extern uint32 RAMSize;
@@ -124,15 +127,29 @@ static void cpu_copy_rect(uint8 *src, int32 src_rb, uint8 *dst, int32 dst_rb,
                           int width_bytes, int height)
 {
 	if (!src || !dst || width_bytes <= 0 || height <= 0) return;
-	/* Handle overlap (memmove semantics) for same surface. */
-	if (src == dst && src_rb == dst_rb) return;
-	bool backward = (dst > src) && (dst < src + (size_t)height * (size_t)std::abs(src_rb));
-	if (backward) {
+	if (src == dst && src_rb == dst_rb) return; /* identity — no-op */
+
+	/* Same-surface overlapping copy (Finder file drags, window scrolls) needs
+	 * correct ordering on BOTH axes:
+	 *
+	 *   - Row axis: if the whole destination block sits below the source
+	 *     block and they overlap vertically, copying top-down would overwrite
+	 *     source rows before they are read. Iterate bottom-up in that case.
+	 *
+	 *   - Column axis (within a row): a rightward shift on overlapping rows
+	 *     aliases source and destination bytes, so per-row copies MUST use
+	 *     memmove, never memcpy. The previous code used memcpy on the
+	 *     forward branch, which is undefined on overlap and left horizontal
+	 *     streaks trailing a dragged icon. memmove is correct for any
+	 *     intra-row overlap direction and costs nothing extra here. */
+	const uint8 *src_end = src + (size_t)height * (size_t)std::abs(src_rb);
+	const bool copy_rows_backward = (dst > src) && (dst < src_end);
+	if (copy_rows_backward) {
 		for (int y = height - 1; y >= 0; --y)
 			std::memmove(dst + (size_t)y * dst_rb, src + (size_t)y * src_rb, (size_t)width_bytes);
 	} else {
 		for (int y = 0; y < height; y++)
-			std::memcpy(dst + (size_t)y * dst_rb, src + (size_t)y * src_rb, (size_t)width_bytes);
+			std::memmove(dst + (size_t)y * dst_rb, src + (size_t)y * src_rb, (size_t)width_bytes);
 	}
 }
 
@@ -400,7 +417,11 @@ static bool decode_rect(uint32 p, bool has_src,
 	dy = (int16)ReadMacInt16(p + NQD_acclDestRect + 0) - dst_bounds_top;
 	w  = (int16)ReadMacInt16(p + NQD_acclDestRect + 6) - (int16)ReadMacInt16(p + NQD_acclDestRect + 2);
 	h  = (int16)ReadMacInt16(p + NQD_acclDestRect + 4) - (int16)ReadMacInt16(p + NQD_acclDestRect + 0);
-	if (w <= 0 || h <= 0 || dst_bounds_width <= 0 || dst_bounds_height <= 0) return false;
+	if (w <= 0 || h <= 0 || dst_bounds_width <= 0 || dst_bounds_height <= 0) {
+		NQD_LOG("decode_rect DROP (dst-degenerate) p=%08x w=%d h=%d dbw=%d dbh=%d",
+			p, w, h, dst_bounds_width, dst_bounds_height);
+		return false;
+	}
 
 	dst_base = ReadMacInt32(p + NQD_acclDestBaseAddr);
 	dst_rb = (int32)ReadMacInt32(p + NQD_acclDestRowBytes);
@@ -412,7 +433,11 @@ static bool decode_rect(uint32 p, bool has_src,
 		const int src_bounds_top = (int16)ReadMacInt16(p + NQD_acclSrcBoundsRect + 0);
 		const int src_bounds_width = (int16)ReadMacInt16(p + NQD_acclSrcBoundsRect + 6) - src_bounds_left;
 		const int src_bounds_height = (int16)ReadMacInt16(p + NQD_acclSrcBoundsRect + 4) - src_bounds_top;
-		if (src_bounds_width <= 0 || src_bounds_height <= 0) return false;
+		if (src_bounds_width <= 0 || src_bounds_height <= 0) {
+			NQD_LOG("decode_rect DROP (src-bounds-degenerate) p=%08x sbw=%d sbh=%d",
+				p, src_bounds_width, src_bounds_height);
+			return false;
+		}
 		sx = (int16)ReadMacInt16(p + NQD_acclSrcRect + 2) - src_bounds_left;
 		sy = (int16)ReadMacInt16(p + NQD_acclSrcRect + 0) - src_bounds_top;
 		src_base = ReadMacInt32(p + NQD_acclSrcBaseAddr);
@@ -421,7 +446,11 @@ static bool decode_rect(uint32 p, bool has_src,
 
 		if (sx < 0) { const int trim = -sx; sx = 0; dx += trim; w -= trim; }
 		if (sy < 0) { const int trim = -sy; sy = 0; dy += trim; h -= trim; }
-		if (w <= 0 || h <= 0 || sx >= src_bounds_width || sy >= src_bounds_height) return false;
+		if (w <= 0 || h <= 0 || sx >= src_bounds_width || sy >= src_bounds_height) {
+			NQD_LOG("decode_rect DROP (src-clip-empty) p=%08x sx=%d sy=%d w=%d h=%d sbw=%d sbh=%d",
+				p, sx, sy, w, h, src_bounds_width, src_bounds_height);
+			return false;
+		}
 		w = std::min(w, src_bounds_width - sx);
 		h = std::min(h, src_bounds_height - sy);
 	} else {
@@ -433,13 +462,28 @@ static bool decode_rect(uint32 p, bool has_src,
 
 	if (dx < 0) { const int trim = -dx; dx = 0; sx += trim; w -= trim; }
 	if (dy < 0) { const int trim = -dy; dy = 0; sy += trim; h -= trim; }
-	if (w <= 0 || h <= 0 || dx >= dst_bounds_width || dy >= dst_bounds_height) return false;
+	if (w <= 0 || h <= 0 || dx >= dst_bounds_width || dy >= dst_bounds_height) {
+		NQD_LOG("decode_rect DROP (dst-clip-empty) p=%08x dx=%d dy=%d w=%d h=%d dbw=%d dbh=%d",
+			p, dx, dy, w, h, dst_bounds_width, dst_bounds_height);
+		return false;
+	}
 	w = std::min(w, dst_bounds_width - dx);
 	h = std::min(h, dst_bounds_height - dy);
-	if (w <= 0 || h <= 0 || dst_rb <= 0 || (has_src && src_rb <= 0)) return false;
+	if (w <= 0 || h <= 0 || dst_rb <= 0 || (has_src && src_rb <= 0)) {
+		NQD_LOG("decode_rect DROP (rowbytes/size) p=%08x w=%d h=%d drb=%d srb=%d",
+			p, w, h, (int)dst_rb, (int)src_rb);
+		return false;
+	}
 	int ignored_x, ignored_width;
-	if (!nqd_rect_layout(dst_ps, dx, w, ignored_x, ignored_width)) return false;
-	if (has_src && (!nqd_rect_layout(src_ps, sx, w, ignored_x, ignored_width) || src_ps != dst_ps)) return false;
+	if (!nqd_rect_layout(dst_ps, dx, w, ignored_x, ignored_width)) {
+		NQD_LOG("decode_rect DROP (dst-layout) p=%08x dst_ps=%u dx=%d w=%d", p, dst_ps, dx, w);
+		return false;
+	}
+	if (has_src && (!nqd_rect_layout(src_ps, sx, w, ignored_x, ignored_width) || src_ps != dst_ps)) {
+		NQD_LOG("decode_rect DROP (src-layout/depth) p=%08x src_ps=%u dst_ps=%u sx=%d w=%d",
+			p, src_ps, dst_ps, sx, w);
+		return false;
+	}
 	return true;
 }
 
@@ -461,8 +505,13 @@ void NQDMetalBitblt(uint32 p)
 	int sx, sy, dx, dy, w, h;
 	uint32 sb, db, sps, dps, mode;
 	int32 srb, drb;
-	if (!decode_rect(p, true, sx, sy, dx, dy, w, h, sb, srb, db, drb, sps, dps, mode))
+	if (!decode_rect(p, true, sx, sy, dx, dy, w, h, sb, srb, db, drb, sps, dps, mode)) {
+		// Hook already committed this blit to the accelerated proc; a drop here
+		// leaves stale destination pixels (Finder drag streaks). See decode_rect
+		// NQD_LOG lines for the specific check that failed.
+		NQD_LOG("NQDMetalBitblt DROP (decode_rect) p=%08x -> stale pixels possible", p);
 		return;
+	}
 
 	int bpp = bpp_bytes(dps);
 	int width_bytes = w * bpp;
@@ -475,8 +524,13 @@ void NQDMetalBitblt(uint32 p)
 	if (!nqd_rect_layout(sps, sx, w, src_x_bytes, src_layout_width) ||
 	    !nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_layout_width) ||
 	    !nqd_surface_range(sb, srb, src_x_bytes, width_bytes, sy, h) ||
-	    !nqd_surface_range(db, drb, dst_x_bytes, width_bytes, dy, h))
+	    !nqd_surface_range(db, drb, dst_x_bytes, width_bytes, dy, h)) {
+		// Committed-then-dropped: leaves stale destination pixels (drag streaks).
+		NQD_LOG("NQDMetalBitblt DROP (range/layout) p=%08x sb=%08x db=%08x sx=%d sy=%d "
+			"dx=%d dy=%d w=%d h=%d srb=%d drb=%d sps=%u dps=%u -> stale pixels possible",
+			p, sb, db, sx, sy, dx, dy, w, h, (int)srb, (int)drb, sps, dps);
 		return;
+	}
 
 	uint8 *src = host_ptr(sb) + (size_t)sy * srb + src_x_bytes;
 	uint8 *dst = host_ptr(db) + (size_t)dy * drb + dst_x_bytes;
@@ -574,8 +628,11 @@ void NQDMetalFillRect(uint32 p)
 	int width_bytes = (dps < 8) ? (w * (int)dps + 7) / 8 : w * bpp;
 	int dst_x_bytes, dst_layout_width;
 	if (!nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_layout_width) ||
-	    !nqd_surface_range(db, drb, dst_x_bytes, width_bytes, dy, h))
+	    !nqd_surface_range(db, drb, dst_x_bytes, width_bytes, dy, h)) {
+		NQD_LOG("NQDMetalFillRect DROP (range/layout) p=%08x db=%08x dx=%d dy=%d w=%d h=%d "
+			"drb=%d dps=%u -> stale pixels possible", p, db, dx, dy, w, h, (int)drb, dps);
 		return;
+	}
 	/*
 	 * Color selection matches stock gfxaccel.cpp / PocketShaver:
 	 *   penMode == 8 (patCopy) → ForePen, else → BackPen.
@@ -647,8 +704,11 @@ void NQDMetalInvertRect(uint32 p)
 	int width_bytes = (dps < 8) ? (w * (int)dps + 7) / 8 : w * bpp;
 	int dst_x_bytes, dst_layout_width;
 	if (!nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_layout_width) ||
-	    !nqd_surface_range(db, drb, dst_x_bytes, width_bytes, dy, h))
+	    !nqd_surface_range(db, drb, dst_x_bytes, width_bytes, dy, h)) {
+		NQD_LOG("NQDMetalInvertRect DROP (range/layout) p=%08x db=%08x dx=%d dy=%d w=%d h=%d "
+			"drb=%d dps=%u -> stale pixels possible", p, db, dx, dy, w, h, (int)drb, dps);
 		return;
+	}
 	uint8 *dst = host_ptr(db) + (size_t)dy * drb + dst_x_bytes;
 	cpu_invert_rect(dst, drb, width_bytes, h);
 }
@@ -675,8 +735,11 @@ void NQDMetalBltMask(uint32 p)
 	    !nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_width_bytes) ||
 	    !nqd_surface_range(sb, srb, src_x_bytes, src_width_bytes, sy, h) ||
 	    !nqd_surface_range(db, drb, dst_x_bytes, dst_width_bytes, dy, h) ||
-	    !nqd_range_in_buffer(mask_addr, (uint64)mask_rb * (uint64)h))
+	    !nqd_range_in_buffer(mask_addr, (uint64)mask_rb * (uint64)h)) {
+		NQD_LOG("NQDMetalBltMask DROP (range/layout/mask) p=%08x sb=%08x db=%08x mask=%08x "
+			"dx=%d dy=%d w=%d h=%d -> stale pixels possible", p, sb, db, mask_addr, dx, dy, w, h);
 		return;
+	}
 	uint8 *src = host_ptr(sb) + (size_t)sy * srb + src_x_bytes;
 	uint8 *dst = host_ptr(db) + (size_t)dy * drb + dst_x_bytes;
 	uint8 *mask = host_ptr(mask_addr);
@@ -717,8 +780,11 @@ void NQDMetalFillMask(uint32 p)
 	int dst_x_bytes, dst_width_bytes;
 	if (!nqd_rect_layout(dps, dx, w, dst_x_bytes, dst_width_bytes) ||
 	    !nqd_surface_range(db, drb, dst_x_bytes, dst_width_bytes, dy, h) ||
-	    !nqd_range_in_buffer(mask_addr, (uint64)mask_rb * (uint64)h))
+	    !nqd_range_in_buffer(mask_addr, (uint64)mask_rb * (uint64)h)) {
+		NQD_LOG("NQDMetalFillMask DROP (range/layout/mask) p=%08x db=%08x mask=%08x "
+			"dx=%d dy=%d w=%d h=%d -> stale pixels possible", p, db, mask_addr, dx, dy, w, h);
 		return;
+	}
 	uint8 *dst = host_ptr(db) + (size_t)dy * drb + dst_x_bytes;
 	uint8 *mask = host_ptr(mask_addr);
 	for (int y = 0; y < h; y++) {
