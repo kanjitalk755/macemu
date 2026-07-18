@@ -47,55 +47,56 @@ endif()
 # ---------------------------------------------------------------------------
 # UAE codegen host tools
 # ---------------------------------------------------------------------------
-add_executable(build68k "${UAE_DIR}/build68k.c")
-target_include_directories(build68k PRIVATE
-	"${CMAKE_CURRENT_BINARY_DIR}" "${B2_SYSDEPS}" "${B2_SRC}/include" "${UAE_DIR}")
-target_compile_definitions(build68k PRIVATE HAVE_CONFIG_H)
-if(MSVC)
-	target_compile_definitions(build68k PRIVATE _CRT_SECURE_NO_WARNINGS)
-endif()
-
-add_custom_command(
-	OUTPUT "${B2_GEN}/cpudefs.cpp"
-	COMMAND ${CMAKE_COMMAND}
-	-DTOOL=$<TARGET_FILE:build68k>
-	-DARGS=${UAE_DIR}/table68k
-	-DOUT=${B2_GEN}/cpudefs.cpp
-	-P ${MACEMU_CMAKE_DIR}/run_redirect.cmake
-	DEPENDS build68k "${UAE_DIR}/table68k"
-	COMMENT "Generating cpudefs.cpp"
-	VERBATIM
-)
-
-add_library(uae_readcpu STATIC "${UAE_DIR}/readcpu.cpp" "${B2_GEN}/cpudefs.cpp")
-target_include_directories(uae_readcpu PUBLIC
-	"${CMAKE_CURRENT_BINARY_DIR}" "${B2_SYSDEPS}" "${B2_SRC}/include" "${UAE_DIR}" "${B2_GEN}")
-target_compile_definitions(uae_readcpu PUBLIC HAVE_CONFIG_H)
-if(MSVC)
-	target_compile_definitions(uae_readcpu PRIVATE _CRT_SECURE_NO_WARNINGS)
-endif()
-
-add_executable(gencpu "${UAE_DIR}/gencpu.c")
-target_link_libraries(gencpu PRIVATE uae_readcpu)
-target_compile_definitions(gencpu PRIVATE HAVE_CONFIG_H)
-if(MSVC)
-	target_compile_definitions(gencpu PRIVATE _CRT_SECURE_NO_WARNINGS)
-endif()
-
-set(UAE_GEN_SRCS
-	"${B2_GEN}/cpuemu.cpp" "${B2_GEN}/cpustbl.cpp" "${B2_GEN}/cputbl.h"
-	"${B2_GEN}/cpuemu_nf.cpp" "${B2_GEN}/cpustbl_nf.cpp")
-add_custom_command(
-	OUTPUT ${UAE_GEN_SRCS}
-	COMMAND gencpu
-	DEPENDS gencpu "${B2_GEN}/cpudefs.cpp"
-	WORKING_DIRECTORY "${B2_GEN}"
-	COMMENT "Running gencpu"
-	VERBATIM
-)
-
-set(JIT_GEN_SRCS)
 if(ENABLE_JIT)
+	add_executable(build68k "${UAE_DIR}/build68k.c")
+	target_include_directories(build68k PRIVATE
+		"${CMAKE_CURRENT_BINARY_DIR}" "${B2_SYSDEPS}" "${B2_SRC}/include" "${UAE_DIR}")
+	target_compile_definitions(build68k PRIVATE HAVE_CONFIG_H)
+	if(MSVC)
+		target_compile_definitions(build68k PRIVATE _CRT_SECURE_NO_WARNINGS)
+	endif()
+
+	add_custom_command(
+		OUTPUT "${B2_GEN}/cpudefs.cpp"
+		COMMAND ${CMAKE_COMMAND}
+		-DTOOL=$<TARGET_FILE:build68k>
+		-DARGS=${UAE_DIR}/table68k
+		-DOUT=${B2_GEN}/cpudefs.cpp
+		-P ${MACEMU_CMAKE_DIR}/run_redirect.cmake
+		DEPENDS build68k "${UAE_DIR}/table68k"
+		COMMENT "Generating cpudefs.cpp"
+		VERBATIM
+	)
+
+	add_library(uae_readcpu STATIC "${UAE_DIR}/readcpu.cpp" "${B2_GEN}/cpudefs.cpp")
+	target_include_directories(uae_readcpu PUBLIC
+		"${CMAKE_CURRENT_BINARY_DIR}" "${B2_SYSDEPS}" "${B2_SRC}/include" "${UAE_DIR}" "${B2_GEN}")
+	target_compile_definitions(uae_readcpu PUBLIC HAVE_CONFIG_H)
+	if(MSVC)
+		target_compile_definitions(uae_readcpu PRIVATE _CRT_SECURE_NO_WARNINGS)
+	endif()
+
+	add_executable(gencpu "${UAE_DIR}/gencpu.c")
+	target_link_libraries(gencpu PRIVATE uae_readcpu)
+	target_compile_definitions(gencpu PRIVATE HAVE_CONFIG_H)
+	if(MSVC)
+		target_compile_definitions(gencpu PRIVATE _CRT_SECURE_NO_WARNINGS)
+	endif()
+
+	set(UAE_GEN_SRCS
+		"${B2_GEN}/cpuemu.cpp" "${B2_GEN}/cpustbl.cpp" "${B2_GEN}/cputbl.h"
+		"${B2_GEN}/cpuemu_nf.cpp" "${B2_GEN}/cpustbl_nf.cpp")
+	add_custom_command(
+		OUTPUT ${UAE_GEN_SRCS}
+		COMMAND gencpu
+		DEPENDS gencpu "${B2_GEN}/cpudefs.cpp"
+		WORKING_DIRECTORY "${B2_GEN}"
+		COMMENT "Running gencpu"
+		VERBATIM
+	)
+
+	set(JIT_GEN_SRCS)
+
 	add_executable(gencomp "${UAE_DIR}/compiler/gencomp.c")
 	target_link_libraries(gencomp PRIVATE uae_readcpu)
 	target_include_directories(gencomp PRIVATE "${UAE_DIR}/compiler" "${UAE_DIR}")
@@ -148,7 +149,9 @@ set(B2_CORE
 	${B2_SDL}
 )
 
-set(B2_UAE
+
+if(ENABLE_JIT)
+	set(B2_UAE
 	"${UAE_DIR}/basilisk_glue.cpp"
 	"${UAE_DIR}/memory.cpp"
 	"${UAE_DIR}/newcpu.cpp"
@@ -157,8 +160,7 @@ set(B2_UAE
 	"${B2_GEN}/cpudefs.cpp"
 	"${B2_GEN}/cpuemu.cpp"
 	"${B2_GEN}/cpustbl.cpp"
-)
-if(ENABLE_JIT)
+	)
 	list(APPEND B2_UAE
 	"${B2_GEN}/cpuemu_nf.cpp" "${B2_GEN}/cpustbl_nf.cpp"
 	"${B2_GEN}/compemu.cpp" "${B2_GEN}/compstbl.cpp"
@@ -199,17 +201,18 @@ else()
 	"${B2_SRC}/Unix/ether_unix.cpp"
 	"${B2_SRC}/Unix/extfs_unix.cpp"
 	"${B2_SRC}/Unix/user_strings_unix.cpp"
-	"${B2_SRC}/Unix/clip_unix.cpp"
+	"${B2_SRC}/dummy/clip_dummy.cpp"
 	"${B2_SRC}/Unix/rpc_unix.cpp"
 	"${B2_SRC}/Unix/sshpty.c"
 	"${B2_SRC}/Unix/strlcpy.c"
 	"${B2_SRC}/Unix/tinyxml2.cpp"
 	"${B2_SRC}/Unix/disk_sparsebundle.cpp"
 	"${B2_SRC}/Unix/posix_sem.cpp"
-	"${B2_SRC}/dummy/scsi_dummy.cpp"
 	)
 	if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-	list(APPEND B2_PLATFORM "${B2_SRC}/Unix/Linux/scsi_linux.cpp")
+		list(APPEND B2_PLATFORM "${B2_SRC}/Unix/Linux/scsi_linux.cpp")
+	else()
+		list(APPEND B2_PLATFORM "${B2_SRC}/dummy/scsi_dummy.cpp")
 	endif()
 	if(ENABLE_GTK)
 	find_package(PkgConfig REQUIRED)
@@ -230,6 +233,12 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(BasiliskII
 	${B2_CORE} ${B2_SLIRP} ${B2_UAE} ${B2_PLATFORM} ${UAE_GEN_SRCS} ${JIT_GEN_SRCS})
+if(WIN32)
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin|OSX")
+else()
+	find_package(X11 REQUIRED)
+	target_link_libraries(BasiliskII PRIVATE X11::X11 X11::Xext)
+endif()
 
 target_include_directories(BasiliskII PRIVATE
 	"${CMAKE_CURRENT_BINARY_DIR}"
@@ -242,6 +251,10 @@ target_include_directories(BasiliskII PRIVATE
 )
 
 target_compile_definitions(BasiliskII PRIVATE FPU_IEEE UNALIGNED_PROFITABLE)
+# DATADIR: runtime data path (keycodes etc.), matching the autoconf build's
+# -DDATADIR=\"$(datadir)/$(APP)\". Used by the SDL/X video code.
+target_compile_definitions(BasiliskII PRIVATE
+	DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/BasiliskII")
 if(ENABLE_JIT)
 	target_compile_definitions(BasiliskII PRIVATE USE_JIT USE_JIT_FPU)
 endif()

@@ -40,7 +40,7 @@
 #define MACEMU_NEED_FUNCTOR_BASES 1
 #elif defined(_MSC_VER) && defined(_HAS_AUTO_PTR_ETC) && !_HAS_AUTO_PTR_ETC
 #define MACEMU_NEED_FUNCTOR_BASES 1
-#elif defined(__cplusplus) && (__cplusplus >= 201703L)
+#elif defined(__cplusplus) && (__cplusplus >= 201703L) && defined(_WIN32)
 #define MACEMU_NEED_FUNCTOR_BASES 1
 #endif
 #ifdef MACEMU_NEED_FUNCTOR_BASES

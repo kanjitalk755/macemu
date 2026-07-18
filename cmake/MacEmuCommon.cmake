@@ -56,10 +56,34 @@ function(macemu_detect_host)
   check_include_file(memory.h HAVE_MEMORY_H)
   check_include_file(sys/types.h HAVE_SYS_TYPES_H)
   check_include_file(sys/stat.h HAVE_SYS_STAT_H)
+  check_include_file(sys/ioctl.h HAVE_SYS_IOCTL_H)
+  check_include_file(fcntl.h HAVE_FCNTL_H)
+  check_include_file(sys/time.h HAVE_SYS_TIME_H)
+  check_include_file(sys/ioctl.h HAVE_SYS_IOCTL_H)
+  check_include_file(sys/socket.h HAVE_SYS_SOCKET_H)
+  check_include_file(sys/mman.h HAVE_SYS_MMAN_H)
+  check_include_file(sys/select.h HAVE_SYS_SELECT_H)
+  check_include_file(sys/poll.h HAVE_SYS_POLL_H)
+  check_include_file(sys/wait.h HAVE_SYS_WAIT_H)
+  check_include_file(sys/filio.h HAVE_SYS_FILIO_H)
+  check_include_file(arpa/inet.h HAVE_ARPA_INET_H)
+  check_include_file(stropts.h HAVE_STROPTS_H)
+  check_include_file(sys/stropts.h HAVE_SYS_STROPTS_H)
+  check_include_file(pty.h HAVE_PTY_H)
+  check_include_file(util.h HAVE_UTIL_H)
 
   include(CheckFunctionExists)
+  include(CheckSymbolExists)
   check_function_exists(strdup HAVE_STRDUP)
   check_function_exists(strerror HAVE_STRERROR)
+  check_function_exists(cfmakeraw HAVE_CFMAKERAW)
+  check_symbol_exists(nanosleep time.h HAVE_NANOSLEEP)
+  check_symbol_exists(clock_gettime time.h HAVE_CLOCK_GETTIME)
+  check_symbol_exists(clock_nanosleep time.h HAVE_CLOCK_NANOSLEEP)
+  check_symbol_exists(getpagesize unistd.h HAVE_GETPAGESIZE)
+  check_symbol_exists(sigaction signal.h HAVE_SIGACTION)
+  check_symbol_exists(mmap sys/mman.h HAVE_MMAP)
+  check_symbol_exists(mprotect sys/mman.h HAVE_MPROTECT_FUNC)
 
   set(USE_SDL 1)
   set(USE_SDL_VIDEO 1)
@@ -70,6 +94,60 @@ function(macemu_detect_host)
     set(HAVE_WIN32_VM 1)
     set(HAVE_WIN32_EXCEPTIONS 1)
     set(HAVE_SIGSEGV_SKIP_INSTRUCTION 1)
+  else()
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES
+       "^(i[3-6]86|x86|x86_64|amd64|AMD64|arm|ARM|aarch64|AARCH64|ppc|powerpc|ppc64|p
+pc64le|mips|mips64|sparc|sparc64|ia64)")
+      set(HAVE_SIGSEGV_SKIP_INSTRUCTION 1)
+    endif()
+    # SIGSEGV recovery mechanism (mirrors BasiliskII/src/Unix/configure.ac).
+    # sigsegv.cpp gates its fault-handler definitions on HAVE_SIGINFO_T /
+    # HAVE_SIGCONTEXT_SUBTERFUGE; without one of them the whole handler block
+    # is preprocessed out (undefined SIGSEGV_FAULT_HANDLER_ARGLIST/_ADDRESS).
+    include(CheckCXXSourceCompiles)
+    check_cxx_source_compiles("
+      #include <signal.h>
+      #include <sys/types.h>
+      static void handler(int, siginfo_t *sip, void *) {
+        void *addr = sip->si_addr;
+        (void)addr;
+      }
+      int main() {
+        struct sigaction sa;
+        sa.sa_sigaction = handler;
+        sa.sa_flags = SA_SIGINFO;
+        return sigaction(SIGSEGV, &sa, 0);
+      }" HAVE_SIGINFO_T)
+    if(HAVE_SIGINFO_T)
+      set(HAVE_SIGINFO_T 1)
+    else()
+      # Fallback: sigcontext subterfuge (older/other platforms).
+      check_cxx_source_compiles("
+        #include <signal.h>
+        static void handler(int, struct sigcontext scs) {
+          (void)scs.cr2;
+        }
+        int main() {
+          signal(SIGSEGV, (void (*)(int))handler);
+          return 0;
+        }" HAVE_SIGCONTEXT_SUBTERFUGE)
+      if(HAVE_SIGCONTEXT_SUBTERFUGE)
+        set(HAVE_SIGCONTEXT_SUBTERFUGE 1)
+      endif()
+    endif()
+    find_package(Threads QUIET)
+    if(CMAKE_USE_PTHREADS_INIT)
+      set(HAVE_PTHREADS 1)
+      set(CMAKE_REQUIRED_LIBRARIES Threads::Threads)
+      check_symbol_exists(pthread_cancel pthread.h HAVE_PTHREAD_CANCEL)
+      check_symbol_exists(pthread_testcancel pthread.h HAVE_PTHREAD_TESTCANCEL)
+      check_symbol_exists(pthread_cond_init pthread.h HAVE_PTHREAD_COND_INIT)
+      check_symbol_exists(pthread_mutexattr_setprotocol pthread.h
+        HAVE_PTHREAD_MUTEXATTR_SETPROTOCOL)
+      check_symbol_exists(pthread_mutexattr_settype pthread.h
+        HAVE_PTHREAD_MUTEXATTR_SETTYPE)
+      unset(CMAKE_REQUIRED_LIBRARIES)
+    endif()
   endif()
   if(ENABLE_VOSF)
     set(ENABLE_VOSF 1)
@@ -83,8 +161,21 @@ function(macemu_detect_host)
       SIZEOF_SHORT SIZEOF_INT SIZEOF_LONG SIZEOF_LONG_LONG SIZEOF_VOID_P
       SIZEOF_FLOAT SIZEOF_DOUBLE SIZEOF_LONG_DOUBLE
       HAVE_UNISTD_H HAVE_STRINGS_H HAVE_FENV_H
+      HAVE_STDINT_H HAVE_STDLIB_H HAVE_STRING_H HAVE_MEMORY_H
+      HAVE_SYS_TYPES_H HAVE_SYS_STAT_H
+      HAVE_FCNTL_H HAVE_SYS_TIME_H HAVE_SYS_IOCTL_H HAVE_SYS_SOCKET_H
+      HAVE_SYS_MMAN_H HAVE_SYS_SELECT_H HAVE_SYS_POLL_H HAVE_SYS_WAIT_H
+      HAVE_SYS_FILIO_H HAVE_ARPA_INET_H HAVE_STROPTS_H HAVE_SYS_STROPTS_H
+      HAVE_PTY_H HAVE_UTIL_H
+      HAVE_STRDUP HAVE_STRERROR
+      HAVE_PTHREADS HAVE_PTHREAD_CANCEL HAVE_PTHREAD_TESTCANCEL
+      HAVE_PTHREAD_COND_INIT HAVE_PTHREAD_MUTEXATTR_SETPROTOCOL
+      HAVE_PTHREAD_MUTEXATTR_SETTYPE HAVE_CFMAKERAW
+      HAVE_NANOSLEEP HAVE_CLOCK_GETTIME HAVE_CLOCK_NANOSLEEP
+      HAVE_GETPAGESIZE HAVE_SIGACTION
       USE_SDL USE_SDL_VIDEO USE_SDL_AUDIO HAVE_SLIRP
       HAVE_WIN32_VM HAVE_WIN32_EXCEPTIONS HAVE_SIGSEGV_SKIP_INSTRUCTION
+      HAVE_SIGINFO_T HAVE_SIGCONTEXT_SUBTERFUGE
       ENABLE_VOSF BINCUE)
     if(DEFINED ${v})
       set(${v} "${${v}}" PARENT_SCOPE)
@@ -342,6 +433,9 @@ function(macemu_apply_common target)
     _REENTRANT
     DIRECT_ADDRESSING
   )
+  if(NOT WIN32)
+    target_compile_definitions(${target} PRIVATE _GNU_SOURCE)
+  endif()
 
   if(WIN32)
     target_compile_definitions(${target} PRIVATE

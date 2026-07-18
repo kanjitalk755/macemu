@@ -1845,7 +1845,7 @@ echo Enable JIT compiler .............. : $WANT_JIT
 echo Graphics acceleration ............ : $WANT_GFXACCEL
 echo Native Cinepak patch ............. : $WANT_NATIVE_CINEPAK
 echo Streaming audio prefetch ......... : $WANT_STREAMING_AUDIO_PREFETCH
-echo QD3D logging (init/gfx/audio/media/wait) : $WANT_QD3D_INIT_LOGGING/$WANT_QD3D_GRAPHICS_LOGGING/$WANT_QD3D_AUDIO_LOGGING/$WANT_QD3D_MEDIA_LOGGING/$WANT_QD3D_WAIT_LOGGING
+echo "QD3D logging (init/gfx/audio/media/wait) : $WANT_QD3D_INIT_LOGGING/$WANT_QD3D_GRAPHICS_LOGGING/$WANT_QD3D_AUDIO_LOGGING/$WANT_QD3D_MEDIA_LOGGING/$WANT_QD3D_WAIT_LOGGING"
 echo Enable video on SEGV signals ..... : $WANT_VOSF
 echo ESD sound support ................ : $WANT_ESD
 echo GTK user interface ............... : $WANT_GTK

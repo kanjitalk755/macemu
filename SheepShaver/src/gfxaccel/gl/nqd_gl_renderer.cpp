@@ -538,10 +538,10 @@ void NQDMetalBitblt(uint32 p)
 	 * overlapping source rectangle so a downward/rightward copy cannot feed
 	 * already-written destination pixels back into later source reads. */
 	std::vector<uint8> overlap_scratch;
-	const uintptr_t src_begin = (uintptr_t)src;
-	const uintptr_t src_end = src_begin + (size_t)(h - 1) * srb + width_bytes;
-	const uintptr_t dst_begin = (uintptr_t)dst;
-	const uintptr_t dst_end = dst_begin + (size_t)(h - 1) * drb + width_bytes;
+	const uintptr src_begin = (uintptr)src;
+	const uintptr src_end = src_begin + (size_t)(h - 1) * srb + width_bytes;
+	const uintptr dst_begin = (uintptr)dst;
+	const uintptr dst_end = dst_begin + (size_t)(h - 1) * drb + width_bytes;
 	if (src_begin < dst_end && dst_begin < src_end &&
 	    !(src_begin == dst_begin && srb == drb)) {
 		overlap_scratch.resize((size_t)width_bytes * h);

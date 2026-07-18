@@ -325,21 +325,30 @@ else()
 	set(SS_PLATFORM
 	"${SS_SRC}/Unix/main_unix.cpp"
 	"${SS_SRC}/Unix/about_window_unix.cpp"
-	"${SS_SRC}/dummy/scsi_dummy.cpp"
 	)
 	foreach(f prefs_unix.cpp sys_unix.cpp xpram_unix.cpp timer_unix.cpp
 			serial_unix.cpp ether_unix.cpp extfs_unix.cpp
-			user_strings_unix.cpp clip_unix.cpp rpc_unix.cpp
+			user_strings_unix.cpp rpc_unix.cpp
 			sshpty.c strlcpy.c tinyxml2.cpp disk_sparsebundle.cpp posix_sem.cpp)
 	macemu_resolve_path("${SS_SRC}/Unix/${f}" "${B2_SRC}/Unix/${f}" _p)
 	list(APPEND SS_PLATFORM "${_p}")
+	macemu_resolve_path("${SS_SRC}/dummy/clip_dummy.cpp"
+		"${B2_SRC}/dummy/clip_dummy.cpp" _p)
+	list(APPEND SS_PLATFORM "${_p}")
 	endforeach()
 	if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-	macemu_resolve_path(
-		"${SS_SRC}/Unix/Linux/scsi_linux.cpp"
-		"${B2_SRC}/Unix/Linux/scsi_linux.cpp" _p)
-	list(APPEND SS_PLATFORM "${_p}")
+		macemu_resolve_path(
+			"${SS_SRC}/Unix/Linux/scsi_linux.cpp"
+			"${B2_SRC}/Unix/Linux/scsi_linux.cpp" _p)
+		list(APPEND SS_PLATFORM "${_p}")
+	else()
+		macemu_resolve_path("${SS_SRC}/dummy/scsi_dummy.cpp"
+			"${B2_SRC}/dummy/scsi_dummy.cpp" _p)
+		list(APPEND SS_PLATFORM "${_p}")
 	endif()
+	macemu_resolve_path("${SS_SRC}/dummy/prefs_dummy.cpp"
+		"${B2_SRC}/dummy/prefs_dummy.cpp" _p)
+	list(APPEND SS_PLATFORM "${_p}")
 	if(ENABLE_GTK)
 	find_package(PkgConfig REQUIRED)
 	pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
@@ -473,6 +482,12 @@ endif()
 # ppc-execute-impl.cpp is #included by ppc-execute.cpp (not a separate TU)
 add_executable(SheepShaver
 	${SS_CORE} ${SS_CPU} ${SS_PLATFORM} ${SS_GFXACCEL})
+if(WIN32)
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin|OSX")
+else()
+	find_package(X11 REQUIRED)
+	target_link_libraries(SheepShaver PRIVATE X11::X11 X11::Xext)
+endif()
 
 # Show tracked headers, rather than generated overlay paths, in IDE projects.
 if(SS_IDE_HEADERS)
@@ -515,6 +530,9 @@ target_compile_definitions(SheepShaver PRIVATE
 	SHEEPSHAVER=1
 	POWERPC_ROM=1
 	EMULATED_PPC=1
+	# DATADIR: runtime data path, matching the autoconf build's
+	# -DDATADIR=\"$(datadir)/$(APP)\". Used by the SDL/X video code.
+	DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/SheepShaver"
 	${SS_GFXACCEL_DEFS}
 )
 if(WIN32)

@@ -111,6 +111,12 @@ int sem_trywait(sem_t* sem)
 	return -1;
 }
 
+int sem_timedwait(sem_t* sem, const struct timespec* abs_timeout)
+{
+	errno = ENOSYS;
+	return -1;
+}
+
 int sem_post(sem_t* sem)
 {
 	if(sem==NULL) {

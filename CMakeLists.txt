@@ -21,7 +21,7 @@ set(CMAKE_C_STANDARD 99)
 # ---------------------------------------------------------------------------
 option(BUILD_BASILISKII	"Build Basilisk II (68k Mac emulator)" ON)
 option(BUILD_SHEEPSHAVER "Build SheepShaver (PowerPC Mac emulator)" ON)
-option(ENABLE_JIT				"Enable the Basilisk II UAE JIT" ON)
+option(ENABLE_JIT				"Enable the Basilisk II UAE JIT" OFF)
 if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
 	set(_macemu_sheepshaver_jit_default OFF)
 else()
@@ -61,7 +61,7 @@ option(ENABLE_STREAMING_AUDIO_PREFETCH
 # auto = Metal on Apple, OpenGL elsewhere
 set(GFXACCEL_BACKEND "auto" CACHE STRING "gfxaccel GPU backend (auto|opengl|metal)")
 set_property(CACHE GFXACCEL_BACKEND PROPERTY STRINGS auto opengl metal)
-if(NOT SDL2_DIR)
+if(WIN32 AND NOT SDL2_DIR)
 	set(SDL2_DIR "third_party/SDL2/cmake" CACHE PATH
 		"Directory containing SDL2Config.cmake")
 endif()

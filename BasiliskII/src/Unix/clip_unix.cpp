@@ -412,7 +412,7 @@ static void do_getscrap(void **handle, uint32 type, int32 offset)
 	if (wait_for_selection_notify_event(x_display, clip_win, &event, SELECTION_MAX_WAIT) &&
 		event.xselection.property != None &&
 		read_property(x_display,
-					  event.xselection.requester, event.xselection.property,
+					  event.xselection.requestor, event.xselection.property,
 					  true, data, 0, 0, 0, false)) {
 		Time timestamp = ((long *)data.data())[0];
 		if (timestamp <= last_timestamp)
@@ -427,7 +427,7 @@ static void do_getscrap(void **handle, uint32 type, int32 offset)
 	if (!wait_for_selection_notify_event(x_display, clip_win, &event, SELECTION_MAX_WAIT) ||
 		event.xselection.property == None ||
 		!read_property(x_display,
-					   event.xselection.requester, event.xselection.property,
+					   event.xselection.requestor, event.xselection.property,
 					   true, data, 0, 0, 0, false))
 		return;
 #endif
@@ -468,7 +468,7 @@ static void do_getscrap(void **handle, uint32 type, int32 offset)
 	if (!wait_for_selection_notify_event(x_display, clip_win, &event, SELECTION_MAX_WAIT) ||
 		event.xselection.property == None ||
 		!read_property(x_display,
-					   event.xselection.requester, event.xselection.property,
+					   event.xselection.requestor, event.xselection.property,
 					   false, data, 0, 0, 0, format == XA_STRING))
 		return;
 
@@ -553,7 +553,7 @@ static bool handle_selection_TIMESTAMP(XSelectionRequestEvent *req)
 	long timestamp = clip_data.time;
 
 	// Change requester property
-	XChangeProperty(x_display, req->requester, req->property,
+	XChangeProperty(x_display, req->requestor, req->property,
 					XA_INTEGER, 32,
 					PropModeReplace, (uint8 *)&timestamp, 1);
 
@@ -573,7 +573,7 @@ static bool handle_selection_TARGETS(XSelectionRequestEvent *req)
 		targets.push_back(clip_data.type);
 
 	// Change requester property
-	XChangeProperty(x_display, req->requester, req->property,
+	XChangeProperty(x_display, req->requestor, req->property,
 					xa_targets, 32,
 					PropModeReplace, (uint8 *)&targets[0], targets.size());
 
@@ -589,7 +589,7 @@ static bool handle_selection_STRING(XSelectionRequestEvent *req)
 		return false;
 
 	// Send the string, it's already encoded as ISO-8859-1
-	XChangeProperty(x_display, req->requester, req->property,
+	XChangeProperty(x_display, req->requestor, req->property,
 					XA_STRING, 8,
 					PropModeReplace, (uint8 *)clip_data.data.data(), clip_data.data.size());
 
@@ -602,7 +602,7 @@ static bool handle_selection_MULTIPLE(XSelectionRequestEvent *req)
 	int rformat;
 	ByteArray data;
 
-	if (!read_property(x_display, req->requester, req->property,
+	if (!read_property(x_display, req->requestor, req->property,
 					  false, data, 0, &rtype, &rformat, 0))
 		return false;
 
@@ -664,12 +664,12 @@ static bool handle_selection(XSelectionRequestEvent *req, bool is_multiple)
 	if (handled && !is_multiple) {
 		XEvent out_event;
 		out_event.xselection.type      = SelectionNotify;
-		out_event.xselection.requester = req->requester;
+		out_event.xselection.requestor = req->requestor;
 		out_event.xselection.selection = req->selection;
 		out_event.xselection.target    = req->target;
 		out_event.xselection.property  = req->property;
 		out_event.xselection.time      = req->time;
-		XSendEvent(x_display, req->requester, False, 0, &out_event);
+		XSendEvent(x_display, req->requestor, False, 0, &out_event);
 	}
 
 	return handled;
@@ -677,11 +677,11 @@ static bool handle_selection(XSelectionRequestEvent *req, bool is_multiple)
 
 void ClipboardSelectionRequest(XSelectionRequestEvent *req)
 {
-	if (req->requester == clip_win || req->selection != xa_clipboard)
+	if (req->requestor == clip_win || req->selection != xa_clipboard)
 		return;
 
 	D(bug("Selection requested from 0x%lx to 0x%lx (%s) 0x%lx (%s)\n",
-		  req->requester,
+		  req->requestor,
 		  req->selection,
 		  XGetAtomName(req->display, req->selection),
 		  req->target,
