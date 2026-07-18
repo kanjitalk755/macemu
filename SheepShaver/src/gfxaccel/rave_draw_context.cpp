@@ -16,7 +16,7 @@
 #include "rave_metal_renderer.h"
 #include "rave_device_summary.h"
 #include "dsp_pixmap_offsets.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 
 #include <cstring>
 

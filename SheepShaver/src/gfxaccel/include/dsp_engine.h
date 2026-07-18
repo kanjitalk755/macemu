@@ -649,7 +649,7 @@ extern uint32_t dsp_scratch_addr;
  *  on top of an os_log-backed (Apple) or printf-backed (non-Apple)
  *  macro, with a runtime bool for per-subsystem on/off toggling.
  */
-#include "accel_logging.h"
+#include "gfx_log.h"
 
 #if ACCEL_LOGGING_ENABLED
 #ifdef __APPLE__

@@ -47,7 +47,7 @@
 #include "vm_alloc.h"
 #include "sigsegv.h"
 #include "thunks.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 
 #define DEBUG 0
 #include "debug.h"

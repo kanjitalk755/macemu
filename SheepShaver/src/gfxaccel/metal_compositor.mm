@@ -59,7 +59,7 @@
 // Logging macros
 // ---------------------------------------------------------------------------
 
-#include "accel_logging.h"
+#include "gfx_log.h"
 #import <os/log.h>
 #if ACCEL_LOGGING_ENABLED
 bool compositor_logging_enabled = accel_log_subsystem_on("comp");

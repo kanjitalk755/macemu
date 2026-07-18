@@ -72,7 +72,7 @@ static inline dmc_thread_id_t dmc_thread_self(void) { return pthread_self(); }
 
 // Internal logging macros - promote to DMC_ERR for the rollback path
 // so subscriber-rejected transitions are visible even in release builds.
-#include "gfx_debug_sink.h"
+#include "gfx_log.h"
 #define DMC_LOG(fmt, ...) D(bug("[DMC] " fmt "\n", ##__VA_ARGS__))
 #define DMC_ERR(...) GFX_DEBUG_EMIT("[DMC ERROR] ", __VA_ARGS__)
 

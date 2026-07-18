@@ -31,7 +31,7 @@
 #include "macos_util.h"
 #include "video.h"
 #include "nqd_accel.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 #include "vbl_source.h"
 
 #include <map>

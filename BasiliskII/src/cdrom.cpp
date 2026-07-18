@@ -46,7 +46,7 @@ using std::vector;
 #include "cdrom.h"
 
 #if defined(QD3D_MEDIA_LOGGING_ENABLED) && QD3D_MEDIA_LOGGING_ENABLED
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 #else
 #ifndef QD3D_MEDIA_LOGGING_ENABLED
 #define QD3D_MEDIA_LOGGING_ENABLED 0

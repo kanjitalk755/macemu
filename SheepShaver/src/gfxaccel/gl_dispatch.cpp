@@ -13,7 +13,7 @@
 #include "sysdeps.h"
 #include "cpu_emulation.h"
 #include "gl_engine.h"
-#include "accel_logging.h"
+#include "gfx_log.h"
 #include "gl_defer.h"
 
 // Logging state -- gated by GL_LOGGING env var (via subsystem_on).

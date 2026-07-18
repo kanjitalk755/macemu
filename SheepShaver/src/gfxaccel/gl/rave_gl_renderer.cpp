@@ -21,7 +21,7 @@
 #include "gl_ext.h"
 #include "gfxaccel_backend.h"
 #include "macos_util.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 
 #include <cassert>
 #include <algorithm>
@@ -36,7 +36,7 @@
 
 #include <SDL_opengl.h>
 
-#include "gfx_debug_sink.h"
+#include "gfx_log.h"
 #ifndef RAVE_LOG
 #define RAVE_LOG(...) GFX_DEBUG_EMIT("[rave-gl] ", __VA_ARGS__)
 #endif

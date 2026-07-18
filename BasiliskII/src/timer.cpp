@@ -26,7 +26,7 @@
 #include "audio.h"
 
 #if defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 static bool timer_descent_ii_is_current_application()
 {
 	return ReadMacInt32(0x0910) == 0x0a446573 &&

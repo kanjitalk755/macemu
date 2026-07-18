@@ -14,7 +14,7 @@
 #include "gfxaccel_resources.h"
 #include "vbl_source.h"
 #include "gl_device.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 /* Windows GL 1.1 has no GLSL compile entry points; present path uses FFP. */
 
 #include <SDL.h>
@@ -36,7 +36,7 @@ extern "C" int RaveGLRenderPassActive(void);
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
-#include "gfx_debug_sink.h"
+#include "gfx_log.h"
 #define COMPOSITOR_LOG(...) GFX_DEBUG_EMIT("[compositor] ", __VA_ARGS__)
 #define COMPOSITOR_ERR(...) GFX_DEBUG_EMIT("[compositor ERROR] ", __VA_ARGS__)
 

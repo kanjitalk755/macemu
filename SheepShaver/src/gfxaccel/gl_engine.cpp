@@ -22,7 +22,7 @@
 #include "display_mode_controller.h"
 #include "gl_drawable_owner_policy.h"
 #include "gl_offscreen_policy.h"
-#include "accel_logging.h"
+#include "gfx_log.h"
 
 #include <cstring>
 #include <cstdio>

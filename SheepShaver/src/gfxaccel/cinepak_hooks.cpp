@@ -31,7 +31,7 @@
 #include "main.h"
 #include "cinepak_decoder.h"
 #include "cinepak_hooks.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 
 #define DEBUG 0
 #include "debug.h"
@@ -47,7 +47,7 @@
 #endif
 
 #if CINEPAK_LOGGING_ENABLED
-#include "gfx_debug_sink.h"
+#include "gfx_log.h"
 
 /* Route through the shared stderr + OutputDebugStringA sink. Keeps the
  * "[CINEPAK:...]" text so existing greps/notes still match. The source lines

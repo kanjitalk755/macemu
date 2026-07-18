@@ -1433,7 +1433,7 @@ extern uint32_t gl_scratch_addr;
 extern uint32_t gl_dt_flag_addr;
 
 // Logging control (os_log-backed; gated by gl_logging_enabled + ACCEL_LOG_VERBOSE)
-#include "accel_logging.h"
+#include "gfx_log.h"
 #if ACCEL_LOGGING_ENABLED
 #ifdef __APPLE__
 #include <os/log.h>

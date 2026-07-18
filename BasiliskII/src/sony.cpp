@@ -46,7 +46,7 @@ using std::vector;
 #include "sony.h"
 
 #if defined(SHEEPSHAVER) && defined(ENABLE_GFXACCEL)
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 #else
 #define QD3D_INIT_LOG(...) do { } while (0)
 #endif

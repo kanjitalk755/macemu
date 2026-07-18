@@ -14,7 +14,7 @@
 #include "sysdeps.h"
 #include "cpu_emulation.h"
 #include "macos_util.h"          // FindLibSymbol
-#include "dsp_engine.h"          // kDSp* enum + DSP_LOG + ACCEL_LOGGING_ENABLED gate (via accel_logging.h)
+#include "dsp_engine.h"          // kDSp* enum + DSP_LOG + ACCEL_LOGGING_ENABLED gate (via gfx_log.h)
 #include "dsp_fragment_name_policy.h"
 
 

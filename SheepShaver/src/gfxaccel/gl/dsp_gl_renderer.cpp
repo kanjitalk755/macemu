@@ -17,7 +17,7 @@
 #include "dsp_back_buffer_cgraf_policy.h"
 #include "dsp_cgraf_port_policy.h"
 #include "dsp_pixmap_offsets.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 
 #include <SDL_opengl.h>
 #include <algorithm>

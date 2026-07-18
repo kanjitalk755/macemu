@@ -43,7 +43,7 @@ extern "C" void catalyst_pump_appkit_events(void);
 #include "cpu/ppc/ppc-operations.hpp"
 #include "cpu/ppc/ppc-instructions.hpp"
 #include "thunks.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 #if QD3D_WAIT_LOGGING_ENABLED
 static bool cpu_descent_ii_is_current_application()
 {

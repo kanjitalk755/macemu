@@ -35,7 +35,7 @@
 #include "metal_compositor.h"    // for MetalCompositorSubmitFrame, CompositeLayer, FrameDescriptor
 #include "gfxaccel_resources.h"  // per-engine overlay vending for kGfxEngineGL
 #include "display_mode_controller.h"  // dmc_current_snapshot() for FrameDescriptor generation
-#include "accel_logging.h"
+#include "gfx_log.h"
 #include "metal_device_shared.h"
 #include "gl_metal_coordinates.h"
 #include "gl_metal_draw_state.h"

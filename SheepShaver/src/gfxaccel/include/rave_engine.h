@@ -504,7 +504,7 @@ extern uint32_t rave_current_draw_context_addr;
  *  Logging
  */
 
-#include "accel_logging.h"
+#include "gfx_log.h"
 
 #if ACCEL_LOGGING_ENABLED
 

@@ -18,7 +18,7 @@
 #include "cpu_emulation.h"
 #include "rave_engine.h"
 #include "rave_metal_renderer.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 
 // RAVE error codes (must match TQAError enum in RAVE.h)
 #define kQANoErr                    0

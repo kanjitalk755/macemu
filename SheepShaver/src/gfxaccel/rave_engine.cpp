@@ -23,7 +23,7 @@
 #include "gfxaccel_resources.h"
 #include "metal_compositor.h"  // MetalCompositorSubmitFrame_ClearCachedOverlay
 #include "display_mode_controller.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 
 #include <cstring>
 #include <cmath>

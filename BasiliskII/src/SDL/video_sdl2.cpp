@@ -73,7 +73,7 @@
 #include "audio.h"
 
 #if defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 static bool video_descent_ii_is_current_application()
 {
 	return ReadMacInt32(0x0910) == 0x0a446573 &&
@@ -90,7 +90,7 @@ static bool video_descent_ii_is_current_application()
 #if defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)
 #include "metal_compositor.h"
 #include "gl_device.h"
-#include "gfx_debug_sink.h"
+#include "gfx_log.h"
 #include "display_mode_controller.h"
 #include "gfxaccel_resources.h"
 #include "nqd_accel.h"
@@ -2299,7 +2299,7 @@ static bool switch_depth_in_place(SDL_monitor_desc &monitor)
 {
 	const VIDEO_MODE &mode = monitor.get_current_mode();
 	if (!drv || !MetalCompositorIsInitialized()) {
-		gfx_debug::emit("[video] ", "switchDepthInPlace SKIP drv=%p compInit=%d",
+		gfx_log_emit("[video] ", "switchDepthInPlace SKIP drv=%p compInit=%d",
 		                (void *)drv, MetalCompositorIsInitialized());
 		return false;
 	}
@@ -2308,11 +2308,11 @@ static bool switch_depth_in_place(SDL_monitor_desc &monitor)
 	 * drv->mode already reflects the NEW mode by the time we run. */
 	int live_x = 0, live_y = 0, live_depth = 0;
 	if (!MetalCompositorCurrentMode(&live_x, &live_y, &live_depth)) {
-		gfx_debug::emit("[video] ", "switchDepthInPlace SKIP no-current-mode");
+		gfx_log_emit("[video] ", "switchDepthInPlace SKIP no-current-mode");
 		return false;
 	}
 	if ((int)VIDEO_MODE_X != live_x || (int)VIDEO_MODE_Y != live_y) {
-		gfx_debug::emit("[video] ", "switchDepthInPlace SKIP res new=%dx%d live=%dx%d newDepth=%d liveDepth=%d",
+		gfx_log_emit("[video] ", "switchDepthInPlace SKIP res new=%dx%d live=%dx%d newDepth=%d liveDepth=%d",
 		                (int)VIDEO_MODE_X, (int)VIDEO_MODE_Y, live_x, live_y,
 		                (int)VIDEO_MODE_DEPTH, live_depth);
 		return false;
@@ -2339,7 +2339,7 @@ static bool switch_depth_in_place(SDL_monitor_desc &monitor)
 	 * allocation is sized to worst-case depth at driver init, so a deeper mode
 	 * always fits. If it somehow does not, decline to the full reopen. */
 	if (new_size > the_buffer_size) {
-		gfx_debug::emit("[video] ", "switchDepthInPlace DECLINE size new=%u cap=%u",
+		gfx_log_emit("[video] ", "switchDepthInPlace DECLINE size new=%u cap=%u",
 		                (unsigned)new_size, (unsigned)the_buffer_size);
 		return false;
 	}
@@ -2349,7 +2349,7 @@ static bool switch_depth_in_place(SDL_monitor_desc &monitor)
 	 * THIS thread so we can reformat compositor resources; the redraw thread
 	 * re-binds automatically on its next present. */
 	if (!GfxGLDeviceMakeCurrent()) {
-		gfx_debug::emit("[video] ", "switchDepthInPlace DECLINE make-current-failed");
+		gfx_log_emit("[video] ", "switchDepthInPlace DECLINE make-current-failed");
 		return false;
 	}
 
@@ -2381,7 +2381,7 @@ static bool switch_depth_in_place(SDL_monitor_desc &monitor)
 	GfxGLDeviceReleaseCurrent();
 
 #if DESCENT_HITCH_DEBUG
-	gfx_debug::emit("[video] ", "switchDepthInPlace %s depth=%d %dx%d rc=%d usec=%llu buf=%p screenBase=%08x",
+	gfx_log_emit("[video] ", "switchDepthInPlace %s depth=%d %dx%d rc=%d usec=%llu buf=%p screenBase=%08x",
 	                ok ? "OK" : "DECLINE", (int)VIDEO_MODE_DEPTH,
 	                (int)VIDEO_MODE_X, (int)VIDEO_MODE_Y, rc,
 	                (unsigned long long)(GetTicks_usec() - t0),

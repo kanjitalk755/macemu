@@ -27,7 +27,7 @@
 #include "gl_engine.h"
 #include "dsp_engine.h"
 #include "nqd_accel.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 #include "cinepak_hooks.h"
 
 #define DEBUG 0

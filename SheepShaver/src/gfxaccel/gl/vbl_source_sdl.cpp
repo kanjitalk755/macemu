@@ -8,7 +8,7 @@
 #include "sysdeps.h"
 #include "vbl_source.h"
 #include "gl_device.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 
 #include <SDL.h>
 #include <atomic>

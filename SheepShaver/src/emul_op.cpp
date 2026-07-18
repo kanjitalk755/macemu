@@ -47,7 +47,7 @@
 #include "user_strings.h"
 #include "emul_op.h"
 #include "thunks.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 #if QD3D_WAIT_LOGGING_ENABLED
 static bool emul_op_descent_ii_is_current_application()
 {

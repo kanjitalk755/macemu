@@ -14,7 +14,7 @@
 #include "cpu_emulation.h"
 #include "thunks.h"
 #include "rave_engine.h"
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 
 // Storage for TVECT addresses and scratch word
 uint32_t rave_method_tvects[RAVE_MAX_SUBOPCODE];

@@ -18,14 +18,13 @@ AC_ARG_ENABLE(vosf,         [  --enable-vosf           enable video on SEGV sign
 AC_ARG_WITH(sdl3,            [  --with-sdl3             use SDL 3.x, rather than SDL 2.x [default=no]], [WANT_SDL_VERSION_MAJOR=3], [WANT_SDL_VERSION_MAJOR=2])
 AC_ARG_ENABLE(gfxaccel,     [  --enable-gfxaccel       SheepShaver graphics accel (NQD/RAVE/GL/DSp) [default=yes]], [WANT_GFXACCEL=$enableval], [WANT_GFXACCEL=yes])
 AC_ARG_ENABLE(native-cinepak-patch, [  --enable-native-cinepak-patch  patch QuickTime to use native Cinepak decoder [default=no]], [WANT_NATIVE_CINEPAK=$enableval], [WANT_NATIVE_CINEPAK=no])
-AC_ARG_ENABLE(streaming-audio-prefetch, [  --enable-streaming-audio-prefetch  host-side Sound Manager streaming prefetch (Descent II movie audio) [default=no]], [WANT_STREAMING_AUDIO_PREFETCH=$enableval], [WANT_STREAMING_AUDIO_PREFETCH=no])
 AC_ARG_ENABLE(qd3d-init-logging,     [  --enable-qd3d-init-logging      compile QuickDraw 3D/RAVE init diagnostics [default=no]], [WANT_QD3D_INIT_LOGGING=$enableval], [WANT_QD3D_INIT_LOGGING=no])
 AC_ARG_ENABLE(qd3d-graphics-logging, [  --enable-qd3d-graphics-logging  compile high-volume QD3D graphics diagnostics [default=no]], [WANT_QD3D_GRAPHICS_LOGGING=$enableval], [WANT_QD3D_GRAPHICS_LOGGING=no])
 AC_ARG_ENABLE(qd3d-audio-logging,    [  --enable-qd3d-audio-logging     compile sound component and SDL audio diagnostics [default=no]], [WANT_QD3D_AUDIO_LOGGING=$enableval], [WANT_QD3D_AUDIO_LOGGING=no])
 AC_ARG_ENABLE(qd3d-media-logging,    [  --enable-qd3d-media-logging     compile CD/media I/O diagnostics [default=no]], [WANT_QD3D_MEDIA_LOGGING=$enableval], [WANT_QD3D_MEDIA_LOGGING=no])
 AC_ARG_ENABLE(qd3d-wait-logging,     [  --enable-qd3d-wait-logging      compile high-volume timing/wait diagnostics [default=no]], [WANT_QD3D_WAIT_LOGGING=$enableval], [WANT_QD3D_WAIT_LOGGING=no])
 
-AC_ARG_WITH(bincue,   
+AC_ARG_WITH(bincue,
   AS_HELP_STRING([--with-bincue], [Allow cdrom image files in bin/cue mode]))
 
 dnl Checks for programs.
@@ -337,9 +336,6 @@ fi
 if [[ "x$WANT_NATIVE_CINEPAK" = "xyes" ]]; then
   AC_DEFINE(ENABLE_NATIVE_CINEPAK_PATCH, 1, [Define to patch QuickTime to use the native Cinepak decoder.])
 fi
-if [[ "x$WANT_STREAMING_AUDIO_PREFETCH" = "xyes" ]]; then
-  AC_DEFINE(STREAMING_AUDIO_PREFETCH, 1, [Define to enable host-side Sound Manager streaming prefetch.])
-fi
 if [[ "x$WANT_QD3D_INIT_LOGGING" = "xyes" ]]; then
   AC_DEFINE(QD3D_INIT_LOGGING_ENABLED, 1, [Define to compile QuickDraw 3D/RAVE init diagnostics.])
 fi
@@ -383,7 +379,6 @@ echo BINCUE support ................... : $have_bincue
 echo Enable VOSF ...................... : $WANT_VOSF
 echo Graphics acceleration ............ : $WANT_GFXACCEL
 echo Native Cinepak patch ............. : $WANT_NATIVE_CINEPAK
-echo Streaming audio prefetch ......... : $WANT_STREAMING_AUDIO_PREFETCH
 echo QD3D logging (init/gfx/audio/media/wait) : $WANT_QD3D_INIT_LOGGING/$WANT_QD3D_GRAPHICS_LOGGING/$WANT_QD3D_AUDIO_LOGGING/$WANT_QD3D_MEDIA_LOGGING/$WANT_QD3D_WAIT_LOGGING
 echo
 echo "Configuration done. Now type \"make\"."

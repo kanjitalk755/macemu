@@ -19,7 +19,7 @@
 #include "sysdeps.h"
 #include "cpu_emulation.h"
 #include "nqd_accel.h"
-#include "accel_logging.h"
+#include "gfx_log.h"
 #include "dsp_pixmap_offsets.h"
 #include "gl_offscreen_policy.h"
 #include "nqd_main_device_policy.h"

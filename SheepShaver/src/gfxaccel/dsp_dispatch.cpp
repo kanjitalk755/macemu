@@ -53,7 +53,7 @@
 
 #include "sysdeps.h"
 #include "cpu_emulation.h"        /* ReadMacInt32 */
-#include "dsp_engine.h"           /* DSpDispatch + sub-opcode enum + DSP_LOG (pulls in accel_logging.h) */
+#include "dsp_engine.h"           /* DSpDispatch + sub-opcode enum + DSP_LOG (pulls in gfx_log.h) */
 #include "dsp_draw_context.h"
 #include "dsp_mode_enumerate.h"   /* GetFirstContext handler */
 

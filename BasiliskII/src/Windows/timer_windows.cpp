@@ -28,7 +28,7 @@
 /* Always include when available so DESCENT_MOVIE_DIAGNOSTICS is independent
  * of cmake wait-logging. SheepShaver stages this header; Basilisk II may not. */
 #if defined(SHEEPSHAVER) || (defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED)
-#include "qd3d_init_logging.h"
+#include "gfx_log.h"
 #else
 #ifndef QD3D_WAIT_LOGGING_ENABLED
 #define QD3D_WAIT_LOGGING_ENABLED 0

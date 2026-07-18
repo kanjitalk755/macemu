@@ -20,8 +20,6 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	"Compile CD/media I/O diagnostics" OFF)
 	option(ENABLE_QD3D_WAIT_LOGGING
 	"Compile high-volume timing/wait diagnostics" OFF)
-	option(ENABLE_STREAMING_AUDIO_PREFETCH
-	"Host-side Sound Manager streaming prefetch (Descent II movie audio)" OFF)
 	option(USE_SDL3 "Use SDL3" OFF)
 	set(MACEMU_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
 	list(APPEND CMAKE_MODULE_PATH "${MACEMU_CMAKE_DIR}")
@@ -560,9 +558,6 @@ if(ENABLE_QD3D_MEDIA_LOGGING)
 endif()
 if(ENABLE_QD3D_WAIT_LOGGING)
 	target_compile_definitions(SheepShaver PRIVATE QD3D_WAIT_LOGGING_ENABLED=1)
-endif()
-if(ENABLE_STREAMING_AUDIO_PREFETCH)
-	target_compile_definitions(SheepShaver PRIVATE STREAMING_AUDIO_PREFETCH=1)
 endif()
 if(ENABLE_NATIVE_CINEPAK_PATCH)
 	target_compile_definitions(SheepShaver PRIVATE
