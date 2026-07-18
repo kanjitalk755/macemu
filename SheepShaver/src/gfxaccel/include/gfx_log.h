@@ -18,11 +18,9 @@
 
 #include <stdarg.h>
 
-#if defined(_WIN32)
-/* Declare OutputDebugStringA without dragging in <windows.h> (which pulls
- * winsock.h and clashes with winsock2.h in networking TUs). Matches the WinAPI
- * signature exactly; extern "C" so it binds to the same import. */
-extern "C" __declspec(dllimport) void __stdcall OutputDebugStringA(const char *lpOutputString);
+#if defined(_WIN32) /* don't drag in windows.h */
+extern "C" __declspec(dllimport) void __stdcall OutputDebugStringA(
+    const char *lpOutputString);
 #endif
 
 
