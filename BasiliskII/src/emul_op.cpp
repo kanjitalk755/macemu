@@ -235,8 +235,6 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 
 		case M68K_EMUL_OP_MICROSECONDS: 	// Microseconds() replacement
 			Microseconds(r->a[0], r->d[0]);
-			/* General: keep audio mixer rotating while guest thrash-polls time. */
-			AudioServicePendingInterrupt();
 			break;
 
 		case M68K_EMUL_OP_INSTALL_DRIVERS: {// Patch to install our own drivers during startup
