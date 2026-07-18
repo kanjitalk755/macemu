@@ -424,7 +424,7 @@ int main(int argc, char **argv)
 	D(bug("Initialization complete\n"));
 
 	// Write protect ROM if not in MSVC's debugger
-#if defined(_WIN32)
+#if defined(_WIN64) /* IsDebuggerPresent is always in Win64; Win32 dynload*/
 	if (IsDebuggerPresent())
 		vm_protect(ROMBaseHost, ROM_AREA_SIZE, VM_PAGE_READ | VM_PAGE_WRITE);
 	else

@@ -125,7 +125,7 @@ static void powerpc_decode_instruction(instruction_t *instruction, unsigned int 
 	unsigned int rb = (opcode >> 11) & 0x1f;
 	unsigned int rd = (opcode >> 21) & 0x1f;
 	signed int imm = (signed short)(opcode & 0xffff);
-	
+
 	// Analyze opcode
 	transfer_type_t transfer_type = SIGSEGV_TRANSFER_UNKNOWN;
 	transfer_size_t transfer_size = SIZE_UNKNOWN;
@@ -163,7 +163,7 @@ static void powerpc_decode_instruction(instruction_t *instruction, unsigned int 
 			transfer_type = SIGSEGV_TRANSFER_STORE; transfer_size = SIZE_WORD; addr_mode = MODE_UX; break;
 		}
 		break;
-	
+
 	case 32:	// lwz
 		transfer_type = SIGSEGV_TRANSFER_LOAD; transfer_size = SIZE_LONG; addr_mode = MODE_NORM; break;
 	case 33:	// lwzu
@@ -205,7 +205,7 @@ static void powerpc_decode_instruction(instruction_t *instruction, unsigned int 
 		imm &= ~3;
 		break;
 	}
-	
+
 	// Calculate effective address
 	unsigned int addr = 0;
 	switch (addr_mode) {
@@ -226,7 +226,7 @@ static void powerpc_decode_instruction(instruction_t *instruction, unsigned int 
 	default:
 		break;
 	}
-        
+
 	// Commit decoded instruction
 	instruction->addr = addr;
 	instruction->addr_mode = addr_mode;
@@ -1023,7 +1023,7 @@ static inline int ix86_step_over_modrm(unsigned char * p)
 	case 3: // register
 		return 0;
 	}
-	
+
 	// SIB Byte
 	if (rm == 4) {
 		if (mod == 0 && (p[1] & 7) == 5)
@@ -1041,9 +1041,13 @@ static bool ix86_skip_instruction(SIGSEGV_REGISTER_TYPE * regs)
 
 	if (eip == 0)
 		return false;
-	/* Do not use IsBadCodePtr(): it is unreliable on modern Windows/x64 and
-	 * can false-fail, which turns every ignoresegv into a re-fault loop. */
-	
+	/* IsBadCodePtr is unreliable and causes
+		infinite debugger loops on modern Win64 */
+	#if defined(_WIN32) && !defined(_WIN64)
+		if (IsBadCodePtr((FARPROC)eip))
+			return false;
+	#endif
+
 	enum instruction_type_t {
 		i_MOV,
 		i_ADD
@@ -1052,7 +1056,7 @@ static bool ix86_skip_instruction(SIGSEGV_REGISTER_TYPE * regs)
 	transfer_type_t transfer_type = SIGSEGV_TRANSFER_UNKNOWN;
 	transfer_size_t transfer_size = SIZE_LONG;
 	instruction_type_t instruction_type = i_MOV;
-	
+
 	int reg = -1;
 	int len = 0;
 
@@ -1219,7 +1223,7 @@ static bool ix86_skip_instruction(SIGSEGV_REGISTER_TYPE * regs)
 			X86_REG_R12, X86_REG_R13, X86_REG_R14, X86_REG_R15,
 #endif
 		};
-		
+
 		if (reg < 0 || reg >= (int)(sizeof(x86_reg_map)/sizeof(x86_reg_map[0])))
 			return false;
 
@@ -1252,7 +1256,7 @@ static bool ix86_skip_instruction(SIGSEGV_REGISTER_TYPE * regs)
 		   transfer_size == SIZE_LONG ? "long" :
 		   transfer_size == SIZE_QUAD ? "quad" : "unknown",
 		   transfer_type == SIGSEGV_TRANSFER_LOAD ? "read" : "write");
-	
+
 	if (reg != -1) {
 		static const char * x86_byte_reg_str_map[] = {
 			"al",   "cl",   "dl",   "bl",
@@ -1295,7 +1299,7 @@ static bool ix86_skip_instruction(SIGSEGV_REGISTER_TYPE * regs)
 	}
 	printf(", %d bytes instruction\n", len);
 #endif
-	
+
 	regs[X86_REG_EIP] += len;
 	return true;
 }
@@ -2090,7 +2094,7 @@ static bool powerpc_skip_instruction(unsigned long * nip_p, unsigned long * regs
 {
 	instruction_t instr;
 	powerpc_decode_instruction(&instr, *nip_p, regs);
-	
+
 	if (instr.transfer_type == SIGSEGV_TRANSFER_UNKNOWN) {
 		// Unknown machine code, let it crash. Then patch the decoder
 		return false;
@@ -2102,18 +2106,18 @@ static bool powerpc_skip_instruction(unsigned long * nip_p, unsigned long * regs
 		   instr.transfer_size == SIZE_WORD ? "word" :
 		   instr.transfer_size == SIZE_LONG ? "long" : "quad",
 		   instr.transfer_type == SIGSEGV_TRANSFER_LOAD ? "read" : "write");
-	
+
 	if (instr.addr_mode == MODE_U || instr.addr_mode == MODE_UX)
 		printf(" r%d (ra = %08x)\n", instr.ra, instr.addr);
 	if (instr.transfer_type == SIGSEGV_TRANSFER_LOAD)
 		printf(" r%d (rd = 0)\n", instr.rd);
 #endif
-	
+
 	if (instr.addr_mode == MODE_U || instr.addr_mode == MODE_UX)
 		regs[instr.ra] = instr.addr;
 	if (instr.transfer_type == SIGSEGV_TRANSFER_LOAD)
 		regs[instr.rd] = 0;
-	
+
 	*nip_p += 4;
 	return true;
 }
@@ -3112,6 +3116,7 @@ static LONG WINAPI main_exception_filter(EXCEPTION_POINTERS *ExceptionInfo)
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 
+#if defined(_WIN64)
 /* First-chance path that works with a debugger attached. */
 static LONG WINAPI main_vectored_exception_handler(EXCEPTION_POINTERS *ExceptionInfo)
 {
@@ -3120,7 +3125,7 @@ static LONG WINAPI main_vectored_exception_handler(EXCEPTION_POINTERS *Exception
 
 	return EXCEPTION_CONTINUE_SEARCH;
 }
-
+#endif /* #if defined(_WIN64) */
 #if defined __CYGWIN__ && defined __i386__
 /* In Cygwin programs, SetUnhandledExceptionFilter has no effect because Cygwin
    installs a global exception handler.  We have to dig deep in order to install
@@ -3178,15 +3183,15 @@ do_install_main_exception_filter ()
 }
 
 #else
-
+#if defined(_WIN64) /* vectored EH is Win2k+ */
 static PVOID win32_veh_handle = NULL;
-
+#endif
 static void
 do_install_main_exception_filter ()
 {
   /* Keep the top-level filter for non-debug runs (and as a backstop). */
   SetUnhandledExceptionFilter ((LPTOP_LEVEL_EXCEPTION_FILTER) &main_exception_filter);
-
+  #if defined(_WIN64)
   /*
    * Vectored handler: required so ignoresegv/instruction-skip works under
    * Visual Studio / cdb. Call with FirstHandler=TRUE so we run early among
@@ -3208,6 +3213,7 @@ do_install_main_exception_filter ()
       fflush(stderr);
     }
   }
+  #endif /* #if defined(_WIN64) */
 }
 #endif
 
@@ -3261,7 +3267,7 @@ void sigsegv_deinstall_handler(void)
 #endif
 #ifdef HAVE_WIN32_EXCEPTIONS
 	sigsegv_fault_handler = NULL;
-#if !(defined __CYGWIN__ && defined __i386__)
+#if !(defined __CYGWIN__ && defined __i386__) && defined(_WIN64)
 	if (win32_veh_handle != NULL) {
 		RemoveVectoredExceptionHandler(win32_veh_handle);
 		win32_veh_handle = NULL;
@@ -3432,11 +3438,11 @@ int main(void)
 	page_size = vm_get_page_size();
 	if ((page = (char *)vm_acquire(page_size)) == VM_MAP_FAILED)
 		return 2;
-	
+
 	memset((void *)page, 0, page_size);
 	if (vm_protect((char *)page, page_size, VM_PAGE_READ) < 0)
 		return 3;
-	
+
 	if (!sigsegv_install_handler(sigsegv_test_handler))
 		return 4;
 
@@ -3470,16 +3476,16 @@ int main(void)
 #ifdef HAVE_SIGSEGV_SKIP_INSTRUCTION
 	if (!sigsegv_install_handler(sigsegv_insn_handler))
 		return 6;
-	
+
 	if (vm_protect((char *)page, page_size, VM_PAGE_READ | VM_PAGE_WRITE) < 0)
 		return 7;
-	
+
 	for (int i = 0; i < page_size; i++)
 		page[i] = (i + 1) % page_size;
-	
+
 	if (vm_protect((char *)page, page_size, VM_PAGE_NOACCESS) < 0)
 		return 8;
-	
+
 #define TEST_SKIP_INSTRUCTION(TYPE) do {				\
 		const unsigned long TAG = 0x12345678 |			\
 		(sizeof(long) == 8 ? 0x9abcdef0UL << 31 : 0);	\
@@ -3488,7 +3494,7 @@ int main(void)
 		if (effect != TAG)								\
 			return 9;									\
 	} while (0)
-	
+
 #ifdef __GNUC__
 	b_region = &&L_b_region2;
 	e_region = &&L_e_region2;
