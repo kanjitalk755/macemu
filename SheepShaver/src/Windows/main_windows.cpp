@@ -46,21 +46,6 @@
 #include "util_windows.h"
 //#include "kernel_windows.h"
 
-#if defined(QD3D_WAIT_LOGGING_ENABLED) && QD3D_WAIT_LOGGING_ENABLED
-#include "qd3d_init_logging.h"
-static bool main_windows_descent_ii_is_current_application()
-{
-	return ReadMacInt32(0x0910) == 0x0a446573 &&
-	       ReadMacInt32(0x0914) == 0x63656e74 &&
-	       (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900;
-}
-#else
-#ifndef QD3D_WAIT_LOGGING_ENABLED
-#define QD3D_WAIT_LOGGING_ENABLED 0
-#endif
-#define QD3D_WAIT_LOG(...) do { } while (0)
-#endif
-
 #define DEBUG 0
 #include "debug.h"
 
@@ -438,17 +423,14 @@ int main(int argc, char **argv)
 		goto quit;
 	D(bug("Initialization complete\n"));
 
-	// Write protect ROM (guest stores are recovered by the SEGV skip
-	// handler — no per-write check on the emul hot path).
-	vm_protect(ROMBaseHost, ROM_AREA_SIZE, VM_PAGE_READ);
+	// Write protect ROM if not in MSVC's debugger
 #if defined(_WIN32)
-	// MSVC breaks on first-chance access violations before our SEH filter
-	// can skip the instruction. When a debugger is attached, leave ROM
-	// writable so those expected guest ROM stores never AV. Normal runs
-	// keep RO + SEGV recovery. Zero cost on the memory-write path.
 	if (IsDebuggerPresent())
 		vm_protect(ROMBaseHost, ROM_AREA_SIZE, VM_PAGE_READ | VM_PAGE_WRITE);
+	else
 #endif
+		vm_protect(ROMBaseHost, ROM_AREA_SIZE, VM_PAGE_READ);
+
 
 	// Start 60Hz thread
 	tick_thread_cancel = false;
@@ -678,7 +660,7 @@ static void nvram_watchdog(void)
 	}
 }
 
-static DWORD WINAPI nvram_func(void *arg)
+static DWORD nvram_func(void *arg)
 {
 	while (!nvram_thread_cancel) {
 		for (int i=0; i<60 && !nvram_thread_cancel; i++)
@@ -697,57 +679,20 @@ bool tick_inhibit;
 static DWORD WINAPI tick_func(void *arg)
 {
 	int tick_counter = 0;
-#if QD3D_WAIT_LOGGING_ENABLED
-	uint32 inhibited_ticks = 0;
-	uint32 irq_blocked_ticks = 0;
-#endif
 	uint64 start = GetTicks_usec();
 	int64 ticks = 0;
 	uint64 next = GetTicks_usec();
-	// VIA ticks owed to the guest because delivery was skipped while it was
-	// nested inside interrupt handling (XLM_IRQ_NEST != 0). A real VIA is
-	// level-triggered: a held-off interrupt fires as soon as the handler
-	// returns, so TickCount lags but does not lose time. Dropping ticks
-	// instead starves TickCount/Time Manager progress while the guest
-	// busy-waits at interrupt level (Descent II movie startup), which
-	// stretches its waits even further. Deliver owed ticks at 4x rate,
-	// capped at half a second of backlog.
-	int pending_via_ticks = 0;
 
 	while (!tick_thread_cancel) {
 
 		// Wait
-		next += (pending_via_ticks > 0) ? 16625 / 4 : 16625;
+		next += 16625;
 		int64 delay = next - GetTicks_usec();
 		if (delay > 0)
 			Delay_usec(delay);
 		else if (delay < -16625)
 			next = GetTicks_usec();
-#if QD3D_WAIT_LOGGING_ENABLED
-		const int64 wake_lateness = delay < -16625 ? -delay : GetTicks_usec() - next;
-		const bool log_descent_tick = main_windows_descent_ii_is_current_application();
-		if (log_descent_tick && wake_lateness > 25000)
-			QD3D_WAIT_LOG("60Hz producer late tick=%u latenessUsec=%lld irqNest=%d inhibited=%u",
-			              ReadMacInt32(0x016a), (long long)wake_lateness,
-			              (int32)ReadMacInt32(XLM_IRQ_NEST), tick_inhibit ? 1u : 0u);
-#endif
-		if (tick_inhibit) {
-		#if QD3D_WAIT_LOGGING_ENABLED
-			inhibited_ticks++;
-			if (log_descent_tick && (inhibited_ticks == 2 || (inhibited_ticks % 30) == 0))
-				QD3D_WAIT_LOG("60Hz producer inhibited tick=%u consecutiveTicks=%u",
-				              ReadMacInt32(0x016a), inhibited_ticks);
-		#endif
-			continue;
-		}
-	#if QD3D_WAIT_LOGGING_ENABLED
-		if (inhibited_ticks) {
-			if (log_descent_tick && inhibited_ticks >= 2)
-				QD3D_WAIT_LOG("60Hz producer resumed tick=%u afterTicks=%u",
-				              ReadMacInt32(0x016a), inhibited_ticks);
-			inhibited_ticks = 0;
-		}
-	#endif
+		if (tick_inhibit) continue;
 		ticks++;
 
 		// Pseudo Mac 1Hz interrupt, update local time
@@ -757,40 +702,9 @@ static DWORD WINAPI tick_func(void *arg)
 		}
 
 		// Trigger 60Hz interrupt
-		const int32 irq_nest = (int32)ReadMacInt32(XLM_IRQ_NEST);
-		const bool via_still_pending = (InterruptFlags & INTFLAG_VIA) != 0;
-		if (irq_nest == 0) {
-#if QD3D_WAIT_LOGGING_ENABLED
-			if (log_descent_tick && irq_blocked_ticks >= 2)
-				QD3D_WAIT_LOG("60Hz IRQ delivery resumed tick=%u afterBlockedTicks=%u pending=%d",
-				              ReadMacInt32(0x016a), irq_blocked_ticks, pending_via_ticks);
-			irq_blocked_ticks = 0;
-#endif
-			// If the previous VIA interrupt has not been consumed yet, this
-			// delivery merges with it and a TickCount increment is lost; owe
-			// it instead of forgetting it. Never gate delivery on the flag:
-			// during early boot the guest does not consume interrupts at all,
-			// and withholding delivery would wedge startup.
-			if (via_still_pending) {
-				if (pending_via_ticks < 30)
-					pending_via_ticks++;
-			} else if (pending_via_ticks > 0) {
-				pending_via_ticks--;
-			}
+		if (ReadMacInt32(XLM_IRQ_NEST) == 0) {
 			SetInterruptFlag(INTFLAG_VIA);
 			TriggerInterrupt();
-		} else {
-			// Guest is nested in interrupt handling; the tick is not delivered
-			// at all, so owe it for catch-up.
-			if (pending_via_ticks < 30)
-				pending_via_ticks++;
-#if QD3D_WAIT_LOGGING_ENABLED
-			irq_blocked_ticks++;
-			if (log_descent_tick && (irq_blocked_ticks == 2 || (irq_blocked_ticks % 30) == 0))
-				QD3D_WAIT_LOG("60Hz IRQ delivery blocked tick=%u consecutiveTicks=%u irqNest=%d viaPending=%d",
-				              ReadMacInt32(0x016a), irq_blocked_ticks, irq_nest,
-				              via_still_pending ? 1 : 0);
-#endif
 		}
 	}
 

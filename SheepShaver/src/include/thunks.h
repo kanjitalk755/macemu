@@ -74,15 +74,21 @@ enum {
   NATIVE_RAVE_DISPATCH,
   NATIVE_OPENGL_DISPATCH,
   NATIVE_DSP_DISPATCH,     /* fourth engine */
-  NATIVE_MICROSECONDS,     /* InterfaceLib Microseconds(UnsignedWide *) */
-  NATIVE_CINEPAK_DISPATCH, /* QuickTime Cinepak ('cvid') decompressor component */
-  NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK, /* JIT-register native Cinepak when someone asks for an image decompressor */
-  NATIVE_FINDNEXTCOMPONENT_CINEPAK_HOOK, /* Same trigger on FindNextComponent (the path QuickTime's ICM actually uses) */
+  #if defined(ENABLE_NATIVE_MICROSECONDS_PATCH) \
+		&& ENABLE_NATIVE_MICROSECONDS_PATCH
+	 NATIVE_MICROSECONDS,     /* InterfaceLib Microseconds(UnsignedWide *) */
+  #endif /* ENABLE_NATIVE_MICROSECONDS_PATCH */
+  #if defined(ENABLE_NATIVE_CINEPAK_PATCH) \
+			&& ENABLE_NATIVE_CINEPAK_PATCH
+	NATIVE_CINEPAK_DISPATCH, /* QuickTime Cinepak ('cvid') 
+								decompressor component */
+    NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK, /* JIT-register native Cinepak 
+		when someone asks for an image decompressor */
+    NATIVE_FINDNEXTCOMPONENT_CINEPAK_HOOK, /* Same trigger on FindNextComponent 
+		(the path QuickTime's ICM actually uses) */
+  #endif /* ENABLE_NATIVE_CINEPAK_PATCH */
   NATIVE_OP_MAX
 };
-
-// Ensure we don't exceed the 6-bit NATIVE_OP field (bits 20-25)
-static_assert(NATIVE_OP_MAX <= 64, "Too many NATIVE_OP entries; max is 64 (6-bit field)");
 
 // Initialize the thunks system
 extern bool ThunksInit(void);

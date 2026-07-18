@@ -1,8 +1,6 @@
 /*
  *  rave_thunks.cpp - RAVE PPC-to-native thunk allocation
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
  *  Allocates 53 PPC-callable TVECTs in SheepMem for RAVE draw and engine
  *  methods. Each TVECT writes a sub-opcode to a scratch word then executes
  *  NATIVE_RAVE_DISPATCH to reach the native dispatch handler.

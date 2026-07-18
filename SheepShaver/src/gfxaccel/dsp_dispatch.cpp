@@ -1,13 +1,6 @@
 /*
  *  dsp_dispatch.cpp - DSp multiplexed dispatch from sub-opcode to handlers
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  DSpDispatch is invoked from sheepshaver_glue.cpp's NATIVE_DSP_DISPATCH
  *  case. The SUB-OPCODE is read from dsp_scratch_addr (Mac memory word
  *  written by the PPC TVECT thunk's `stw r12, 0(r11)` — see

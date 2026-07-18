@@ -1,13 +1,6 @@
 /*
  *  rave_engine.cpp - RAVE engine registration and callbacks
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  Implements the three core RAVE engine callbacks:
  *    - NativeEngineGetMethod: returns TVECTs for all 18 engine method tags
  *    - NativeEngineGestalt: responds to all 18 gestalt selectors

@@ -1,8 +1,6 @@
 /*
  *  gl_thunks.cpp - OpenGL PPC-to-native thunk allocation
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
  *  Allocates PPC-callable TVECTs in SheepMem for all GL/AGL/GLU/GLUT
  *  functions (~643 total). Each TVECT writes a sub-opcode to a scratch
  *  word then executes NATIVE_OPENGL_DISPATCH to reach the native handler.

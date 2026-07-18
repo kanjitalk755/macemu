@@ -1,13 +1,6 @@
 /*
  *  gl_defer.cpp - Track-A GL immediate-mode deferred-batching descriptor table
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  ---------------------------------------------------------------------------
  *  Task 2 scope: the hand-authored descriptor table only.
  *
@@ -87,8 +80,6 @@ uint32_t gl_defer_head_addr    = 0;
 uint32_t gl_defer_count_addr   = 0;
 uint32_t gl_defer_enabled_addr = 0;
 uint32_t gl_defer_common_tail  = 0;
-
-namespace {
 
 // One authored row: opcode + its descriptor fields. deferrable is forced to 1
 // when scattered, so it is not repeated here.
@@ -346,7 +337,6 @@ int record_size(const GLDeferDesc &d) {
          + round_up_4((int)d.ptr_bytes);
 }
 
-}  // namespace
 
 void GLDeferBuildDescriptors(void) {
     std::memset(gl_defer_desc, 0, sizeof(gl_defer_desc));

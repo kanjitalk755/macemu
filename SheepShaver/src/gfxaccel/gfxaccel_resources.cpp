@@ -1,13 +1,6 @@
 /*
  *  gfxaccel_resources.cpp - resource-manager fan-out logic.
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  Pure C++ companion to gfxaccel_resources.mm. Owns:
  *    - the DMC subscription handshake (dmc_subscribe under name
  *      "gfxaccel_resources");
@@ -49,7 +42,6 @@ extern "C" void gfxaccel_handle_foreground_enter(void);
 extern "C" void gfxaccel_set_dsp_background_hook(GfxAccelLifecycleHookFn fn, void *ctx);
 extern "C" void gfxaccel_set_dsp_foreground_hook(GfxAccelLifecycleHookFn fn, void *ctx);
 
-namespace {
 
 // Internal registry entry. NOT exposed in the public header -
 // callers interact via register_engine / unregister_engine only.
@@ -127,7 +119,6 @@ static int32_t GfxRes_OnModeEnter(const struct DMCModeSnapshot *incoming, void *
 	return kDMCNoErr;
 }
 
-} // namespace (anonymous)
 
 // ---------------------------------------------------------------------------
 // Public API

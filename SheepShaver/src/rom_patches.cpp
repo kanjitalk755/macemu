@@ -65,10 +65,10 @@ const uint32 ZERO_SCRAP_PATCH_SPACE = 0x2fcf80;
 const uint32 PUT_SCRAP_PATCH_SPACE = 0x2fcfc0;
 const uint32 GET_SCRAP_PATCH_SPACE = 0x2fd100;
 const uint32 ADDR_MAP_PATCH_SPACE = 0x2fd140;
+#if ENABLE_NATIVE_MICROSECONDS_PATCH
 /* Host ClockGetTime intercept: EMUL_OP then optional JMP to original A82A. */
 extern const uint32 COMPONENT_DISPATCH_PATCH_SPACE = 0x2fd280;
-/* ROM offset of original A82A body (set in PatchROM when stub is built). */
-static uint32 g_a82a_orig_off;
+#endif
 
 // Global variables
 int ROMType;				// ROM type
@@ -161,7 +161,7 @@ bool DecodeROM(uint8 *data, uint32 size)
 		// CHRP compressed ROM image
 		uint32 image_offset, image_size;
 		bool decode_info_ok = false;
-		
+
 		char *s = strstr((char *)data, "constant lzss-offset");
 		if (s != NULL) {
 			// Probably a plain LZSS compressed ROM image
@@ -182,11 +182,11 @@ bool DecodeROM(uint8 *data, uint32 size)
 				}
 			}
 		}
-		
+
 		// No valid information to decode the ROM found?
 		if (!decode_info_ok)
 			return false;
-		
+
 		// Check signature, this could be a parcels-based ROM image
 		uint32 rom_signature = ntohl(*(uint32 *)(data + image_offset));
 		if (rom_signature == FOURCC('p','r','c','l')) {
@@ -698,7 +698,7 @@ bool PatchROM(void)
 		ROMType = ROMTYPE_NEWWORLD;
 	else
 		return false;
-	
+
 	// Check that other ROM addresses point to really free regions
 	if (!check_rom_patch_space(CHECK_LOAD_PATCH_SPACE, 0x40))
 		return false;
@@ -710,8 +710,10 @@ bool PatchROM(void)
 		return false;
 	if (!check_rom_patch_space(ADDR_MAP_PATCH_SPACE - 10 * 4, 0x100))
 		return false;
+	#if ENABLE_NATIVE_MICROSECONDS_PATCH
 	if (!check_rom_patch_space(COMPONENT_DISPATCH_PATCH_SPACE, 0x40))
 		return false;
+	#endif
 
 	// Apply patches
 	if (!patch_nanokernel_boot()) return false;
@@ -1019,7 +1021,7 @@ static bool patch_nanokernel_boot(void)
 	if ((base = find_rom_data(0x310000, 0x320000, pm_check_dat, sizeof(pm_check_dat))) == 0) return false;
 	D(bug("pm_check %08lx\n", base));
 	lp = (uint32 *)(ROMBaseHost + base);
-	
+
 	static const int spr_check_list[] = {
 		952 /* mmcr0 */, 953 /* pmc1 */, 954 /* pmc2 */, 955 /* sia */,
 		956 /* mmcr1 */, 957 /* pmc3 */, 958 /* pmc4 */, 959 /* sda */
@@ -2319,11 +2321,6 @@ static bool patch_68k(void)
 	base = ROMBase + ReadMacInt32(ROMBase + 0x22);
 	WriteMacInt32(base + 4 * (0xa9fd & 0x3ff), GET_SCRAP_PATCH_SPACE);
 
-	/* A82A host-clock experiments disabled (black screen / silence). Leave
-	 * trap and guest code alone. Patch space reserved but unused. */
-	(void)COMPONENT_DISPATCH_PATCH_SPACE;
-	(void)g_a82a_orig_off;
-
 	// Patch SynchIdleTime()
 	if (PrefsFindBool("idlewait")) {
 		base = find_rom_trap(0xabf7) + 4;						// SynchIdleTime()
@@ -2374,7 +2371,7 @@ static bool patch_68k(void)
 			*wp++ = htons(0x4e74); *wp++ = htons(0x0008);	// rtd #8
 		}
 	}
-	
+
 	return true;
 }
 
@@ -2493,14 +2490,4 @@ void InstallDrivers(void)
 	WriteMacInt32(dce + dCtlDriver, ROMBase + sony_offset + 0x600);
 	WriteMacInt16(dce + dCtlFlags, 0x4e00);
 
-}
-
-/*
- * Intentionally empty — rebinding A82A (table poke and/or SetToolTrap) still
- * crashes this build when activated at movie start. Stub is prepared in
- * PatchROM for future work; see descent-movie-session §22.7.
- */
-void InstallComponentDispatchPatch(void)
-{
-	(void)g_a82a_orig_off;
 }

@@ -1,13 +1,6 @@
 /*
  *  dsp_engine.cpp - DrawSprocket (DSp) engine lifecycle
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  The three lifecycle handlers:
  *    - DSpStartupHandler: idempotent refcount-based init that registers
  *      gfxaccel_resources attach/detach handlers on the first call.
@@ -80,7 +73,7 @@ static struct DSpLogInit {
 #endif
 
 /* Diagnostic logging is enabled by default for graphics diagnostics. */
-bool dsp_logging_enabled = accel_log_detail::subsystem_on("dsp");
+bool dsp_logging_enabled = accel_log_subsystem_on("dsp");
 #endif /* ACCEL_LOGGING_ENABLED */
 
 /*

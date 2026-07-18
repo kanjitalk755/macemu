@@ -40,13 +40,12 @@
 #include <cstdlib>
 #include <cstring>
 
-namespace accel_log_detail {
 
 /* True if GFXACCEL_LOG is unset, "all", or a comma list containing `name`.
  * Unset => all-on, preserving the legacy "compile flag on => logs on".
  * Each subsystem calls this to initialise its gate bool at definition,
  * which is order-independent (no static-init ordering hazards). */
-inline bool subsystem_on(const char *name) {
+inline bool accel_log_subsystem_on(const char *name) {
     const char *env = std::getenv("GFXACCEL_LOG");
     if (!env || !*env) return true;
     /* Comma-wrap the value and the name and substring-search. Uses C strings
@@ -61,7 +60,7 @@ inline bool subsystem_on(const char *name) {
 }
 
 /* True if GFXACCEL_LOG_VERBOSE is set to a truthy value (1/t/y). */
-inline bool verbose_env() {
+inline bool accel_log_verbose_env() {
     const char *e = std::getenv("GFXACCEL_LOG_VERBOSE");
     if (!e || !*e) return false;
     return e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y';
@@ -70,11 +69,10 @@ inline bool verbose_env() {
 /* Shared verbose flag, read once from the environment on first use. The
  * thread-safe local static is a single instance across all TUs (C++14),
  * so no per-subsystem wiring is needed. */
-inline bool verbose() { static bool v = verbose_env(); return v; }
+inline bool accel_log_verbose() { static bool v = verbose_env(); return v; }
 
-} /* namespace accel_log_detail */
 
-#define ACCEL_LOG_VERBOSE (accel_log_detail::verbose())
+#define ACCEL_LOG_VERBOSE (accel_log_verbose())
 
 #else  /* !ACCEL_LOGGING_ENABLED */
 #define ACCEL_LOG_VERBOSE false

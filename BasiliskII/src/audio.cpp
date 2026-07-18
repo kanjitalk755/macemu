@@ -34,10 +34,6 @@
 #include "user_strings.h"
 #include "cdrom.h"
 
-#include <cstdio>
-
-/* SheepShaver always stages qd3d_init_logging.h (DESCENT_MOVIE_DIAGNOSTICS).
- * Basilisk II alone may not have it; keep audio logging optional either way. */
 #if defined(SHEEPSHAVER)
 #include "qd3d_init_logging.h"
 #elif defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
@@ -47,9 +43,6 @@
 #define QD3D_AUDIO_LOGGING_ENABLED 0
 #endif
 #define QD3D_AUDIO_LOG(...) do { } while (0)
-#endif
-#ifndef DESCENT_MOVIE_DIAGNOSTICS
-#define DESCENT_MOVIE_DIAGNOSTICS 0
 #endif
 #ifndef DESCENT_MOVIE_UNPAUSE_PRIME
 #define DESCENT_MOVIE_UNPAUSE_PRIME 0
@@ -87,271 +80,6 @@ static uint32 diagnostic_pb_data;
 static uint32 diagnostic_poll_count;
 #endif
 
-#if DESCENT_MOVIE_DIAGNOSTICS
-/* 68k A7 from OP_AUDIO_DISPATCH so we can log return PCs for mixer ops. */
-static uint32 descent_diag_a7;
-static uint32 descent_psb_seq;
-/* Last prime buffer — diagnostics only (anomaly tags), not a restore path. */
-static uint32 descent_last_prime_data;
-static uint32 descent_last_prime_frames;
-static uint32 descent_last_prime_source;
-static uint32 descent_last_prime_pb;
-
-void DescentMovieDiagNote68kStack(uint32 a7)
-{
-	descent_diag_a7 = a7;
-}
-
-static void descent_movie_audio_puts(const char *msg)
-{
-	std::fputs(msg, stderr);
-	std::fflush(stderr);
-#ifdef _WIN32
-	OutputDebugStringA(msg);
-#endif
-}
-
-static bool descent_movie_audio_addr_ok(uint32 a)
-{
-	return a >= 0x1000 && a < 0x40000000;
-}
-
-static void descent_movie_read_stack(uint32 *out, int n)
-{
-	for (int i = 0; i < n; i++)
-		out[i] = 0;
-	if (!descent_movie_audio_addr_ok(descent_diag_a7))
-		return;
-	for (int i = 0; i < n; i++) {
-		const uint32 a = descent_diag_a7 + uint32(i * 4);
-		if (a >= 0x40000000 - 4)
-			break;
-		out[i] = ReadMacInt32(a);
-	}
-}
-
-/* FNV-1a over first up-to-64 guest bytes (or 0 if unreadable). */
-static uint32 descent_movie_sample_hash(uint32 mac_ptr, uint32 nbytes)
-{
-	if (!mac_ptr || !descent_movie_audio_addr_ok(mac_ptr) || !nbytes)
-		return 0;
-	const uint32 n = nbytes > 64 ? 64 : nbytes;
-	uint8 *host = Mac2HostAddr(mac_ptr);
-	if (!host)
-		return 0;
-	uint32 h = 2166136261u;
-	for (uint32 i = 0; i < n; i++)
-		h = (h ^ host[i]) * 16777619u;
-	return h;
-}
-
-/* Dump ScheduledSoundHeader / source buffer record (observed layout from logs). */
-static void descent_movie_log_pb(const char *tag, uint32 pb, uint32 source,
-                                 uint32 actions_in, uint32 actions_out, int32 call_res)
-{
-	if (!pb || !descent_movie_audio_addr_ok(pb)) {
-		char msg[192];
-		std::snprintf(msg, sizeof(msg),
-		              "[QD3D:wait] %s pb=null/bad source=0x%08x actionsIn=0x%08x "
-		              "actionsOut=0x%08x callRes=%d tick=%u\n",
-		              tag, source, actions_in, actions_out, call_res,
-		              ReadMacInt32(0x016a));
-		descent_movie_audio_puts(msg);
-		return;
-	}
-
-	uint32 w[18];
-	for (int i = 0; i < 18; i++)
-		w[i] = ReadMacInt32(pb + uint32(i * 4));
-
-	const uint32 rec_bytes = w[0];
-	const uint32 fmt = w[2];
-	const uint16 ch = ReadMacInt16(pb + 12);
-	const uint16 ss = ReadMacInt16(pb + 14);
-	const uint32 rate = w[4];
-	const uint32 frames = w[5];
-	const uint32 data = w[6];
-	const uint32 rate_mult = w[8];
-	const uint32 more = w[12];
-	const uint32 done = w[13];
-	const uint32 ref = w[14];
-	const int16 pb_res = ReadMacInt16(pb + 60);
-	const uint32 byte_est =
-		frames * (ss ? (ss / 8u) : 0u) * (ch ? ch : 0u);
-	const uint32 hash = descent_movie_sample_hash(data, byte_est ? byte_est : 64);
-
-	char msg[768];
-	std::snprintf(msg, sizeof(msg),
-	              "[QD3D:wait] %s tick=%u source=0x%08x pb=0x%08x "
-	              "actionsIn=0x%08x actionsOut=0x%08x callRes=%d pbRes=%d "
-	              "recBytes=%u fmt=%c%c%c%c ch=%u ss=%u rate=%u frames=%u "
-	              "data=0x%08x rateMult=0x%08x more=0x%08x done=0x%08x ref=0x%08x "
-	              "byteEst=%u dataHash=%08x wallUs=%llu\n",
-	              tag, ReadMacInt32(0x016a), source, pb,
-	              actions_in, actions_out, call_res, (int)pb_res,
-	              rec_bytes,
-	              (fmt >> 24) & 0xff, (fmt >> 16) & 0xff,
-	              (fmt >> 8) & 0xff, fmt & 0xff,
-	              ch, ss, rate >> 16, frames, data, rate_mult, more, done, ref,
-	              byte_est, hash, (unsigned long long)GetTicks_usec());
-	descent_movie_audio_puts(msg);
-
-	/* Raw 72-byte PB as 18 big-endian words for offline decode. */
-	std::snprintf(msg, sizeof(msg),
-	              "[QD3D:wait] %s words pb=0x%08x "
-	              "%08x %08x %08x %08x %08x %08x %08x %08x "
-	              "%08x %08x %08x %08x %08x %08x %08x %08x "
-	              "%08x %08x\n",
-	              tag, pb,
-	              w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7],
-	              w[8], w[9], w[10], w[11], w[12], w[13], w[14], w[15],
-	              w[16], w[17]);
-	descent_movie_audio_puts(msg);
-
-	if (data && descent_movie_audio_addr_ok(data)) {
-		uint8 *host = Mac2HostAddr(data);
-		if (host) {
-			std::snprintf(msg, sizeof(msg),
-			              "[QD3D:wait] %s sample16 pb=0x%08x data=0x%08x "
-			              "%02x%02x %02x%02x %02x%02x %02x%02x "
-			              "%02x%02x %02x%02x %02x%02x %02x%02x\n",
-			              tag, pb, data,
-			              host[0], host[1], host[2], host[3],
-			              host[4], host[5], host[6], host[7],
-			              host[8], host[9], host[10], host[11],
-			              host[12], host[13], host[14], host[15]);
-			descent_movie_audio_puts(msg);
-		}
-	}
-}
-
-static void descent_movie_log_sound_op(const char *op, uint32 params, int32 result)
-{
-	const uint32 tick = ReadMacInt32(0x016a);
-	const uint32 p = params ? params + cp_params : 0;
-	uint32 stk[12];
-	descent_movie_read_stack(stk, 12);
-
-	uint32 p0 = 0, p1 = 0, p2 = 0, p3 = 0, p4 = 0, p5 = 0;
-	if (p && descent_movie_audio_addr_ok(p)) {
-		p0 = ReadMacInt32(p);
-		p1 = ReadMacInt32(p + 4);
-		p2 = ReadMacInt32(p + 8);
-		p3 = ReadMacInt32(p + 12);
-		p4 = ReadMacInt32(p + 16);
-		p5 = ReadMacInt32(p + 20);
-	}
-
-	/* Stop/Start/Pause: source list is often (SoundSource*) at p+0, count at p+4. */
-	uint32 src0 = 0, src1 = 0;
-	uint16 src_count = 0;
-	if (p && descent_movie_audio_addr_ok(p)) {
-		src_count = ReadMacInt16(p + 4);
-		const uint32 list = ReadMacInt32(p);
-		if (list && descent_movie_audio_addr_ok(list)) {
-			src0 = ReadMacInt32(list);
-			if (src_count > 1 && descent_movie_audio_addr_ok(list + 4))
-				src1 = ReadMacInt32(list + 4);
-		}
-	}
-
-	char msg[640];
-	std::snprintf(msg, sizeof(msg),
-	              "[QD3D:wait] SoundOp %s tick=%u sources=%d mixer=0x%08x "
-	              "params=0x%08x p0-5=%08x/%08x/%08x/%08x/%08x/%08x "
-	              "srcCount=%u src0=0x%08x src1=0x%08x result=%d "
-	              "a7=0x%08x stk=%08x/%08x/%08x/%08x/%08x/%08x/"
-	              "%08x/%08x/%08x/%08x/%08x/%08x wallUs=%llu\n",
-	              op, tick, AudioStatus.num_sources, AudioStatus.mixer,
-	              params, p0, p1, p2, p3, p4, p5,
-	              src_count, src0, src1, result, descent_diag_a7,
-	              stk[0], stk[1], stk[2], stk[3], stk[4], stk[5],
-	              stk[6], stk[7], stk[8], stk[9], stk[10], stk[11],
-	              (unsigned long long)GetTicks_usec());
-	descent_movie_audio_puts(msg);
-}
-
-static void descent_movie_log_psb(uint32 actions_in, uint32 actions, uint32 source,
-                                  uint32 pb, int16 pb_res_in, int16 pb_res_out,
-                                  int32 call_res, uint32 data_before,
-                                  uint32 frames_before)
-{
-	descent_psb_seq++;
-	const uint32 frames_after = pb && descent_movie_audio_addr_ok(pb)
-		? ReadMacInt32(pb + 20) : 0;
-	const uint32 data_after = pb && descent_movie_audio_addr_ok(pb)
-		? ReadMacInt32(pb + 24) : 0;
-
-	/* Full PB after mixer call (may have rewritten fields). */
-	descent_movie_log_pb("PlaySourceBuffer post", pb, source, actions_in, actions,
-	                     call_res);
-
-	uint32 stk[8];
-	descent_movie_read_stack(stk, 8);
-	char msg[512];
-	std::snprintf(msg, sizeof(msg),
-	              "[QD3D:wait] PlaySourceBuffer detail seq=%u tick=%u "
-	              "actionsIn=0x%08x actions=0x%08x source=0x%08x pb=0x%08x "
-	              "frames=%u->%u data=0x%08x->0x%08x pbRes=%d->%d callRes=%d "
-	              "sources=%d a7=0x%08x stk=%08x/%08x/%08x/%08x/"
-	              "%08x/%08x/%08x/%08x wallUs=%llu\n",
-	              descent_psb_seq, ReadMacInt32(0x016a),
-	              actions_in, actions, source, pb,
-	              frames_before, frames_after, data_before, data_after,
-	              (int)pb_res_in, (int)pb_res_out, call_res,
-	              AudioStatus.num_sources, descent_diag_a7,
-	              stk[0], stk[1], stk[2], stk[3], stk[4], stk[5], stk[6], stk[7],
-	              (unsigned long long)GetTicks_usec());
-	descent_movie_audio_puts(msg);
-
-	/* Anomaly flags use pre-call guest intent (before mixer may clear data). */
-	if ((actions_in & kSourcePaused) && data_before && frames_before) {
-		descent_last_prime_data = data_before;
-		descent_last_prime_frames = frames_before;
-		descent_last_prime_source = source;
-		descent_last_prime_pb = pb;
-		std::snprintf(msg, sizeof(msg),
-		              "[QD3D:wait] PlaySourceBuffer primeOk seq=%u source=0x%08x "
-		              "pb=0x%08x frames=%u data=0x%08x postData=0x%08x\n",
-		              descent_psb_seq, source, pb, frames_before, data_before,
-		              data_after);
-		descent_movie_audio_puts(msg);
-	}
-	if (!(actions_in & kSourcePaused) && frames_before > 0 && data_before == 0) {
-		std::snprintf(msg, sizeof(msg),
-		              "[QD3D:wait] PlaySourceBuffer startNullData seq=%u "
-		              "source=0x%08x pb=0x%08x frames=%u postData=0x%08x "
-		              "lastPrimeData=0x%08x lastPrimeFrames=%u lastPrimeSrc=0x%08x "
-		              "lastPrimePb=0x%08x samePb=%d\n",
-		              descent_psb_seq, source, pb, frames_before, data_after,
-		              descent_last_prime_data, descent_last_prime_frames,
-		              descent_last_prime_source, descent_last_prime_pb,
-		              (pb == descent_last_prime_pb) ? 1 : 0);
-		descent_movie_audio_puts(msg);
-	}
-	if (!(actions_in & kSourcePaused) && data_before && frames_before) {
-		std::snprintf(msg, sizeof(msg),
-		              "[QD3D:wait] PlaySourceBuffer startWithData seq=%u "
-		              "source=0x%08x pb=0x%08x frames=%u data=0x%08x postData=0x%08x\n",
-		              descent_psb_seq, source, pb, frames_before, data_before,
-		              data_after);
-		descent_movie_audio_puts(msg);
-	}
-	if (!(actions_in & kSourcePaused) && data_before && data_after == 0) {
-		std::snprintf(msg, sizeof(msg),
-		              "[QD3D:wait] PlaySourceBuffer mixerClearedData seq=%u "
-		              "source=0x%08x pb=0x%08x preData=0x%08x frames=%u\n",
-		              descent_psb_seq, source, pb, data_before, frames_before);
-		descent_movie_audio_puts(msg);
-	}
-}
-#else
-void DescentMovieDiagNote68kStack(uint32 a7)
-{
-	(void)a7;
-}
-#endif
-
 /*
  *  Service pending audio interrupt from thrash hot paths.
  *
@@ -374,24 +102,6 @@ void AudioServicePendingInterrupt(void)
 		return;
 	ClearInterruptFlag(INTFLAG_AUDIO);
 	AudioInterrupt();
-#if DESCENT_MOVIE_DIAGNOSTICS
-	{
-		static uint32 service_n;
-		service_n++;
-		if (service_n <= 8 || (service_n % 64) == 0) {
-			char msg[160];
-			std::snprintf(msg, sizeof(msg),
-			              "[QD3D:wait] audioServiceFromThrash n=%u tick=%u sources=%d\n",
-			              service_n, ReadMacInt32(0x016a),
-			              AudioStatus.num_sources);
-			std::fputs(msg, stderr);
-			std::fflush(stderr);
-#ifdef _WIN32
-			OutputDebugStringA(msg);
-#endif
-		}
-	}
-#endif
 }
 
 /*
@@ -585,36 +295,6 @@ void AudioDiagnosticPoll(void)
 		                ReadMacInt32(diagnostic_source_pb + 52),
 		                ReadMacInt32(diagnostic_source_pb + 56), result,
 		                changed ? " changed" : "");
-#if DESCENT_MOVIE_DIAGNOSTICS
-		if (AudioStatus.num_sources >= 2) {
-			const uint32 more = ReadMacInt32(diagnostic_source_pb + 48);
-			const uint32 done = ReadMacInt32(diagnostic_source_pb + 52);
-			const uint32 ref = ReadMacInt32(diagnostic_source_pb + 56);
-			const uint32 hash = descent_movie_sample_hash(data, 64);
-			char msg[384];
-			std::snprintf(msg, sizeof(msg),
-			              "[QD3D:wait] SourcePB tick=%u poll=%u source=0x%08x "
-			              "pb=0x%08x frames=%u data=0x%08x more=0x%08x done=0x%08x "
-			              "ref=0x%08x result=%d changed=%d dataHash=%08x "
-			              "wallUs=%llu\n",
-			              ReadMacInt32(0x016a), diagnostic_poll_count,
-			              diagnostic_source, diagnostic_source_pb,
-			              frames, data, more, done, ref, (int)result,
-			              changed ? 1 : 0, hash,
-			              (unsigned long long)GetTicks_usec());
-			descent_movie_audio_puts(msg);
-			/* Empty after non-empty = buffer retired / underrun signal. */
-			if (diagnostic_pb_frames > 0 && frames == 0) {
-				std::snprintf(msg, sizeof(msg),
-				              "[QD3D:wait] SourcePB emptied tick=%u source=0x%08x "
-				              "pb=0x%08x wasFrames=%u wasData=0x%08x nowResult=%d\n",
-				              ReadMacInt32(0x016a), diagnostic_source,
-				              diagnostic_source_pb, diagnostic_pb_frames,
-				              diagnostic_pb_data, (int)result);
-				descent_movie_audio_puts(msg);
-			}
-		}
-#endif
 	}
 	diagnostic_pb_result = result;
 	diagnostic_pb_frames = frames;
@@ -775,30 +455,6 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 			                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
 			                selector & 0xff, sourceID, (int32)r.d[0],
 			                (unsigned long long)(GetTicks_usec() - get_info_started));
-#if DESCENT_MOVIE_DIAGNOSTICS
-		/* siSoundClock returns a ComponentInstance*; always log with stack. */
-		if (selector == siSoundClock) {
-			const uint32 ci = infoPtr ? ReadMacInt32(infoPtr) : 0;
-			uint32 ret0 = 0, ret1 = 0, ret2 = 0, ret3 = 0;
-			if (descent_movie_audio_addr_ok(descent_diag_a7) &&
-			    descent_diag_a7 < 0x40000000 - 16) {
-				ret0 = ReadMacInt32(descent_diag_a7);
-				ret1 = ReadMacInt32(descent_diag_a7 + 4);
-				ret2 = ReadMacInt32(descent_diag_a7 + 8);
-				ret3 = ReadMacInt32(descent_diag_a7 + 12);
-			}
-			char msg[384];
-			std::snprintf(msg, sizeof(msg),
-			              "[QD3D:wait] siSoundClock GetInfo tick=%u source=0x%08x "
-			              "info=0x%08x ci=0x%08x result=%d sources=%d "
-			              "a7=0x%08x stk=%08x/%08x/%08x/%08x wallUs=%llu\n",
-			              ReadMacInt32(0x016a), sourceID, infoPtr, ci,
-			              (int32)r.d[0], AudioStatus.num_sources,
-			              descent_diag_a7, ret0, ret1, ret2, ret3,
-			              (unsigned long long)GetTicks_usec());
-			descent_movie_audio_puts(msg);
-		}
-#endif
 		if (selector == siSoundClock && infoPtr && r.d[0] == noErr) {
 			const uint32 ci = ReadMacInt32(infoPtr);
 			if (audio_sound_clock_ci == 0 && ci != 0)
@@ -905,29 +561,6 @@ static int32 AudioSetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 			                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
 			                selector & 0xff, sourceID, set_result,
 			                (unsigned long long)(GetTicks_usec() - set_info_started));
-#if DESCENT_MOVIE_DIAGNOSTICS
-			if (selector == siSoundClock) {
-				const uint32 ci = infoPtr ? ReadMacInt32(infoPtr) : infoPtr;
-				uint32 ret0 = 0, ret1 = 0, ret2 = 0, ret3 = 0;
-				if (descent_movie_audio_addr_ok(descent_diag_a7) &&
-				    descent_diag_a7 < 0x40000000 - 16) {
-					ret0 = ReadMacInt32(descent_diag_a7);
-					ret1 = ReadMacInt32(descent_diag_a7 + 4);
-					ret2 = ReadMacInt32(descent_diag_a7 + 8);
-					ret3 = ReadMacInt32(descent_diag_a7 + 12);
-				}
-				char msg[384];
-				std::snprintf(msg, sizeof(msg),
-				              "[QD3D:wait] siSoundClock SetInfo tick=%u source=0x%08x "
-				              "info=0x%08x ciOrVal=0x%08x result=%d sources=%d "
-				              "a7=0x%08x stk=%08x/%08x/%08x/%08x wallUs=%llu\n",
-				              ReadMacInt32(0x016a), sourceID, infoPtr, ci,
-				              set_result, AudioStatus.num_sources,
-				              descent_diag_a7, ret0, ret1, ret2, ret3,
-				              (unsigned long long)GetTicks_usec());
-				descent_movie_audio_puts(msg);
-			}
-#endif
 			D(bug("  delegated to Apple Mixer, returns %08lx\n", set_result));
 			return set_result;
 	}
@@ -1209,9 +842,6 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 			                ReadMacInt32(p), ReadMacInt16(p + 4),
 			                (int32)r.d[0], AudioStatus.num_sources,
 			                (unsigned long long)(GetTicks_usec() - diagnostic_call_started));
-#if DESCENT_MOVIE_DIAGNOSTICS
-			descent_movie_log_sound_op("StartSource", params, (int32)r.d[0]);
-#endif
 			D(bug(" returns %08lx\n", r.d[0]));
 			return noErr;
 
@@ -1243,23 +873,6 @@ delegate:	// Delegate call to Apple Mixer
 			                ReadMacInt32(0x016a), selector, (int32)r.d[0],
 			                (unsigned long long)(GetTicks_usec() - diagnostic_call_started),
 			                AudioStatus.num_sources);
-#if DESCENT_MOVIE_DIAGNOSTICS
-			{
-				const char *op = NULL;
-				if (selector == kSoundComponentStopSourceSelect)
-					op = "StopSource";
-				else if (selector == kSoundComponentPauseSourceSelect)
-					op = "PauseSource";
-				else if (selector == kSoundComponentAddSourceSelect)
-					op = "AddSource";
-				else if (selector == kSoundComponentRemoveSourceSelect)
-					op = "RemoveSource";
-				else if (AudioStatus.num_sources >= 2)
-					op = "Delegate";
-				if (op)
-					descent_movie_log_sound_op(op, params, (int32)r.d[0]);
-			}
-#endif
 			D(bug(" returns %08lx\n", r.d[0]));
 			return r.d[0];
 
@@ -1278,21 +891,6 @@ delegate:	// Delegate call to Apple Mixer
 				    AudioStatus.num_sources >= 2) {
 					actions &= ~uint32(kSourcePaused);
 					WriteMacInt32(p, actions);
-#if DESCENT_MOVIE_DIAGNOSTICS
-					{
-						char msg[192];
-						std::snprintf(msg, sizeof(msg),
-						              "[QD3D:wait] PlaySourceBuffer unpause-prime tick=%u "
-						              "actionsIn=0x%08x actionsOut=0x%08x frames=%u source=0x%08x\n",
-						              ReadMacInt32(0x016a), actions_in, actions,
-						              frames, source);
-						std::fputs(msg, stderr);
-						std::fflush(stderr);
-#ifdef _WIN32
-						OutputDebugStringA(msg);
-#endif
-					}
-#endif
 				}
 #endif
 
@@ -1314,11 +912,6 @@ delegate:	// Delegate call to Apple Mixer
 				diagnostic_pb_frames = frames_before;
 				diagnostic_pb_data = data_before;
 				diagnostic_poll_count = 0;
-#endif
-#if DESCENT_MOVIE_DIAGNOSTICS
-				/* Snapshot PB as the guest presented it, before mixer mutates. */
-				descent_movie_log_pb("PlaySourceBuffer pre", pb, source, actions_in,
-				                     actions, 0);
 #endif
 
 				/* Empty-PB streaming start (frames==0 + a moreRtn, not paused):
@@ -1403,32 +996,6 @@ delegate:	// Delegate call to Apple Mixer
 				                initial_result, final_pb_result,
 				                (int32)r.d[0], AudioStatus.num_sources,
 				                (unsigned long long)(GetTicks_usec() - diagnostic_call_started));
-#if DESCENT_MOVIE_DIAGNOSTICS
-				descent_movie_log_psb(actions_in, actions, source, pb,
-				                      initial_result, final_pb_result, (int32)r.d[0],
-				                      data_before, frames_before);
-				if (data_before != data_after || frames_before != frames_after) {
-					char msg[256];
-					std::snprintf(msg, sizeof(msg),
-					              "[QD3D:wait] PlaySourceBuffer mutated tick=%u "
-					              "source=0x%08x pb=0x%08x data=0x%08x->0x%08x "
-					              "frames=%u->%u actions=0x%08x\n",
-					              ReadMacInt32(0x016a), source, pb,
-					              data_before, data_after,
-					              frames_before, frames_after, actions);
-					descent_movie_audio_puts(msg);
-				}
-#if QD3D_AUDIO_LOGGING_ENABLED
-				if (AudioStatus.num_sources >= 2) {
-					diagnostic_source = source;
-					diagnostic_source_pb = pb;
-					diagnostic_pb_result = final_pb_result;
-					diagnostic_pb_frames = frames_after;
-					diagnostic_pb_data = data_after;
-					diagnostic_poll_count = 0;
-				}
-#endif
-#endif
 			}
 			D(bug(" returns %08lx\n", r.d[0]));
 			return r.d[0];

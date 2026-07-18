@@ -1,13 +1,6 @@
 /*
  *  dsp_thunks.cpp - DSp PPC-to-native thunk allocation
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  DSpThunksInit populates SheepMem TVECT allocation for the 7
  *  context-lifecycle sub-opcodes (100..106): Reserve, Release,
  *  GetBackBuffer, SwapBuffers, SetState, GetState, InvalBackBufferRect.

@@ -1,13 +1,6 @@
 /*
  *  dsp_install_hooks.cpp - CFM symbol-table patcher for DrawSprocketLib
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  Models GLInstallHooks() at gl_engine.cpp:1934-2462 byte-for-byte.
  *  Retry semantics (dsp_hooks_installed + in_progress + attempts) mirror
  *  the GL pattern; CFM fragment may be lazy-loaded, so accRun retries up

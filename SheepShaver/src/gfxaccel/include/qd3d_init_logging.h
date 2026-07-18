@@ -35,21 +35,14 @@
  * guest tick, so a fat tick shows which bucket ate it and 'unacc' (= tick wall
  * minus accounted) exposes raw-interpreter grind. Enable for a targeted capture. */
 #ifndef GFX_TICKPROF_ENABLED
-#define GFX_TICKPROF_ENABLED 1
-#endif
-
-/* Movie thrash investigation instrumentation. DEFAULT OFF — when on, every
- * A193 under multi-source audio does stack dumps + fflush and can stretch the
- * intro wait from ~1s to ~20s. Enable only for targeted log captures. */
-#ifndef DESCENT_MOVIE_DIAGNOSTICS
-#define DESCENT_MOVIE_DIAGNOSTICS 0
+#define GFX_TICKPROF_ENABLED 0
 #endif
 
 /* Descent II mid-movie SetDepth(16) video-hitch instrumentation (present
  * heartbeat, framebuffer-region hash, switch log, Cinepak blit probe, upload
  * gate probe). DEFAULT OFF — targeted debugging only. */
 #ifndef DESCENT_HITCH_DEBUG
-#define DESCENT_HITCH_DEBUG 1
+#define DESCENT_HITCH_DEBUG 0
 #endif
 
 /* QuickTime sound-clock GetTime fast path. DISPROVEN as a freeze fix and
@@ -94,11 +87,6 @@
 #define DESCENT_MOVIE_UNPAUSE_PRIME 0
 #endif
 
-/* Removed: DESCENT_MOVIE_CLOCK_SAMPLE_FIX / DESCENT_MOVIE_START_PB_FIX were
- * Descent-only guest-RAM/PB hacks. They did not fix the intro freeze (sample
- * patch made thrash worse). Replaced by general audio-service-on-Microseconds
- * thrash mitigation in emul_op.cpp + timer_windows.cpp. */
-
 /* Experimental: rewrite the movie sample-site A82A (ComponentDispatch
  * GetTime, 0x00040001 header) into a host EMUL_OP GetTime. PROVEN HARMFUL
  * (2026-07-17): the near-free GetTime lets the movie policy loop free-run
@@ -126,6 +114,10 @@
  * its own (so no fallback is needed) or the trap can run from 68k context. */
 #ifndef DESCENT_MOVIE_SOUND_CLOCK_WALL
 #define DESCENT_MOVIE_SOUND_CLOCK_WALL 0
+#endif
+
+#ifndef DESCENT_MOVIE_MICROSECONDS_HACK
+#define DESCENT_MOVIE_MICROSECONDS_HACK 0
 #endif
 
 #if QD3D_INIT_LOGGING_ENABLED || QD3D_GRAPHICS_LOGGING_ENABLED || \

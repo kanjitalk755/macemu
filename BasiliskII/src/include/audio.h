@@ -29,10 +29,6 @@ using std::vector;
 
 extern int32 AudioDispatch(uint32 params, uint32 ti);
 
-/* Optional: stash 68k A7 so DESCENT_MOVIE_DIAGNOSTICS can log call stacks
- * from StopSource/PlaySourceBuffer/etc. Safe no-op when diagnostics off. */
-extern void DescentMovieDiagNote68kStack(uint32 a7);
-
 /* ComponentInstance returned by the first successful siSoundClock GetInfo call.
  * Used by SheepShaver's ComponentDispatch intercept so the movie's sound clock
  * advances continuously (device time) instead of starting from 0 per source. */

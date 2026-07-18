@@ -24,7 +24,7 @@ bool nqd_metal_available = false;
 /* Gate from GFXACCEL_LOG (unset/"all"/list-containing-"nqd" => on), matching
  * the DSp/RAVE/GL subsystems' control plane. Sink is the shared stderr +
  * OutputDebugStringA emitter (gfx_debug_sink.h), always compiled in. */
-bool nqd_logging_enabled = accel_log_detail::subsystem_on("nqd");
+bool nqd_logging_enabled = accel_log_subsystem_on("nqd");
 #define NQD_LOG(...) do { if (nqd_logging_enabled) GFX_DEBUG_EMIT("[nqd] ", __VA_ARGS__); } while (0)
 #else
 #define NQD_LOG(...) do {} while (0)

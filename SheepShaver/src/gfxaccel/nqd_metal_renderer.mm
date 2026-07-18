@@ -32,7 +32,7 @@
 
 #import <os/log.h>
 #if ACCEL_LOGGING_ENABLED
-bool nqd_logging_enabled = accel_log_detail::subsystem_on("nqd");
+bool nqd_logging_enabled = accel_log_subsystem_on("nqd");
 os_log_t nqd_log = OS_LOG_DEFAULT;
 static struct NQDLogInit {
     NQDLogInit() { nqd_log = os_log_create("com.pocketshaver.nqd", "metal"); }

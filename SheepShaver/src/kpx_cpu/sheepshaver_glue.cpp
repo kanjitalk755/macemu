@@ -43,9 +43,6 @@ extern "C" void catalyst_pump_appkit_events(void);
 #include "cpu/ppc/ppc-operations.hpp"
 #include "cpu/ppc/ppc-instructions.hpp"
 #include "thunks.h"
-
-/* Always pull the header so DESCENT_MOVIE_DIAGNOSTICS works without cmake
- * wait-logging. Channel macros still compile out when their switches are off. */
 #include "qd3d_init_logging.h"
 #if QD3D_WAIT_LOGGING_ENABLED
 static bool cpu_descent_ii_is_current_application()
@@ -124,7 +121,7 @@ extern uintptr SignalStackBase();
 extern "C" void check_load_invoc(uint32 type, int16 id, uint32 h);
 extern "C" void named_check_load_invoc(uint32 type, uint32 name, uint32 h);
 
-// PowerPC EmulOp to exit from emulation looop
+// PowerPC EmulOp to exit from emulation loop
 const uint32 POWERPC_EXEC_RETURN = POWERPC_EMUL_OP | 1;
 
 // Enable Execute68k() safety checks?
@@ -259,111 +256,6 @@ void sheepshaver_cpu::call_execute_emul_op(powerpc_cpu * cpu, uint32 emul_op) {
 	static_cast<sheepshaver_cpu *>(cpu)->execute_emul_op(emul_op);
 }
 
-#if GFX_TICKPROF_ENABLED
-// PPC block-execution counters, defined in the interpreter hot loop (ppc-cpu.cpp).
-#define GFX_PPC_HIST_N 12
-extern uint64 gfx_ppc_blocks;
-extern uint64 gfx_ppc_insns;
-extern uint64 gfx_68k_insns;
-extern uint32 gfx_ppc_hist_pc[GFX_PPC_HIST_N];
-extern uint32 gfx_ppc_hist_cnt[GFX_PPC_HIST_N];
-extern uint32 gfx_68k_hist_pc[GFX_PPC_HIST_N];
-extern uint32 gfx_68k_hist_cnt[GFX_PPC_HIST_N];
-/*
- *  Per-VIA-tick emu-thread wall-time accounting (diagnostic).
- *
- *  Buckets accumulate host usec spent inside each emu-thread consumer. At every
- *  guest-tick boundary (0x016a advances) the totals are logged and reset. The
- *  reported "unacc" = tick wall-clock minus the sum of the buckets, i.e. time
- *  spent in the raw PPC/68k interpreter loop (or anything unbracketed). All
- *  single-thread (emul) access — no locking.
- */
-namespace {
-	struct GfxTickProf {
-		uint64 emul_op_us;   uint32 emul_op_n;
-		uint64 native_us;    uint32 native_n;   // RAVE/GL/DSp dispatch
-		uint64 cinepak_us;   uint32 cinepak_n;
-		uint32 last_tick;
-		uint64 tick_wall0;
-	};
-	GfxTickProf g_tp = { 0,0, 0,0, 0,0, 0xffffffff, 0 };
-
-	// Scoped timer: adds elapsed usec into *acc and bumps *n on scope exit.
-	struct GfxTickScope {
-		uint64 *acc; uint32 *n; uint64 t0;
-		GfxTickScope(uint64 *a, uint32 *c) : acc(a), n(c), t0(GetTicks_usec()) {}
-		~GfxTickScope() { *acc += GetTicks_usec() - t0; ++*n; }
-	};
-}
-
-// Called from every emu-thread funnel; emits + resets the buckets when the guest
-// 60Hz tick advances so each line describes exactly one guest tick.
-static void gfx_tickprof_boundary()
-{
-	const uint32 tick = ReadMacInt32(0x016a);
-	if (tick == g_tp.last_tick)
-		return;
-	const uint64 now = GetTicks_usec();
-	// Emit only while audio is active (the movie phase) so the log stays focused
-	// on the handoff; accumulation is always on but idle-desktop ticks are quiet.
-	if (g_tp.last_tick != 0xffffffff && AudioStatus.num_sources >= 1) {
-		const uint64 wall = now - g_tp.tick_wall0;
-		const uint64 acct = g_tp.emul_op_us + g_tp.native_us + g_tp.cinepak_us;
-		const uint64 unacc = wall > acct ? wall - acct : 0;
-		// Find the two hottest 4KB code pages this tick.
-		int h0 = -1, h1 = -1;
-		for (int i = 0; i < GFX_PPC_HIST_N; i++) {
-			if (gfx_ppc_hist_cnt[i] == 0) continue;
-			if (h0 < 0 || gfx_ppc_hist_cnt[i] > gfx_ppc_hist_cnt[h0]) { h1 = h0; h0 = i; }
-			else if (h1 < 0 || gfx_ppc_hist_cnt[i] > gfx_ppc_hist_cnt[h1]) { h1 = i; }
-		}
-		int k0 = -1;
-		for (int i = 0; i < GFX_PPC_HIST_N; i++)
-			if (gfx_68k_hist_cnt[i] && (k0 < 0 || gfx_68k_hist_cnt[i] > gfx_68k_hist_cnt[k0])) k0 = i;
-		// One-shot dump of the hottest PPC code pages (once per distinct page) so
-		// pages absent from the on-disk ROM can be disassembled.
-		static uint32 tp_dumped[16] = {0}; static int tp_dumped_n = 0;
-		uint32 dump_pgs[3] = {
-			(h0 >= 0 && gfx_ppc_hist_cnt[h0] > 300000) ? gfx_ppc_hist_pc[h0] : 0,
-			(h1 >= 0 && gfx_ppc_hist_cnt[h1] > 300000) ? gfx_ppc_hist_pc[h1] : 0,
-			(k0 >= 0 && gfx_68k_hist_cnt[k0] > 5000) ? (gfx_68k_hist_pc[k0] & ~0xfffu) : 0 };
-		for (int d = 0; d < 3; d++) {
-			uint32 pg = dump_pgs[d];
-			if (!pg) continue;
-			bool seen = false;
-			for (int i = 0; i < tp_dumped_n; i++) if (tp_dumped[i] == pg) seen = true;
-			if (!seen && tp_dumped_n < 16) {
-				tp_dumped[tp_dumped_n++] = pg;
-				char nm[64]; snprintf(nm, sizeof nm, "hotpage_%08x.bin", pg);
-				FILE *f = fopen(nm, "wb");
-				if (f) { for (uint32 a = pg; a < pg + 0x1000; a++) fputc(ReadMacInt8(a), f); fclose(f); }
-				QD3D_WAIT_LOG("tickProf dumped hotpage=0x%08x -> %s", pg, nm);
-			}
-		}
-		QD3D_WAIT_LOG("tickProf tick=%u wallUs=%llu emulOp=%llu/%u native=%llu/%u "
-		              "cinepak=%llu/%u unaccUs=%llu ppcInsns=%llu blocks=%llu "
-		              "insns68k=%llu hot0=0x%08x/%u k68kCum=0x%08x/%u",
-		              g_tp.last_tick, (unsigned long long)wall,
-		              (unsigned long long)g_tp.emul_op_us, g_tp.emul_op_n,
-		              (unsigned long long)g_tp.native_us, g_tp.native_n,
-		              (unsigned long long)g_tp.cinepak_us, g_tp.cinepak_n,
-		              (unsigned long long)unacc,
-		              (unsigned long long)gfx_ppc_insns, (unsigned long long)gfx_ppc_blocks,
-		              (unsigned long long)gfx_68k_insns,
-		              h0 >= 0 ? gfx_ppc_hist_pc[h0] : 0, h0 >= 0 ? gfx_ppc_hist_cnt[h0] : 0,
-		              k0 >= 0 ? gfx_68k_hist_pc[k0] : 0, k0 >= 0 ? gfx_68k_hist_cnt[k0] : 0);
-	}
-	g_tp.emul_op_us = g_tp.native_us = g_tp.cinepak_us = 0;
-	g_tp.emul_op_n = g_tp.native_n = g_tp.cinepak_n = 0;
-	gfx_ppc_insns = gfx_ppc_blocks = gfx_68k_insns = 0;
-	for (int i = 0; i < GFX_PPC_HIST_N; i++) {
-		gfx_ppc_hist_pc[i] = 0; gfx_ppc_hist_cnt[i] = 0;
-	}
-	g_tp.last_tick = tick;
-	g_tp.tick_wall0 = now;
-}
-#endif /* GFX_TICKPROF_ENABLED */
-
 // Execute EMUL_OP routine
 void sheepshaver_cpu::execute_emul_op(uint32 emul_op)
 {
@@ -378,16 +270,7 @@ void sheepshaver_cpu::execute_emul_op(uint32 emul_op)
 	uint32 saved_cr = get_cr() & 0xff9fffff; // mask_operand::compute(11, 8)
 	uint32 saved_xer = get_xer();
 	uint32 pc = gpr(24);
-#if GFX_TICKPROF_ENABLED
-	gfx_tickprof_boundary();
-	// r24 is the real 68k PC at every EMUL_OP entry. Histogram it so the 68k
-	// routine issuing the traps QuickTime hammers is identified (routine-level).
-	{ extern void gfx_68k_hist_add(uint32, uint32); gfx_68k_hist_add(pc, 1); }
-	{ GfxTickScope _tp(&g_tp.emul_op_us, &g_tp.emul_op_n);
-	  EmulOp(&r68, &pc, emul_op); }
-#else
-	EmulOp(&r68, &pc, emul_op);
-#endif
+	EmulOp(&r68, pc, emul_op);
 	set_cr(saved_cr);
 	set_xer(saved_xer);
 	for (int i = 0; i < 8; i++)
@@ -1326,125 +1209,9 @@ void HandleInterrupt(powerpc_registers *r)
 		// One-shot dump of the code around a repeatedly sampled application PC
 		// (and its LR call site) so the busy-wait condition can be disassembled
 		// offline. Application code only; guest addresses are logged above.
-#if DESCENT_MOVIE_DIAGNOSTICS
-		static bool wait_loop_dumped;
-		if (!wait_loop_dumped && repeated_sample_count >= 4 &&
-		    r->pc >= 0x4000 && r->pc < 0x40000000) {
-			wait_loop_dumped = true;
-			const uint32 window = 0x1000;
-			struct { const char *name; uint32 base; } dumps[2] = {
-				{ "descent_wait_pc.bin", r->pc - window },
-				{ "descent_wait_lr.bin", r->lr - window },
-			};
-			for (int i = 0; i < 2; i++) {
-				if (dumps[i].base < 0x4000 || dumps[i].base >= 0x40000000)
-					continue;
-				uint8 *host = Mac2HostAddr(dumps[i].base);
-				if (!host)
-					continue;
-				if (FILE *f = fopen(dumps[i].name, "wb")) {
-					fwrite(host, 1, window * 2, f);
-					fclose(f);
-					QD3D_WAIT_LOG("Wait-loop dump %s guestBase=0x%08x bytes=0x%x pc=0x%08x lr=0x%08x",
-					              dumps[i].name, dumps[i].base, window * 2,
-					              r->pc, r->lr);
-				}
-			}
-		}
-#endif
 		previous_sample_pc = r->pc;
 	}
 #endif
-
-#if DESCENT_MOVIE_DIAGNOSTICS
-	// --- Descent II movie-loop diagnostic --------------------------------
-	// Independent of the QD3D log channels so it survives reconfigures.
-	// While the ROM 68k emulator runs (MODE_68K), the 68k PC lives in PPC
-	// r24 and 68k D0-D7/A0-A6 in r8-r23. Descent II's MVE movie player is
-	// 68k code that busy-waits ~1s at movie start; dump each code region
-	// the loop visits so its exit condition can be disassembled.
-	{
-		static bool loop_68k_dumped;
-		static uint32 prev_pc68k;
-		static uint32 rep_68k;
-		static uint32 seen_68k;
-		static uint32 seen_68k_movie;
-		if (ReadMacInt32(XLM_RUN_MODE) == MODE_68K &&
-		    ReadMacInt32(0x0910) == 0x0a446573 &&
-		    ReadMacInt32(0x0914) == 0x63656e74 &&
-		    (ReadMacInt32(0x0918) & 0xffffff00) == 0x20494900) {
-			const uint32 pc68k = r->gpr[24];
-			if (pc68k >= 0x4000 && pc68k < 0x40000000) {
-				seen_68k++;
-				// Match repeats within a 2KB window: poll loops with trap
-				// calls span far more than one instruction.
-				if (pc68k - (prev_pc68k & ~0x7ffu) < 0x800u)
-					rep_68k++;
-				else
-					rep_68k = 1;
-				prev_pc68k = pc68k;
-				// The movie stall is the phase with a second Apple Mixer
-				// source; only that phase is of interest for the dump.
-				const bool movie_active = AudioStatus.num_sources >= 2;
-				if (movie_active)
-					seen_68k_movie++;
-				else
-					seen_68k_movie = 0;
-				char msg[256];
-				if ((seen_68k & 3) == 0) {
-					snprintf(msg, sizeof(msg),
-					         "[QD3D:wait] 68k sample n=%u pc68k=0x%08x rep=%u movie=%u d0-d3=%08x/%08x/%08x/%08x a0-a3=%08x/%08x/%08x/%08x tick=%u\n",
-					         seen_68k, pc68k, rep_68k, seen_68k_movie,
-					         r->gpr[8], r->gpr[9], r->gpr[10], r->gpr[11],
-					         r->gpr[16], r->gpr[17], r->gpr[18], r->gpr[19],
-					         ReadMacInt32(0x016a));
-					fputs(msg, stderr);
-					fflush(stderr);
-#ifdef _WIN32
-					OutputDebugStringA(msg);
-#endif
-				}
-				// Dump every distinct code region the movie-phase busy path
-				// visits (the loop cycles through several modules), up to 8.
-				static uint32 dumped_bases[8];
-				static int dumped_count;
-				if (movie_active && dumped_count < 8) {
-					bool covered = false;
-					for (int i = 0; i < dumped_count; i++) {
-						if (pc68k - dumped_bases[i] < 0x2000u) {
-							covered = true;
-							break;
-						}
-					}
-					if (!covered) {
-						const uint32 window = 0x1000;
-						const uint32 base = pc68k - window;
-						uint8 *host = Mac2HostAddr(base);
-						char name[48];
-						snprintf(name, sizeof(name),
-						         "descent_68k_loop_%d.bin", dumped_count);
-						FILE *f = host ? fopen(name, "wb") : NULL;
-						if (f) {
-							fwrite(host, 1, window * 2, f);
-							fclose(f);
-							dumped_bases[dumped_count++] = base;
-							snprintf(msg, sizeof(msg),
-							         "[QD3D:wait] 68k-loop dump %s base=0x%08x pc68k=0x%08x movieSeen=%u tick=%u\n",
-							         name, base, pc68k, seen_68k_movie,
-							         ReadMacInt32(0x016a));
-							fputs(msg, stderr);
-							fflush(stderr);
-#ifdef _WIN32
-							OutputDebugStringA(msg);
-#endif
-						}
-					}
-				}
-				(void)loop_68k_dumped;
-			}
-		}
-	}
-#endif /* DESCENT_MOVIE_DIAGNOSTICS */
 
 	// Do nothing if interrupts are disabled
 	if (int32(ReadMacInt32(XLM_IRQ_NEST)) > 0)
@@ -1536,10 +1303,6 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 #if EMUL_TIME_STATS
 	native_exec_count++;
 	const clock_t native_exec_start = clock();
-#endif
-#if GFX_TICKPROF_ENABLED
-	gfx_tickprof_boundary();
-	const uint64 tp_native_t0 = GetTicks_usec();
 #endif
 
 	switch (selector) {
@@ -1665,6 +1428,7 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 	case NATIVE_NAMED_CHECK_LOAD_INVOC:
 		named_check_load_invoc(gpr(3), gpr(4), gpr(5));
 		break;
+#if ENABLE_NATIVE_MICROSECONDS_PATCH
 	case NATIVE_MICROSECONDS: {
 		// Native replacement for InterfaceLib Microseconds(UnsignedWide *).
 		// The library implementation reaches the _Microseconds trap through
@@ -1678,7 +1442,6 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 			WriteMacInt32(wide + 0, hi);
 			WriteMacInt32(wide + 4, lo);
 		}
-#if ENABLE_NATIVE_MICROSECONDS_PATCH
 		/* Keep mixer rotating if guest thrash-polls Microseconds from PPC.
 		 * NATIVE_MICROSECONDS is FN=1: execute_sheep does pc() = lr() right
 		 * after this returns. AudioServicePendingInterrupt may run a source's
@@ -1702,9 +1465,9 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 			if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
 			if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
 		}
-#endif
 		break;
 	}
+#endif
 	case NATIVE_RAVE_DISPATCH: {
 #if !defined(ENABLE_GFXACCEL)
 		gpr(3) = (uint32)-1;
@@ -1906,72 +1669,62 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 		break;
 #endif
 	}
+  #if defined(ENABLE_NATIVE_CINEPAK_PATCH) \
+			&& ENABLE_NATIVE_CINEPAK_PATCH
 	case NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK:
 	case NATIVE_FINDNEXTCOMPONENT_CINEPAK_HOOK: {
-#if !defined(ENABLE_GFXACCEL)
-		gpr(3) = 0;
-		break;
-#else
-		/* FN=1 first-instruction hooks: execute_sheep does pc() = lr() right
-		 * after this returns, and the handlers run call_macos (nested guest
-		 * execution) which clobbers LR/CTR — save/restore is mandatory or the
-		 * return lands in the nested callee instead of the real caller. */
-		uint32 saved_lr = lr();
-		uint32 saved_ctr = ctr();
-		uint32 saved_sp = gpr(1);
-		uint32 saved_r2 = gpr(2);
+	#if !defined(ENABLE_GFXACCEL)
+			gpr(3) = 0;
+			break;
+	#else
+			/* FN=1 first-instruction hooks: execute_sheep does pc() = lr() right
+			 * after this returns, and the handlers run call_macos (nested guest
+			 * execution) which clobbers LR/CTR — save/restore is mandatory or the
+			 * return lands in the nested callee instead of the real caller. */
+			uint32 saved_lr = lr();
+			uint32 saved_ctr = ctr();
+			uint32 saved_sp = gpr(1);
+			uint32 saved_r2 = gpr(2);
 
-		if (selector == NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK)
-			gpr(3) = CinepakOpenDefaultComponentHook(gpr(3), gpr(4));
-		else
-			gpr(3) = CinepakFindNextComponentHook(gpr(3), gpr(4));
+			if (selector == NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK)
+				gpr(3) = CinepakOpenDefaultComponentHook(gpr(3), gpr(4));
+			else
+				gpr(3) = CinepakFindNextComponentHook(gpr(3), gpr(4));
 
-		if (lr() != saved_lr) { lr() = saved_lr; }
-		if (ctr() != saved_ctr) { ctr() = saved_ctr; }
-		if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
-		if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
-		break;
-#endif
+			if (lr() != saved_lr) { lr() = saved_lr; }
+			if (ctr() != saved_ctr) { ctr() = saved_ctr; }
+			if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
+			if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
+			break;
+	#endif
 	}
 	case NATIVE_CINEPAK_DISPATCH: {
-#if !defined(ENABLE_GFXACCEL)
-		gpr(3) = (uint32)-50; /* paramErr */
-		break;
-#else
-		/* Component entry (via routine descriptor): pure host work, but keep
-		 * the same register-preservation pattern for safety. */
-		uint32 saved_lr = lr();
-		uint32 saved_ctr = ctr();
-		uint32 saved_sp = gpr(1);
-		uint32 saved_r2 = gpr(2);
+	#if !defined(ENABLE_GFXACCEL)
+			gpr(3) = (uint32)-50; /* paramErr */
+			break;
+	#else
+			/* Component entry (via routine descriptor): pure host work, but keep
+			 * the same register-preservation pattern for safety. */
+			uint32 saved_lr = lr();
+			uint32 saved_ctr = ctr();
+			uint32 saved_sp = gpr(1);
+			uint32 saved_r2 = gpr(2);
 
-		gpr(3) = CinepakDispatch(gpr(3));
+			gpr(3) = CinepakDispatch(gpr(3));
 
-		if (lr() != saved_lr) { lr() = saved_lr; }
-		if (ctr() != saved_ctr) { ctr() = saved_ctr; }
-		if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
-		if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
-		break;
-#endif
+			if (lr() != saved_lr) { lr() = saved_lr; }
+			if (ctr() != saved_ctr) { ctr() = saved_ctr; }
+			if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
+			if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
+			break;
+	#endif
 	}
+#endif /* ENABLE_NATIVE_CINEPAK_PATCH */
 	default:
 		printf("FATAL: NATIVE_OP called with bogus selector %d\n", selector);
 		QuitEmulator();
 		break;
 	}
-
-#if GFX_TICKPROF_ENABLED
-	{
-		const uint64 tp_dt = GetTicks_usec() - tp_native_t0;
-		if (selector == NATIVE_CINEPAK_DISPATCH ||
-		    selector == NATIVE_OPENDEFAULTCOMPONENT_CINEPAK_HOOK ||
-		    selector == NATIVE_FINDNEXTCOMPONENT_CINEPAK_HOOK) {
-			g_tp.cinepak_us += tp_dt; ++g_tp.cinepak_n;
-		} else {
-			g_tp.native_us += tp_dt; ++g_tp.native_n;
-		}
-	}
-#endif
 #if EMUL_TIME_STATS
 	native_exec_time += (clock() - native_exec_start);
 #endif

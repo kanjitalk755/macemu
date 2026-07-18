@@ -2,13 +2,6 @@
  *  dsp_mode_enumerate.cpp - VModes[] -> DSpContextAttributes transform +
  *                            DSpGetFirstContextHandler.
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  Pattern source:
  *    - BasiliskII/src/SDL/video_sdl2.cpp (DMCModeDescFromVModesIndex
  *      pure-function transform shape: switch on viAppleMode, field-copy,
@@ -34,7 +27,6 @@
 #include <algorithm>
 #include <cstring>
 
-namespace {
 
 /*
  *  Convert an APPLE_*_BIT viAppleMode to its raw bit-depth count.
@@ -97,7 +89,6 @@ bool DSpPublicModeAttributesEqual(const DSpContextAttributes &a,
 	       a.gameMustConfirmSwitch == b.gameMustConfirmSwitch;
 }
 
-}  // anonymous namespace
 
 /*
  *  DSpBuildModesFromVModes - rebuild s_dsp_modes from VModes[].
@@ -477,7 +468,6 @@ extern "C" int32_t DSpGetNextContextHandler(uint32_t prevCtxRef,
  *  (PDF p.87 authoritative; see dsp_engine.h doc block).
  * ========================================================================= */
 
-namespace {
 
 /*
  *  DSpFindBestContext_Core — pure function over s_dsp_modes.
@@ -677,7 +667,6 @@ bool DSpFindBestContext_AllocAndWriteBack(const DSpContextAttributes *best,
 	return true;
 }
 
-}  // anonymous namespace
 
 /*
  *  DSpFindBestContextHandler — dispatch handler for sub-opcode 201.

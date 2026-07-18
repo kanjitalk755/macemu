@@ -62,7 +62,7 @@
 #include "accel_logging.h"
 #import <os/log.h>
 #if ACCEL_LOGGING_ENABLED
-bool compositor_logging_enabled = accel_log_detail::subsystem_on("comp");
+bool compositor_logging_enabled = accel_log_subsystem_on("comp");
 os_log_t compositor_log = OS_LOG_DEFAULT;
 static struct CompositorLogInit {
     CompositorLogInit() { compositor_log = os_log_create("com.pocketshaver.compositor", "engine"); }

@@ -1,13 +1,6 @@
 /*
  *  gfxaccel_resources_heap.cpp - pure C++ logic.
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  Pure C++ companion to gfxaccel_resources_heap.mm. Owns:
  *    - PSO cache: std::unordered_map keyed by shader pair +
  *      vertex descriptor + color format tuple.
@@ -47,8 +40,6 @@ extern "C" void gfxaccel_resources_heap_mm_lru_purge(void);
 extern "C" uint64_t gfxaccel_resources_heap_mm_reset(uint32_t heap_id);
 extern "C" void gfxaccel_resources_heap_mm_note_allocation_released(uint32_t heap_id);
 extern "C" uint32_t gfxaccel_resources_heap_mm_live_allocation_count(uint32_t heap_id);
-
-namespace {
 
 // ---------------------------------------------------------------------------
 // File-scope state
@@ -155,7 +146,6 @@ static DMCSubscriber s_heap_reset_subscriber = {
 	/* .ctx           = */ NULL
 };
 
-} // namespace (anonymous)
 
 // ---------------------------------------------------------------------------
 // Public API - Lifecycle

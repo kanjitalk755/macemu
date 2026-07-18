@@ -13,18 +13,18 @@
 #define PACKAGE_URL ""
 
 #define STDC_HEADERS 1
-#define HAVE_STDINT_H 1
-#define HAVE_STDLIB_H 1
-#define HAVE_STRING_H 1
-#define HAVE_MEMORY_H 1
-#define HAVE_SYS_TYPES_H 1
-#define HAVE_SYS_STAT_H 1
-#cmakedefine HAVE_UNISTD_H 1
-#cmakedefine HAVE_STRINGS_H 1
-#cmakedefine HAVE_FENV_H 1
+#cmakedefine HAVE_STDINT_H @HAVE_STDINT_H@
+#cmakedefine HAVE_STDLIB_H @HAVE_STDLIB_H@
+#cmakedefine HAVE_STRING_H @HAVE_STRING_H@
+#cmakedefine HAVE_MEMORY_H @HAVE_MEMORY_H@
+#cmakedefine HAVE_SYS_TYPES_H @HAVE_SYS_TYPES_H@
+#cmakedefine HAVE_SYS_STAT_H @HAVE_SYS_STAT_H@
+#cmakedefine HAVE_UNISTD_H @HAVE_UNISTD_H@
+#cmakedefine HAVE_STRINGS_H @HAVE_STRINGS_H@
+#cmakedefine HAVE_FENV_H @HAVE_FENV_H@
 
-#define HAVE_STRDUP 1
-#define HAVE_STRERROR 1
+#cmakedefine HAVE_STRDUP @HAVE_STRDUP@
+#cmakedefine HAVE_STRERROR @HAVE_STRERROR@
 
 #define SIZEOF_SHORT @SIZEOF_SHORT@
 #define SIZEOF_INT @SIZEOF_INT@
@@ -43,16 +43,40 @@
 #cmakedefine HAVE_MMAP_VM 1
 #cmakedefine HAVE_MPROTECT 1
 
-#cmakedefine USE_SDL 1
-#cmakedefine USE_SDL_VIDEO 1
-#cmakedefine USE_SDL_AUDIO 1
-#cmakedefine USE_SDL2 1
-#cmakedefine USE_SDL3 1
+#cmakedefine USE_SDL @USE_SDL@
+#cmakedefine USE_SDL_VIDEO @USE_SDL_VIDEO@
+#cmakedefine USE_SDL_AUDIO @USE_SDL_AUDIO@
+/* #define USE_SDL2 */
+/* #define USE_SDL3 */
 
 #cmakedefine ENABLE_VOSF 1
-#cmakedefine HAVE_SLIRP 1
+#cmakedefine HAVE_SLIRP @HAVE_SLIRP@
 #cmakedefine ENABLE_DYNGEN 1
 #cmakedefine ENABLE_MON 1
 #cmakedefine BINCUE 1
+
+#ifdef _MSC_VER
+	#include <stddef.h>
+	typedef ptrdiff_t ssize_t;
+	#ifdef _M_IX86
+		#ifndef __i386__
+			#define __i386__
+		#endif
+	#elif defined(_M_AMD64)
+		#ifndef __x86_64__
+			#define __x86_64__
+		#endif
+	#endif
+#endif
+#ifdef _MSC_VER
+	#define ATTRIBUTE_PACKED
+	#define ATTRIBUTE_UNUSED
+#else
+	#define ATTRIBUTE_PACKED __attribute__((__packed__))
+	#ifndef ATTRIBUTE_UNUSED
+		#define ATTRIBUTE_UNUSED __attribute__((__unused__))
+	#endif
+#endif
+
 
 #endif /* MACEMU_CONFIG_H */

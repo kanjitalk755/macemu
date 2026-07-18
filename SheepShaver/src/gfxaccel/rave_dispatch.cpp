@@ -1,8 +1,6 @@
 /*
  *  rave_dispatch.cpp - RAVE multiplexed dispatch from sub-opcode to method handlers
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
  *  Reads the sub-opcode from the scratch word written by the PPC thunk
  *  and dispatches to the appropriate RAVE method handler. Engine methods
  *  (GetMethod, Gestalt, CheckDevice) dispatch to real handlers in
@@ -75,7 +73,7 @@ extern int32_t NativeEngineBitmapBindColorTable(uint32_t bitmapAddr, uint32_t co
 
 // Logging state -- enabled by default for graphics diagnostics.
 #if ACCEL_LOGGING_ENABLED
-bool rave_logging_enabled = accel_log_detail::subsystem_on("rave");
+bool rave_logging_enabled = accel_log_subsystem_on("rave");
 
 #ifdef __APPLE__
 os_log_t rave_log = OS_LOG_DEFAULT;

@@ -249,7 +249,7 @@ uint32 FindLibSymbol(const char *lib_str, const char *sym_str)
 
 	if (ReadMacInt32(XLM_RUN_MODE) == MODE_EMUL_OP) {
 		M68kRegisters r;
-	
+
 		// Find shared library
 		static const uint8 proc1_template[] = {
 			0x55, 0x8f,							// subq.l	#2,a7
@@ -273,7 +273,7 @@ uint32 FindLibSymbol(const char *lib_str, const char *sym_str)
 		D(bug(" GetSharedLibrary: ret %d, connection ID %ld, main %p\n", (int16)r.d[0], conn_id.value(), main_addr.value()));
 		if (r.d[0])
 			return 0;
-	
+
 		// Find symbol
 		static const uint8 proc2_template[] = {
 			0x55, 0x8f,					// subq.l	#2,a7
@@ -410,7 +410,8 @@ void InitCallUniversalProc()
 	PatchInterfaceLibMicroseconds();
 #endif
 
-#if defined(ENABLE_GFXACCEL)
+#if defined(ENABLE_GFXACCEL) && defined(ENABLE_NATIVE_CINEPAK_PATCH) \
+		&& ENABLE_NATIVE_CINEPAK_PATCH
 	/* Hook Component Manager searches (OpenDefaultComponent AND
 	   FindNextComponent). On the first request for an image decompressor
 	   ('imdc'), we register our native Cinepak component just-in-time —

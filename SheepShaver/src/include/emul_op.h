@@ -63,14 +63,9 @@ enum {	// Selectors for EMUL_OP opcodes
 	OP_SCSI_DISPATCH, OP_SCSI_ATOMIC,
 	OP_CHECK_SYSV, OP_NTRB_17_PATCH, OP_NTRB_17_PATCH2, OP_NTRB_17_PATCH3, OP_NTRB_17_PATCH4, OP_CHECKLOAD,
 	OP_EXTFS_COMM, OP_EXTFS_HFS, OP_IDLE_TIME, OP_IDLE_TIME_2,
-	/* Host ClockGetTime intercept for ComponentDispatch (A82A). Appended so
-	 * prior OP_* ordinals stay stable across builds. */
-	OP_COMPONENT_DISPATCH,
-	/* QuickTime 'clok' sound-clock GetTime fast path. The movie polls the
-	 * sound clock ~20k/s via a 68k glue that jsr's the ROM Microseconds
-	 * EMUL_OP; this op replaces that jsr with a minimal handler that fills the
-	 * result directly (no ROM routine, no second dispatch, no audio service). */
-	OP_QT_CLOCK_MICROS,
+	#if ENABLE_NATIVE_MICROSECONDS_PATCH
+		OP_COMPONENT_DISPATCH, OP_QT_CLOCK_MICROS,
+	#endif /* ENABLE_NATIVE_MICROSECONDS_PATCH */
 	OP_MAX
 };
 const uint16 M68K_EMUL_RETURN = 0xfe40;	// Extended opcodes
@@ -129,11 +124,16 @@ const uint16 M68K_EMUL_OP_EXTFS_COMM = M68K_EMUL_BREAK + OP_EXTFS_COMM;
 const uint16 M68K_EMUL_OP_EXTFS_HFS = M68K_EMUL_BREAK + OP_EXTFS_HFS;
 const uint16 M68K_EMUL_OP_IDLE_TIME = M68K_EMUL_BREAK + OP_IDLE_TIME;
 const uint16 M68K_EMUL_OP_IDLE_TIME_2 = M68K_EMUL_BREAK + OP_IDLE_TIME_2;
-const uint16 M68K_EMUL_OP_COMPONENT_DISPATCH =
-	M68K_EMUL_BREAK + OP_COMPONENT_DISPATCH;
-const uint16 M68K_EMUL_OP_QT_CLOCK_MICROS =
-	M68K_EMUL_BREAK + OP_QT_CLOCK_MICROS;
-
-extern "C" void EmulOp(M68kRegisters *r, uint32 *pc, int selector);
+#if ENABLE_NATIVE_MICROSECONDS_PATCH
+	const uint16 M68K_EMUL_OP_COMPONENT_DISPATCH =
+		M68K_EMUL_BREAK + OP_COMPONENT_DISPATCH;
+	const uint16 M68K_EMUL_OP_QT_CLOCK_MICROS =
+		M68K_EMUL_BREAK + OP_QT_CLOCK_MICROS;
+	/* ROM scratch space for the targeted ComponentDispatch fallback thunk.
+	 * The inline A82A patch writes the original trap word here and
+	 * resumes the 68k at this address when the CI is not the sound clock. */
+	extern const uint32 COMPONENT_DISPATCH_PATCH_SPACE;
+#endif /* ENABLE_NATIVE_MICROSECONDS_PATCH */
+extern "C" void EmulOp(M68kRegisters *r, uint32 pc, int selector);
 
 #endif

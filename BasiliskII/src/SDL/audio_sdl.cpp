@@ -41,14 +41,9 @@
 #endif
 #define QD3D_AUDIO_LOG(...) do { } while (0)
 #endif
-#ifndef DESCENT_MOVIE_DIAGNOSTICS
-#define DESCENT_MOVIE_DIAGNOSTICS 0
-#endif
 #ifndef DESCENT_MOVIE_PREFETCH_DEPTH_BLOCKS
 #define DESCENT_MOVIE_PREFETCH_DEPTH_BLOCKS 12
 #endif
-
-#include <cstdio>
 
 #define DEBUG 0
 #include "debug.h"
@@ -136,7 +131,7 @@ static bool open_sdl_audio(void)
 		fprintf(stderr, "WARNING: Cannot open audio: %s\n", SDL_GetError());
 		return false;
 	}
-	
+
 #if SDL_VERSION_ATLEAST(2,0,0)
 	// HACK: workaround a bug in SDL pre-2.0.6 (reported via https://bugzilla.libsdl.org/show_bug.cgi?id=3710 )
 	// whereby SDL does not update audio_spec.size
@@ -509,7 +504,7 @@ static void stream_func(void *arg, uint8 *stream, int stream_len)
 		                (unsigned long long)cd_mix_usec, stream_len);
 #endif
 #endif
-	
+
 }
 
 
@@ -562,87 +557,6 @@ void AudioInterrupt(void)
 		                   audio_callback_bytes);
 #if QD3D_AUDIO_LOGGING_ENABLED
 		AudioDiagnosticPoll();
-#endif
-#if DESCENT_MOVIE_DIAGNOSTICS
-		/* Movie phase: rich GetSourceData trace (starve, SCD, sample hash). */
-		if (AudioStatus.num_sources >= 2) {
-			static int last_bytes = -1;
-			static uint32 last_buf;
-			static uint32 irq_n;
-			static uint32 zero_streak;
-			static uint32 first_nonempty_n;
-			irq_n++;
-			const int bytes = audio_fetch_bytes;
-			uint32 scd_fmt = 0, scd_count = 0, scd_buf = 0;
-			uint16 scd_ch = 0, scd_ss = 0;
-			uint32 scd_rate = 0;
-			uint32 hash = 0;
-			if (info) {
-				scd_fmt = ReadMacInt32(info + scd_format);
-				scd_ch = ReadMacInt16(info + scd_numChannels);
-				scd_ss = ReadMacInt16(info + scd_sampleSize);
-				scd_rate = ReadMacInt32(info + scd_sampleRate);
-				scd_count = ReadMacInt32(info + scd_sampleCount);
-				scd_buf = ReadMacInt32(info + scd_buffer);
-				if (bytes > 0 && scd_buf) {
-					uint8 *host = Mac2HostAddr(scd_buf);
-					if (host) {
-						hash = 2166136261u;
-						const int n = bytes > 64 ? 64 : bytes;
-						for (int i = 0; i < n; i++)
-							hash = (hash ^ host[i]) * 16777619u;
-					}
-				}
-			}
-			if (bytes == 0)
-				zero_streak++;
-			else {
-				if (!first_nonempty_n)
-					first_nonempty_n = irq_n;
-				zero_streak = 0;
-			}
-			const bool changed = bytes != last_bytes || scd_buf != last_buf;
-			const bool early = irq_n <= 40;
-			const bool periodic = (irq_n % 8) == 0;
-			if (changed || bytes == 0 || early || periodic) {
-				char msg[448];
-				std::snprintf(msg, sizeof(msg),
-				              "[QD3D:wait] AudioInterrupt tick=%u n=%u sources=%d "
-				              "info=0x%08x bytes=%d zeroStreak=%u firstNonEmptyN=%u "
-				              "result=%d fmt=%c%c%c%c ch=%u ss=%u rate=%u "
-				              "sampleCount=%u buf=0x%08x hash=%08x\n",
-				              ReadMacInt32(0x016a), irq_n, AudioStatus.num_sources,
-				              info, bytes, zero_streak, first_nonempty_n,
-				              (int32)r.d[0],
-				              (scd_fmt >> 24) & 0xff, (scd_fmt >> 16) & 0xff,
-				              (scd_fmt >> 8) & 0xff, scd_fmt & 0xff,
-				              scd_ch, scd_ss, scd_rate >> 16, scd_count, scd_buf, hash);
-				std::fputs(msg, stderr);
-				std::fflush(stderr);
-#ifdef _WIN32
-				OutputDebugStringA(msg);
-#endif
-				if (bytes == 0 && last_bytes > 0) {
-					std::snprintf(msg, sizeof(msg),
-					              "[QD3D:wait] AudioInterrupt starve tick=%u n=%u "
-					              "wasBytes=%d zeroStreak=%u info=0x%08x\n",
-					              ReadMacInt32(0x016a), irq_n, last_bytes,
-					              zero_streak, info);
-					std::fputs(msg, stderr);
-					std::fflush(stderr);
-#ifdef _WIN32
-					OutputDebugStringA(msg);
-#endif
-				}
-				last_bytes = bytes;
-				last_buf = scd_buf;
-			}
-		}
-#endif
-		/* Light audio liveness pulse (movie phase only, always compiled):
-		 * a handful of lines per second so a plain run can confirm mixer
-		 * content without DESCENT_MOVIE_DIAGNOSTICS (which stretches the
-		 * intro thrash badly). */
 		if (AudioStatus.num_sources >= 1) {
 			static uint32 pulse_n;
 			static uint32 pulse_last_hash;
@@ -663,6 +577,7 @@ void AudioInterrupt(void)
 				pulse_last_hash = hash;
 			}
 		}
+#endif
 		D(bug(" GetSourceData() returns %08lx\n", r.d[0]));
 	} else
 		WriteMacInt32(audio_data + adatStreamInfo, 0);

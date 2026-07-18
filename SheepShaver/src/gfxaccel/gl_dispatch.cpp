@@ -1,13 +1,6 @@
 /*
  *  gl_dispatch.cpp - OpenGL multiplexed dispatch from sub-opcode to handler functions
  *
- *  (C) 2026 Sierra Burkhart (sierra760)
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
  *  Reads the sub-opcode from the scratch word written by the PPC thunk
  *  and dispatches to the appropriate GL/AGL/GLU/GLUT handler function.
  *  All dispatch entries have real implementations covering core GL 1.2.1,
@@ -25,7 +18,7 @@
 
 // Logging state -- gated by GL_LOGGING env var (via subsystem_on).
 #if ACCEL_LOGGING_ENABLED
-bool gl_logging_enabled = accel_log_detail::subsystem_on("gl");
+bool gl_logging_enabled = accel_log_subsystem_on("gl");
 #endif
 
 // PPC stack pointer, saved by glue code before dispatch for 9+ arg access
