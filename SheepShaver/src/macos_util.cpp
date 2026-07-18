@@ -37,11 +37,6 @@
 #define DEBUG 0
 #include "debug.h"
 
-/* ENABLE_NATIVE_MICROSECONDS_PATCH (default 0) lives in emul_op.h - the
- * InterfaceLib Microseconds patch is superseded by the native Cinepak decoder
- * and its audio thrash-mixer crashed. See that header for the full rationale. */
-
-
 // Function pointers
 typedef long (*cu_ptr)(void *, uint32);
 static uint32 cu_tvect = 0;
@@ -322,41 +317,6 @@ uint32 FindLibSymbol(const char *lib_str, const char *sym_str)
 
 
 /*
- *  Patch InterfaceLib's Microseconds() with a native implementation
- *
- *  The library routine reaches the _Microseconds trap through Mixed Mode,
- *  which costs a full PPC->68k emulator round trip per call. PPC games that
- *  poll it heavily (Descent II's movie timing calls it hundreds of times per
- *  tick) turn that overhead into visible stalls. Replace the routine's first
- *  instruction with the FN=1 NATIVE_MICROSECONDS opcode, which services the
- *  call inside the PPC interpreter and returns via LR. The 68k _Microseconds
- *  trap (EMUL_OP in the patched ROM) is unaffected.
- */
-
-#if ENABLE_NATIVE_MICROSECONDS_PATCH
-static void PatchInterfaceLibMicroseconds()
-{
-#if EMULATED_PPC
-	const uint32 tvect = FindLibSymbol("\014InterfaceLib", "\014Microseconds");
-	if (tvect == 0) {
-		printf("WARNING: InterfaceLib Microseconds not found, native patch skipped\n");
-		return;
-	}
-	const uint32 code = ReadMacInt32(tvect);
-	if (code == 0) {
-		printf("WARNING: InterfaceLib Microseconds has null code pointer\n");
-		return;
-	}
-	D(bug("InterfaceLib Microseconds TVECT at %08x, code at %08x (first insn %08x)\n",
-	      tvect, code, ReadMacInt32(code)));
-	WriteMacInt32(code, NativeOpcode(NATIVE_MICROSECONDS));
-	FlushCodeCache(code, code + 4);
-#endif
-}
-#endif /* ENABLE_NATIVE_MICROSECONDS_PATCH */
-
-
-/*
  *  Find CallUniversalProc() TVector
  */
 
@@ -405,10 +365,6 @@ void InitCallUniversalProc()
 		printf("FATAL: Can't find DisposePtr()\n");
 		QuitEmulator();
 	}
-
-#if ENABLE_NATIVE_MICROSECONDS_PATCH
-	PatchInterfaceLibMicroseconds();
-#endif
 
 #if defined(ENABLE_GFXACCEL) && defined(ENABLE_NATIVE_CINEPAK_PATCH) \
 		&& ENABLE_NATIVE_CINEPAK_PATCH

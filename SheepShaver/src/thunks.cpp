@@ -116,13 +116,6 @@ uint32 NativeOpcode(int selector)
 	case NATIVE_DSP_DISPATCH:
 		opcode = POWERPC_NATIVE_OP(0, selector);
 		break;
-#if ENABLE_NATIVE_MICROSECONDS_PATCH
-	case NATIVE_MICROSECONDS:
-		// FN=1: the single patched instruction acts as the whole function
-		// (execute_sheep sets pc = lr after the native op).
-		opcode = POWERPC_NATIVE_OP(1, selector);
-		break;
-#endif /* ENABLE_NATIVE_MICROSECONDS_PATCH */
 #if defined(ENABLE_NATIVE_CINEPAK_PATCH) \
 		&& ENABLE_NATIVE_CINEPAK_PATCH
 	case NATIVE_CINEPAK_DISPATCH:

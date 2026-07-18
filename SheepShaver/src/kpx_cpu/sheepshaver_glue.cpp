@@ -1428,46 +1428,6 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 	case NATIVE_NAMED_CHECK_LOAD_INVOC:
 		named_check_load_invoc(gpr(3), gpr(4), gpr(5));
 		break;
-#if ENABLE_NATIVE_MICROSECONDS_PATCH
-	case NATIVE_MICROSECONDS: {
-		// Native replacement for InterfaceLib Microseconds(UnsignedWide *).
-		// The library implementation reaches the _Microseconds trap through
-		// Mixed Mode, costing a full PPC->68k emulator round trip per call
-		// (~60us); Descent II's movie startup calls it hundreds of times per
-		// tick. This services the call without leaving the PPC interpreter.
-		const uint32 wide = gpr(3);
-		if (wide) {
-			uint32 hi, lo;
-			Microseconds(hi, lo);
-			WriteMacInt32(wide + 0, hi);
-			WriteMacInt32(wide + 4, lo);
-		}
-		/* Keep mixer rotating if guest thrash-polls Microseconds from PPC.
-		 * NATIVE_MICROSECONDS is FN=1: execute_sheep does pc() = lr() right
-		 * after this returns. AudioServicePendingInterrupt may run a source's
-		 * moreRtn via Execute68k (nested guest execution), which clobbers
-		 * lr/ctr and the stack - without save/restore the FN=1 return lands on
-		 * a garbage PC (observed: illegal 'mfsr' 0x7c0004a6 mid-movie). Mirror
-		 * the RAVE/GL/DSp/Cinepak dispatch guard.
-		 *
-		 * The whole thrash-mixer path is superseded by the native Cinepak
-		 * decoder and gated off (ENABLE_NATIVE_MICROSECONDS_PATCH, default 0),
-		 * since the InterfaceLib patch that reaches this op is no longer
-		 * installed. Kept behind the switch to revive the timing experiment. */
-		{
-			uint32 saved_lr = lr();
-			uint32 saved_ctr = ctr();
-			uint32 saved_sp = gpr(1);
-			uint32 saved_r2 = gpr(2);
-			AudioServicePendingInterrupt();
-			if (lr() != saved_lr) { lr() = saved_lr; }
-			if (ctr() != saved_ctr) { ctr() = saved_ctr; }
-			if (gpr(1) != saved_sp) { gpr(1) = saved_sp; }
-			if (gpr(2) != saved_r2) { gpr(2) = saved_r2; }
-		}
-		break;
-	}
-#endif
 	case NATIVE_RAVE_DISPATCH: {
 #if !defined(ENABLE_GFXACCEL)
 		gpr(3) = (uint32)-1;

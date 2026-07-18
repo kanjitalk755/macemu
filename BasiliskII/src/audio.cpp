@@ -34,20 +34,6 @@
 #include "user_strings.h"
 #include "cdrom.h"
 
-#if defined(SHEEPSHAVER)
-#include "qd3d_init_logging.h"
-#elif defined(QD3D_AUDIO_LOGGING_ENABLED) && QD3D_AUDIO_LOGGING_ENABLED
-#include "qd3d_init_logging.h"
-#else
-#ifndef QD3D_AUDIO_LOGGING_ENABLED
-#define QD3D_AUDIO_LOGGING_ENABLED 0
-#endif
-#define QD3D_AUDIO_LOG(...) do { } while (0)
-#endif
-#ifndef DESCENT_MOVIE_UNPAUSE_PRIME
-#define DESCENT_MOVIE_UNPAUSE_PRIME 0
-#endif
-
 #define DEBUG 0
 #include "debug.h"
 
@@ -64,198 +50,6 @@ int audio_frames_per_block;			// Number of audio frames per block
 uint32 audio_component_flags;		// Component feature flags
 uint32 audio_data = 0;				// Mac address of global data area
 static int open_count = 0;			// Open/close nesting count
-static uint32 audio_sound_clock_ci = 0;	// First siSoundClock ComponentInstance returned by the mixer
-
-uint32 AudioGetSoundClockCI(void)
-{
-	return audio_sound_clock_ci;
-}
-
-#if QD3D_AUDIO_LOGGING_ENABLED
-static uint32 diagnostic_source;
-static uint32 diagnostic_source_pb;
-static int16 diagnostic_pb_result;
-static uint32 diagnostic_pb_frames;
-static uint32 diagnostic_pb_data;
-static uint32 diagnostic_poll_count;
-#endif
-
-/*
- *  Service pending audio interrupt from thrash hot paths.
- *
- *  Guest 68k busy-polls (Microseconds / GetTime) can starve OP_IRQ so
- *  INTFLAG_AUDIO sits pending while the mixer stops rotating. Servicing
- *  the flag here keeps audio progressing.
- *
- *  Do NOT call TimerInterrupt / consume VIA from here: movie moreRtn and
- *  other TM tasks nested under EMUL_OP/GetTime have corrupted PPC state
- *  (execute_illegal abort). Leave timer/VBL to OP_IRQ.
- */
-#if STREAMING_AUDIO_PREFETCH
-void AudioServicePendingInterrupt(void)
-{
-	/* If an interrupt is already running (e.g. inside the moreRtn it will
-	 * call), do not clear INTFLAG_AUDIO and do not re-enter. Leave the flag
-	 * set so the normal OP_IRQ/callback path handles the next period. */
-	if (audio_interrupt_in_service || !audio_open || !AudioStatus.mixer)
-		return;
-	if ((InterruptFlags & INTFLAG_AUDIO) == 0)
-		return;
-	ClearInterruptFlag(INTFLAG_AUDIO);
-	AudioInterrupt();
-}
-#else
-void AudioServicePendingInterrupt(void)
-{
-	// No host-side interrupt servicing without STREAMING_AUDIO_PREFETCH.
-}
-#endif
-
-/*
- *  Host-side streaming source servicing (Descent II intro class; general)
- *
- *  Some clients (Sound Manager bufferCmd/callback streams) issue
- *  PlaySourceBuffer(start) with an *empty* PB (frames=0, data=NULL) and a
- *  moreRtn, then feed 256-frame chunks through the PB. The Apple Mixer
- *  retires the empty buffer at start time and its mix loop never touches
- *  the source again, so it plays silence forever (observed: Descent II
- *  first-movie streaming source frozen at frames=256 while the mixer mixed
- *  silence, driving the player into a ~1 s timeout + audio restart = the
- *  intro stutter). Re-Play kicks, StartSource, and fail-fast errors all
- *  failed (see session notes 23.6; erroring the start hangs the client).
- *
- *  So the host services the source itself: consume the PB the way the mixer
- *  would (advance data / decrement frames), refill it by calling the PB's
- *  moreRtn (pascal Boolean(SoundParamBlockPtr *)) through a small 68k thunk,
- *  convert/mix the samples into the block fetched from the mixer.
- */
-bool audio_interrupt_in_service = false;
-
-#if STREAMING_AUDIO_PREFETCH
-static uint32 stream_source;
-static uint32 stream_pb;
-static bool stream_armed;
-
-/* Sanity-check a Mac address before we read/write the streaming PB. */
-static bool audio_stream_addr_ok(uint32 a)
-{
-	return a >= 0x1000 && a < 0x40000000 && Mac2HostAddr(a) != NULL;
-}
-
-static bool stream_call_pb_rtn(uint32 rtn)
-{
-	if (rtn == 0 || !audio_stream_addr_ok(stream_pb))
-		return false;
-	WriteMacInt32(audio_data + adatStreamPbVar, stream_pb);
-	M68kRegisters r;
-	r.a[0] = rtn;
-	r.a[1] = audio_data + adatStreamPbVar;
-	Execute68k(audio_data + adatCallMoreRtn, &r);
-	stream_pb = ReadMacInt32(audio_data + adatStreamPbVar);
-	/* Pascal Boolean result: byte in the high half of the popped word. */
-	if (!audio_stream_addr_ok(stream_pb))
-		return false;
-	return stream_pb != 0 && (r.d[0] & 0xff00) != 0;
-}
-
-void AudioStreamHostMix(uint8 *buf, int *bytes, int want_bytes)
-{
-	if (!stream_armed || !audio_data || !audio_stream_addr_ok(stream_pb))
-		return;
-	if (AudioStatus.sample_size != 16 || AudioStatus.channels != 2)
-		return;
-	const uint32 out_rate = AudioStatus.sample_rate >> 16;
-	const uint32 src_rate = ReadMacInt32(stream_pb + 16) >> 16;
-	const uint16 src_bits = ReadMacInt16(stream_pb + 14);
-	const uint16 src_ch = ReadMacInt16(stream_pb + 12);
-	if (src_rate == 0 || out_rate < src_rate || out_rate % src_rate != 0) {
-		stream_armed = false;
-		return;
-	}
-	const uint32 dup = out_rate / src_rate;
-	const uint32 src_frame_bytes = (src_bits >> 3) * src_ch;
-	if ((src_bits != 16 && src_bits != 8) || src_ch < 1 || src_ch > 2 ||
-	    src_frame_bytes == 0 || dup > 4) {
-		stream_armed = false;
-		return;
-	}
-
-	const int out_frames_wanted = want_bytes / 4;
-	int out_frame = 0;
-	uint32 chunks = 0;
-	uint32 more_calls = 0;
-	bool starved = false;
-
-	/* Ensure the whole block exists so we can mix into it. */
-	if (*bytes < want_bytes) {
-		memset(buf + *bytes, 0, want_bytes - *bytes);
-		*bytes = want_bytes;
-	}
-
-	while (out_frame < out_frames_wanted) {
-		if (!audio_stream_addr_ok(stream_pb)) {
-			stream_armed = false;
-			starved = true;
-			break;
-		}
-		uint32 frames = ReadMacInt32(stream_pb + 20);
-		uint32 data = ReadMacInt32(stream_pb + 24);
-		if (frames == 0 || data == 0) {
-			/* Buffer drained: pull the next chunk. completionRtn must NOT
-			 * be called here - it means "entire sound finished" and makes
-			 * the Sound Manager retire the stream (run11). */
-			more_calls++;
-			if (more_calls > 64 ||
-			    !stream_call_pb_rtn(ReadMacInt32(stream_pb + 48))) {
-				starved = true;
-				break;
-			}
-			continue;
-		}
-		chunks++;
-		uint32 take = frames;
-		const uint32 out_room = (uint32)(out_frames_wanted - out_frame) / dup;
-		if (take > out_room)
-			take = out_room;
-		if (take == 0)
-			break;
-		for (uint32 f = 0; f < take; f++) {
-			int16 l, rgt;
-			if (src_bits == 16) {
-				l = (int16)ReadMacInt16(data + f * src_frame_bytes);
-				rgt = src_ch == 2 ?
-					(int16)ReadMacInt16(data + f * src_frame_bytes + 2) : l;
-			} else {
-				l = (int16)((ReadMacInt8(data + f * src_frame_bytes) - 128) << 8);
-				rgt = src_ch == 2 ?
-					(int16)((ReadMacInt8(data + f * src_frame_bytes + 1) - 128) << 8) : l;
-			}
-			for (uint32 d = 0; d < dup; d++) {
-				uint8 *o = buf + (uint32)(out_frame + f * dup + d) * 4;
-				int ml = (int16)((o[0] << 8) | o[1]) + l;
-				int mr = (int16)((o[2] << 8) | o[3]) + rgt;
-				if (ml > 32767) ml = 32767; else if (ml < -32768) ml = -32768;
-				if (mr > 32767) mr = 32767; else if (mr < -32768) mr = -32768;
-				o[0] = (uint8)(ml >> 8); o[1] = (uint8)ml;
-				o[2] = (uint8)(mr >> 8); o[3] = (uint8)mr;
-			}
-		}
-		out_frame += take * dup;
-		WriteMacInt32(stream_pb + 20, frames - take);
-		WriteMacInt32(stream_pb + 24, data + take * src_frame_bytes);
-	}
-
-	static uint32 mix_n;
-	mix_n++;
-	if (mix_n <= 24 || (mix_n & 31) == 0 || starved) {
-		QD3D_AUDIO_LOG("streamHostMix n=%u tick=%u pb=0x%08x chunks=%u "
-		               "moreCalls=%u outFrames=%d/%d starved=%d fmt=%u/%u/%uch",
-		               mix_n, ReadMacInt32(0x016a), stream_pb, chunks, more_calls,
-		               out_frame, out_frames_wanted, starved ? 1 : 0,
-		               src_rate, src_bits, src_ch);
-	}
-}
-#endif	// STREAMING_AUDIO_PREFETCH
 
 bool AudioAvailable = false;		// Flag: audio output available (from the software point of view)
 
@@ -270,46 +64,7 @@ int SoundInGain = 65536; // FIXED 4-byte from 0.5 to 1.5; this is middle value (
 void AudioReset(void)
 {
 	audio_data = 0;
-	#if QD3D_AUDIO_LOGGING_ENABLED
-	diagnostic_source = 0;
-	diagnostic_source_pb = 0;
-	diagnostic_pb_result = 0;
-	diagnostic_pb_frames = 0;
-	diagnostic_pb_data = 0;
-	diagnostic_poll_count = 0;
-#endif
 }
-
-
-#if QD3D_AUDIO_LOGGING_ENABLED
-void AudioDiagnosticPoll(void)
-{
-	if (!diagnostic_source_pb)
-		return;
-
-	diagnostic_poll_count++;
-	const int16 result = ReadMacInt16(diagnostic_source_pb + 60);
-	const uint32 frames = ReadMacInt32(diagnostic_source_pb + 20);
-	const uint32 data = ReadMacInt32(diagnostic_source_pb + 24);
-	const bool changed = result != diagnostic_pb_result ||
-	                     frames != diagnostic_pb_frames ||
-	                     data != diagnostic_pb_data;
-	if (diagnostic_poll_count == 1 || changed ||
-	    (diagnostic_poll_count & 31) == 0) {
-		QD3D_AUDIO_LOG("SourcePB poll=%u tick=%u source=0x%08x pb=0x%08x frames=%u data=0x%08x moreRtn=0x%08x completionRtn=0x%08x refCon=0x%08x result=%d%s",
-		                diagnostic_poll_count, ReadMacInt32(0x016a),
-		                diagnostic_source, diagnostic_source_pb,
-		                frames, data,
-		                ReadMacInt32(diagnostic_source_pb + 48),
-		                ReadMacInt32(diagnostic_source_pb + 52),
-		                ReadMacInt32(diagnostic_source_pb + 56), result,
-		                changed ? " changed" : "");
-	}
-	diagnostic_pb_result = result;
-	diagnostic_pb_frames = frames;
-	diagnostic_pb_data = data;
-}
-#endif
 
 
 /*
@@ -320,11 +75,6 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 {
 	D(bug(" AudioGetInfo %c%c%c%c, infoPtr %08lx, source ID %08lx\n", selector >> 24, (selector >> 16) & 0xff, (selector >> 8) & 0xff, selector & 0xff, infoPtr, sourceID));
 	M68kRegisters r;
-	if (selector != siHardwareBusy)
-		QD3D_AUDIO_LOG("GetInfo tick=%u selector=%c%c%c%c info=0x%08x source=0x%08x",
-		                ReadMacInt32(0x016a), selector >> 24,
-		                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
-		                selector & 0xff, infoPtr, sourceID);
 
 	switch (selector) {
 		case siSampleSize:
@@ -403,24 +153,6 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 
 		case siHardwareBusy:
 			WriteMacInt16(infoPtr, AudioStatus.num_sources != 0);
-			#if QD3D_AUDIO_LOGGING_ENABLED
-			{
-				static uint32 busy_poll_tick;
-				static uint32 busy_poll_count;
-				static uint32 busy_poll_value;
-				const uint32 tick = ReadMacInt32(0x016a);
-				if (busy_poll_count && tick != busy_poll_tick) {
-					QD3D_AUDIO_LOG("GetInfo hardwareBusy tick=%u polls=%u value=%u sources=%d",
-					                busy_poll_tick, busy_poll_count,
-					                busy_poll_value,
-					                AudioStatus.num_sources);
-					busy_poll_count = 0;
-				}
-				busy_poll_tick = tick;
-				busy_poll_value = AudioStatus.num_sources != 0;
-				busy_poll_count++;
-			}
-			#endif
 			break;
 
 		case siHardwareFormat:
@@ -434,19 +166,6 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 			WriteMacInt32(infoPtr + scd_reserved, 0);
 			break;
 
-		case siCompressionFactor: {
-			const uint16 bytes_per_sample = AudioStatus.sample_size >> 3;
-			WriteMacInt32(infoPtr + 0, 20);
-			WriteMacInt32(infoPtr + 4, AudioStatus.sample_size == 16 ? FOURCC('t','w','o','s') : FOURCC('r','a','w',' '));
-			WriteMacInt16(infoPtr + 8, 0); // notCompressed
-			WriteMacInt16(infoPtr + 10, 1);
-			WriteMacInt16(infoPtr + 12, bytes_per_sample);
-			WriteMacInt16(infoPtr + 14, bytes_per_sample * AudioStatus.channels);
-			WriteMacInt16(infoPtr + 16, bytes_per_sample);
-			WriteMacInt16(infoPtr + 18, 0);
-			break;
-		}
-
 		default:	// Delegate to Apple Mixer
 			if (AudioStatus.mixer == 0)
 				return badComponentSelector;
@@ -455,22 +174,9 @@ static int32 AudioGetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 			r.d[0] = selector;
 			r.a[1] = sourceID;
 			r.a[2] = AudioStatus.mixer;
-			#if QD3D_AUDIO_LOGGING_ENABLED
-			const uint64 get_info_started = GetTicks_usec();
-			#endif
 			Execute68k(audio_data + adatGetInfo, &r);
-			QD3D_AUDIO_LOG("GetInfo delegated tick=%u selector=%c%c%c%c source=0x%08x result=%d usec=%llu",
-			                ReadMacInt32(0x016a), selector >> 24,
-			                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
-			                selector & 0xff, sourceID, (int32)r.d[0],
-			                (unsigned long long)(GetTicks_usec() - get_info_started));
-		if (selector == siSoundClock && infoPtr && r.d[0] == noErr) {
-			const uint32 ci = ReadMacInt32(infoPtr);
-			if (audio_sound_clock_ci == 0 && ci != 0)
-				audio_sound_clock_ci = ci;
-		}
-		D(bug("  delegated to Apple Mixer, returns %08lx\n", r.d[0]));
-		return r.d[0];
+			D(bug("  delegated to Apple Mixer, returns %08lx\n", r.d[0]));
+			return r.d[0];
 	}
 	return noErr;
 }
@@ -484,10 +190,6 @@ static int32 AudioSetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 {
 	D(bug(" AudioSetInfo %c%c%c%c, infoPtr %08lx, source ID %08lx\n", selector >> 24, (selector >> 16) & 0xff, (selector >> 8) & 0xff, selector & 0xff, infoPtr, sourceID));
 	M68kRegisters r;
-	QD3D_AUDIO_LOG("SetInfo tick=%u selector=%c%c%c%c info=0x%08x source=0x%08x",
-	                ReadMacInt32(0x016a), selector >> 24,
-	                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
-	                selector & 0xff, infoPtr, sourceID);
 
 	switch (selector) {
 		case siSampleSize:
@@ -560,18 +262,9 @@ static int32 AudioSetInfo(uint32 infoPtr, uint32 selector, uint32 sourceID)
 			r.d[0] = selector;
 			r.a[1] = sourceID;
 			r.a[2] = AudioStatus.mixer;
-			#if QD3D_AUDIO_LOGGING_ENABLED
-			const uint64 set_info_started = GetTicks_usec();
-			#endif
 			Execute68k(audio_data + adatSetInfo, &r);
-			const int32 set_result = r.d[0];
-			QD3D_AUDIO_LOG("SetInfo delegated tick=%u selector=%c%c%c%c source=0x%08x result=%d usec=%llu",
-			                ReadMacInt32(0x016a), selector >> 24,
-			                (selector >> 16) & 0xff, (selector >> 8) & 0xff,
-			                selector & 0xff, sourceID, set_result,
-			                (unsigned long long)(GetTicks_usec() - set_info_started));
-			D(bug("  delegated to Apple Mixer, returns %08lx\n", set_result));
-			return set_result;
+			D(bug("  delegated to Apple Mixer, returns %08lx\n", r.d[0]));
+			return r.d[0];
 	}
 	return noErr;
 }
@@ -587,9 +280,6 @@ int32 AudioDispatch(uint32 params, uint32 globals)
 	M68kRegisters r;
 	uint32 p = params + cp_params;
 	int16 selector = (int16)ReadMacInt16(params + cp_what);
-#if QD3D_AUDIO_LOGGING_ENABLED
-	uint64 diagnostic_call_started = 0;
-#endif
 
 	switch (selector) {
 
@@ -702,21 +392,6 @@ int32 AudioDispatch(uint32 params, uint32 globals)
 				WriteMacInt16(p, M68K_RTS); p += 2;	// rts
 				if (p - audio_data != adatData)
 					goto adat_error;
-
-#if STREAMING_AUDIO_PREFETCH
-				// Thunk to call a SoundParamBlock moreRtn:
-				// pascal Boolean routine(SoundParamBlockPtr *pb)
-				// entry: a0 = moreRtn UPP, a1 = &pbVar (adatStreamPbVar)
-				p = audio_data + adatCallMoreRtn;
-				WriteMacInt16(p, 0x558f); p += 2;	// subq.l	#2,sp (result)
-				WriteMacInt16(p, 0x2f09); p += 2;	// move.l	a1,-(sp)
-				WriteMacInt16(p, 0x4e90); p += 2;	// jsr		(a0)
-				WriteMacInt16(p, 0x301f); p += 2;	// move.w	(sp)+,d0
-				WriteMacInt16(p, 0x48c0); p += 2;	// ext.l	d0
-				WriteMacInt16(p, M68K_RTS); p += 2;	// rts
-				if (p - audio_data != adatStreamPbVar)
-					goto adat_error;
-#endif
 			}
 			AudioAvailable = true;
 			if (open_count == 0)
@@ -772,7 +447,7 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 			return noErr;
 
 		// Sound component functions (not delegated)
-		case kSoundComponentInitOutputDeviceSelect: {
+		case kSoundComponentInitOutputDeviceSelect:
 			D(bug(" InitOutputDevice\n"));
 			if (!audio_open)
 				return noHardwareErr;
@@ -794,22 +469,10 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 			r.a[0] = audio_data + adatMixer;
 			r.d[0] = 0;
 			r.a[1] = audio_data + adatData;
-			#if QD3D_AUDIO_LOGGING_ENABLED
-			diagnostic_call_started = GetTicks_usec();
-			#endif
 			Execute68k(audio_data + adatOpenMixer, &r);
 			AudioStatus.mixer = ReadMacInt32(audio_data + adatMixer);
-			const int32 mixer_result = r.d[0];
-			QD3D_AUDIO_LOG("InitOutputDevice tick=%u mixer=0x%08x result=%d format=%uHz/%ubit/%uch blockFrames=%d usec=%llu",
-			                ReadMacInt32(0x016a),
-			                AudioStatus.mixer, mixer_result,
-			                AudioStatus.sample_rate >> 16,
-			                AudioStatus.sample_size, AudioStatus.channels,
-			                audio_frames_per_block,
-			                (unsigned long long)(GetTicks_usec() - diagnostic_call_started));
-			D(bug(" OpenMixer() returns %08lx, mixer %08lx\n", mixer_result, AudioStatus.mixer));
-			return mixer_result;
-		}
+			D(bug(" OpenMixer() returns %08lx, mixer %08lx\n", r.d[0], AudioStatus.mixer));
+			return r.d[0];
 
 		case kSoundComponentGetSourceSelect:
 			D(bug(" GetSource source %08lx\n", ReadMacInt32(p)));
@@ -820,19 +483,12 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 		case kSoundComponentAddSourceSelect:
 			D(bug(" AddSource\n"));
 			AudioStatus.num_sources++;
-			QD3D_AUDIO_LOG("AddSource sources=%d mixer=0x%08x",
-			                AudioStatus.num_sources, AudioStatus.mixer);
-			goto delegate_log_add;
+			goto delegate;
 
 		case kSoundComponentRemoveSourceSelect:
 			D(bug(" RemoveSource\n"));
 			AudioStatus.num_sources--;
-#if STREAMING_AUDIO_PREFETCH
-			stream_armed = false;
-#endif
-			QD3D_AUDIO_LOG("RemoveSource sources=%d mixer=0x%08x",
-			                AudioStatus.num_sources, AudioStatus.mixer);
-			goto delegate_log_remove;
+			goto delegate;
 
 		case kSoundComponentGetInfoSelect:
 			return AudioGetInfo(ReadMacInt32(p), ReadMacInt32(p + 4), ReadMacInt32(p + 8));
@@ -846,179 +502,31 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 			r.d[0] = ReadMacInt16(p + 4);
 			r.a[0] = ReadMacInt32(p);
 			r.a[1] = AudioStatus.mixer;
-			#if QD3D_AUDIO_LOGGING_ENABLED
-			diagnostic_call_started = GetTicks_usec();
-			#endif
 			Execute68k(audio_data + adatStartSource, &r);
-			QD3D_AUDIO_LOG("StartSource tick=%u source=0x%08x count=%u result=%d sources=%d usec=%llu",
-			                ReadMacInt32(0x016a),
-			                ReadMacInt32(p), ReadMacInt16(p + 4),
-			                (int32)r.d[0], AudioStatus.num_sources,
-			                (unsigned long long)(GetTicks_usec() - diagnostic_call_started));
 			D(bug(" returns %08lx\n", r.d[0]));
 			return noErr;
 
 		case kSoundComponentStopSourceSelect:
 			D(bug(" StopSource\n"));
-			QD3D_AUDIO_LOG("StopSource sources=%d mixer=0x%08x",
-			                AudioStatus.num_sources, AudioStatus.mixer);
-			goto delegate_log_stop;
+			goto delegate;
 
 		case kSoundComponentPauseSourceSelect:
 			D(bug(" PauseSource\n"));
-			QD3D_AUDIO_LOG("PauseSource sources=%d mixer=0x%08x",
-			                AudioStatus.num_sources, AudioStatus.mixer);
-			goto delegate_log_pause;
-
-delegate_log_add:
-delegate_log_remove:
-delegate_log_stop:
-delegate_log_pause:
 delegate:	// Delegate call to Apple Mixer
 			D(bug(" delegating call to Apple Mixer\n"));
 			r.a[0] = AudioStatus.mixer;
 			r.a[1] = params;
-			#if QD3D_AUDIO_LOGGING_ENABLED
-			diagnostic_call_started = GetTicks_usec();
-			#endif
 			Execute68k(audio_data + adatDelegateCall, &r);
-			QD3D_AUDIO_LOG("Sound delegate tick=%u selector=%d result=%d usec=%llu sources=%d",
-			                ReadMacInt32(0x016a), selector, (int32)r.d[0],
-			                (unsigned long long)(GetTicks_usec() - diagnostic_call_started),
-			                AudioStatus.num_sources);
 			D(bug(" returns %08lx\n", r.d[0]));
 			return r.d[0];
 
 		case kSoundComponentPlaySourceBufferSelect:
 			D(bug(" PlaySourceBuffer flags %08lx\n", ReadMacInt32(p)));
-			{
-				uint32 actions = ReadMacInt32(p);
-				const uint32 pb = ReadMacInt32(p + 4);
-				const uint32 source = ReadMacInt32(p + 8);
-				const uint32 frames = pb ? ReadMacInt32(pb + 20) : 0;
-				const uint32 actions_in = actions;
-
-#if defined(DESCENT_MOVIE_UNPAUSE_PRIME) && DESCENT_MOVIE_UNPAUSE_PRIME
-				/* Off by default: did not fix freeze; can disturb buffer setup. */
-				if ((actions & kSourcePaused) && frames > 0 &&
-				    AudioStatus.num_sources >= 2) {
-					actions &= ~uint32(kSourcePaused);
-					WriteMacInt32(p, actions);
-				}
-#endif
-
-				const int16 initial_result = pb ? ReadMacInt16(pb + 60) : 0;
-				uint32 data_before = pb ? ReadMacInt32(pb + 24) : 0;
-				uint32 frames_before = frames;
-
-				/* Streaming start we cannot service: an empty PB + moreRtn
-				 * relies on the mixer pulling chunks at interrupt rate; our
-				 * mixer never services such a source (plays silence) and the
-				 * deferred moreRtn refill caps at one chunk per interrupt -
-				 * 8x too slow. Fail fast so the client falls back to its
-				 * primed-buffer path immediately instead of timing out
-				 * (Descent II first movie: ~1 s frozen video + silence).  */
-#if QD3D_AUDIO_LOGGING_ENABLED
-				diagnostic_source = source;
-				diagnostic_source_pb = pb;
-				diagnostic_pb_result = initial_result;
-				diagnostic_pb_frames = frames_before;
-				diagnostic_pb_data = data_before;
-				diagnostic_poll_count = 0;
-#endif
-
-				/* Empty-PB streaming start (frames==0 + a moreRtn, not paused):
-				 * QuickTime hands the Apple Mixer an empty buffer and expects it
-				 * to pull chunks via moreRtn at interrupt rate. AudioStreamHostMix
-				 * already services exactly this case host-side, so the guest
-				 * mixer's PlaySourceBuffer is pure overhead - and its FIRST call
-				 * builds a SoundConverter (8bit/22k/mono -> 16bit/44k/stereo) on
-				 * the interpreter, a one-time ~3.2 s stall that freezes the movie
-				 * (video is timebase-locked to audio).
-				 *
-				 * Detect the case from the PRE-call PB and skip the guest call:
-				 * arm host-mixing, mark the PB "in progress" (result 1) as the
-				 * mixer would, return noErr. QuickTime then drives the source via
-				 * GetSourceData / the moreRtn, both of which we service. Non-
-				 * streaming sources (primed buffers, game sounds) still go through
-				 * the guest mixer unchanged. */
-				const uint32 more_rtn = pb ? ReadMacInt32(pb + 48) : 0;
-				(void)more_rtn;
-#if STREAMING_AUDIO_PREFETCH
-				const bool empty_streaming_start =
-					pb && !(actions & kSourcePaused) &&
-					frames_before == 0 && more_rtn != 0;
-#else
-				const bool empty_streaming_start = false;
-#endif
-
-				int16 final_pb_result;
-				uint32 data_after;
-				uint32 frames_after;
-
-				if (empty_streaming_start) {
-#if STREAMING_AUDIO_PREFETCH
-					#if QD3D_AUDIO_LOGGING_ENABLED
-					diagnostic_call_started = GetTicks_usec();
-					#endif
-					stream_source = source;
-					stream_pb = pb;
-					stream_armed = true;
-					WriteMacInt16(pb + 60, 1);   /* pbResult = in progress */
-					r.d[0] = 0;                  /* callResult = noErr */
-					final_pb_result = 1;
-					data_after = ReadMacInt32(pb + 24);
-					frames_after = 0;
-					QD3D_AUDIO_LOG("streamHostArm (skipped guest PSB) tick=%u "
-					               "source=0x%08x pb=0x%08x moreRtn=0x%08x",
-					               ReadMacInt32(0x016a), source, pb, more_rtn);
-#endif
-				} else {
-					r.d[0] = actions;
-					r.a[0] = pb;
-					r.a[1] = source;
-					r.a[2] = AudioStatus.mixer;
-					#if QD3D_AUDIO_LOGGING_ENABLED
-					diagnostic_call_started = GetTicks_usec();
-					#endif
-					Execute68k(audio_data + adatPlaySourceBuffer, &r);
-					final_pb_result = pb ? ReadMacInt16(pb + 60) : 0;
-					data_after = pb ? ReadMacInt32(pb + 24) : 0;
-					frames_after = pb ? ReadMacInt32(pb + 20) : 0;
-					(void)data_after;
-
-#if STREAMING_AUDIO_PREFETCH
-					/* Fallback arm for a source that only reveals frames==0 +
-					 * moreRtn after the guest call. */
-					if (!(actions & kSourcePaused) && pb && frames_after == 0 &&
-					    more_rtn != 0) {
-						stream_source = source;
-						stream_pb = pb;
-						stream_armed = true;
-						QD3D_AUDIO_LOG("streamHostArm tick=%u source=0x%08x "
-						               "pb=0x%08x moreRtn=0x%08x",
-						               ReadMacInt32(0x016a), source, pb, more_rtn);
-					} else if (stream_armed && source == stream_source) {
-						stream_armed = false;
-					}
-#endif
-				}
-				QD3D_AUDIO_LOG("PlaySourceBuffer tick=%u actions=0x%08x source=0x%08x pb=0x%08x recordBytes=%u format=%c%c%c%c %uHz/%ubit/%uch frames=%u data=0x%08x rateMultiplier=0x%08x moreRtn=0x%08x completionRtn=0x%08x refCon=0x%08x pbResult=%d->%d callResult=%d sources=%d usec=%llu",
-				                ReadMacInt32(0x016a), actions, source, pb,
-				                pb ? ReadMacInt32(pb) : 0,
-				                pb ? (ReadMacInt32(pb + 8) >> 24) : 0,
-				                pb ? ((ReadMacInt32(pb + 8) >> 16) & 0xff) : 0,
-				                pb ? ((ReadMacInt32(pb + 8) >> 8) & 0xff) : 0,
-				                pb ? (ReadMacInt32(pb + 8) & 0xff) : 0,
-				                pb ? (ReadMacInt32(pb + 16) >> 16) : 0,
-				                pb ? ReadMacInt16(pb + 14) : 0, pb ? ReadMacInt16(pb + 12) : 0,
-				                frames_after, data_after,
-				                pb ? ReadMacInt32(pb + 32) : 0, pb ? ReadMacInt32(pb + 48) : 0,
-				                pb ? ReadMacInt32(pb + 52) : 0, pb ? ReadMacInt32(pb + 56) : 0,
-				                initial_result, final_pb_result,
-				                (int32)r.d[0], AudioStatus.num_sources,
-				                (unsigned long long)(GetTicks_usec() - diagnostic_call_started));
-			}
+			r.d[0] = ReadMacInt32(p);
+			r.a[0] = ReadMacInt32(p + 4);
+			r.a[1] = ReadMacInt32(p + 8);
+			r.a[2] = AudioStatus.mixer;
+			Execute68k(audio_data + adatPlaySourceBuffer, &r);
 			D(bug(" returns %08lx\n", r.d[0]));
 			return r.d[0];
 

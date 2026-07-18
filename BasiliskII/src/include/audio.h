@@ -27,48 +27,7 @@
 using std::vector;
 #endif
 
-/*
- *  STREAMING_AUDIO_PREFETCH - host-side Sound Manager streaming optimization.
- *
- *  When enabled, the SDL output uses a dedicated prefetch thread that pulls the
- *  Apple Mixer far ahead of real-time playback, and the audio component services
- *  "empty PB + moreRtn" streaming sources host-side (AudioStreamHostMix) instead
- *  of leaving them to the guest mixer. This removes the Descent II intro-movie
- *  audio stutter (see AudioStreamHostMix in audio.cpp for the full rationale).
- *
- *  When disabled (the default), the classic upstream path is used: the SDL
- *  callback triggers the audio interrupt inline and copies a single block from
- *  the mixer. The two behaviors are mutually exclusive and share no state.
- */
-#ifndef STREAMING_AUDIO_PREFETCH
-#define STREAMING_AUDIO_PREFETCH 1
-#endif
-
 extern int32 AudioDispatch(uint32 params, uint32 ti);
-
-/* ComponentInstance returned by the first successful siSoundClock GetInfo call.
- * Used by SheepShaver's ComponentDispatch intercept so the movie's sound clock
- * advances continuously (device time) instead of starting from 0 per source. */
-extern uint32 AudioGetSoundClockCI(void);
-
-/* Service pending INTFLAG_AUDIO from a thrash hot path (e.g. Microseconds).
- * Reentrancy-safe; no-op if audio is not open or flag not set.
- * Must not run Time Manager / VIA from thrash (nested moreRtn -> illegal PPC). */
-extern void AudioServicePendingInterrupt(void);
-
-/* Shared reentrancy guard for AudioInterrupt. Declared here so the SDL callback
- * implementation and AudioServicePendingInterrupt agree on whether an interrupt
- * is already in progress (the crash path: moreRtn -> A193 -> service audio nested
- * inside the running AudioInterrupt). */
-extern bool audio_interrupt_in_service;
-
-#if STREAMING_AUDIO_PREFETCH
-/* Host-side servicing of a "streaming" source (PlaySourceBuffer start with an
- * empty PB + moreRtn): the Apple Mixer never mixes such a source, so pull the
- * chunk stream via moreRtn ourselves and mix it into the fetched block.
- * Called from AudioInterrupt after GetSourceData. */
-extern void AudioStreamHostMix(uint8 *buf, int *bytes, int want_bytes);
-#endif
 
 extern bool AudioAvailable;		// Flag: audio output available (from the software point of view)
 
@@ -84,10 +43,6 @@ extern void AudioExit(void);
 extern void AudioReset(void);
 
 extern void AudioInterrupt(void);
-/* Declared unconditionally so callers don't depend on QD3D_AUDIO_LOGGING_ENABLED
- * being defined before audio.h is included (include-order fragility). The
- * definition and its call sites are still gated by the macro in the .cpp TUs. */
-extern void AudioDiagnosticPoll(void);
 
 extern void audio_enter_stream(void);
 extern void audio_exit_stream(void);
@@ -136,13 +91,7 @@ enum {
 	adatData = 168,				// SoundComponentData struct
 	adatMixer = 196,			// Mac address of mixer, returned by adatOpenMixer
 	adatStreamInfo = 200,		// Mac address of stream info, returned by adatGetSourceData
-#if STREAMING_AUDIO_PREFETCH
-	adatCallMoreRtn = 204,		// 68k code to call a SoundParamBlock moreRtn (pascal Boolean(pb*))
-	adatStreamPbVar = 216,		// SoundParamBlockPtr variable passed to moreRtn
-	SIZEOF_adat = 220
-#else
 	SIZEOF_adat = 204
-#endif
 };
 
 extern uint32 audio_data;		// Mac address of global data area

@@ -65,10 +65,6 @@ const uint32 ZERO_SCRAP_PATCH_SPACE = 0x2fcf80;
 const uint32 PUT_SCRAP_PATCH_SPACE = 0x2fcfc0;
 const uint32 GET_SCRAP_PATCH_SPACE = 0x2fd100;
 const uint32 ADDR_MAP_PATCH_SPACE = 0x2fd140;
-#if ENABLE_NATIVE_MICROSECONDS_PATCH
-/* Host ClockGetTime intercept: EMUL_OP then optional JMP to original A82A. */
-extern const uint32 COMPONENT_DISPATCH_PATCH_SPACE = 0x2fd280;
-#endif
 
 // Global variables
 int ROMType;				// ROM type
@@ -710,10 +706,6 @@ bool PatchROM(void)
 		return false;
 	if (!check_rom_patch_space(ADDR_MAP_PATCH_SPACE - 10 * 4, 0x100))
 		return false;
-	#if ENABLE_NATIVE_MICROSECONDS_PATCH
-	if (!check_rom_patch_space(COMPONENT_DISPATCH_PATCH_SPACE, 0x40))
-		return false;
-	#endif
 
 	// Apply patches
 	if (!patch_nanokernel_boot()) return false;

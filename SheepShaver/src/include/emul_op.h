@@ -21,20 +21,6 @@
 #ifndef EMUL_OP_H
 #define EMUL_OP_H
 
-/* Native InterfaceLib Microseconds() patch + audio thrash-mixer.
- *
- * The FN=1 NATIVE_MICROSECONDS op serviced pending audio (a source's moreRtn
- * via nested Execute68k) to fight the Descent II intro stall. Superseded by the
- * native Cinepak decoder, and it crashed: the nested execution clobbered LR, so
- * the FN=1 pc=lr return jumped to a garbage PC (illegal 'mfsr' 0x7c0004a6
- * mid-movie). Default OFF; the InterfaceLib patch is not installed and the op's
- * audio-service body is compiled out. Flip to 1 to revive the timing
- * experiment. Shared by macos_util.cpp (install site) and sheepshaver_glue.cpp
- * (op handler). */
-#ifndef ENABLE_NATIVE_MICROSECONDS_PATCH
-#define ENABLE_NATIVE_MICROSECONDS_PATCH 0
-#endif
-
 // PowerPC opcodes
 const uint32 POWERPC_NOP = 0x60000000;
 const uint32 POWERPC_ILLEGAL = 0x00000000;
@@ -63,9 +49,6 @@ enum {	// Selectors for EMUL_OP opcodes
 	OP_SCSI_DISPATCH, OP_SCSI_ATOMIC,
 	OP_CHECK_SYSV, OP_NTRB_17_PATCH, OP_NTRB_17_PATCH2, OP_NTRB_17_PATCH3, OP_NTRB_17_PATCH4, OP_CHECKLOAD,
 	OP_EXTFS_COMM, OP_EXTFS_HFS, OP_IDLE_TIME, OP_IDLE_TIME_2,
-	#if ENABLE_NATIVE_MICROSECONDS_PATCH
-		OP_COMPONENT_DISPATCH, OP_QT_CLOCK_MICROS,
-	#endif /* ENABLE_NATIVE_MICROSECONDS_PATCH */
 	OP_MAX
 };
 const uint16 M68K_EMUL_RETURN = 0xfe40;	// Extended opcodes
@@ -124,16 +107,6 @@ const uint16 M68K_EMUL_OP_EXTFS_COMM = M68K_EMUL_BREAK + OP_EXTFS_COMM;
 const uint16 M68K_EMUL_OP_EXTFS_HFS = M68K_EMUL_BREAK + OP_EXTFS_HFS;
 const uint16 M68K_EMUL_OP_IDLE_TIME = M68K_EMUL_BREAK + OP_IDLE_TIME;
 const uint16 M68K_EMUL_OP_IDLE_TIME_2 = M68K_EMUL_BREAK + OP_IDLE_TIME_2;
-#if ENABLE_NATIVE_MICROSECONDS_PATCH
-	const uint16 M68K_EMUL_OP_COMPONENT_DISPATCH =
-		M68K_EMUL_BREAK + OP_COMPONENT_DISPATCH;
-	const uint16 M68K_EMUL_OP_QT_CLOCK_MICROS =
-		M68K_EMUL_BREAK + OP_QT_CLOCK_MICROS;
-	/* ROM scratch space for the targeted ComponentDispatch fallback thunk.
-	 * The inline A82A patch writes the original trap word here and
-	 * resumes the 68k at this address when the CI is not the sound clock. */
-	extern const uint32 COMPONENT_DISPATCH_PATCH_SPACE;
-#endif /* ENABLE_NATIVE_MICROSECONDS_PATCH */
 extern "C" void EmulOp(M68kRegisters *r, uint32 pc, int selector);
 
 #endif
