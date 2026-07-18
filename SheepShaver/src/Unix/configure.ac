@@ -74,6 +74,14 @@ AC_ARG_ENABLE(sdl-framework,    [  --enable-sdl-framework  use SDL framework [de
 AC_ARG_ENABLE(sdl-framework-prefix,    [  --enable-sdl-framework-prefix=PFX    default=/Library/Frameworks], [SDL_FRAMEWORK="$enableval"], [SDL_FRAMEWORK=/Library/Frameworks])
 AC_ARG_WITH(sdl1,            [  --with-sdl1             use SDL 1.x, rather than SDL 2.x [default=no]], [WANT_SDL_VERSION_MAJOR=1], [])
 AC_ARG_WITH(sdl3,            [  --with-sdl3             use SDL 3.x, rather than SDL 2.x [default=no]], [WANT_SDL_VERSION_MAJOR=3], [])
+AC_ARG_ENABLE(gfxaccel,     [  --enable-gfxaccel       SheepShaver graphics accel (NQD/RAVE/GL/DSp) [default=yes]], [WANT_GFXACCEL=$enableval], [WANT_GFXACCEL=yes])
+AC_ARG_ENABLE(native-cinepak-patch, [  --enable-native-cinepak-patch  patch QuickTime to use native Cinepak decoder [default=no]], [WANT_NATIVE_CINEPAK=$enableval], [WANT_NATIVE_CINEPAK=no])
+AC_ARG_ENABLE(streaming-audio-prefetch, [  --enable-streaming-audio-prefetch  host-side Sound Manager streaming prefetch (Descent II movie audio) [default=no]], [WANT_STREAMING_AUDIO_PREFETCH=$enableval], [WANT_STREAMING_AUDIO_PREFETCH=no])
+AC_ARG_ENABLE(qd3d-init-logging,     [  --enable-qd3d-init-logging      compile QuickDraw 3D/RAVE init diagnostics [default=no]], [WANT_QD3D_INIT_LOGGING=$enableval], [WANT_QD3D_INIT_LOGGING=no])
+AC_ARG_ENABLE(qd3d-graphics-logging, [  --enable-qd3d-graphics-logging  compile high-volume QD3D graphics diagnostics [default=no]], [WANT_QD3D_GRAPHICS_LOGGING=$enableval], [WANT_QD3D_GRAPHICS_LOGGING=no])
+AC_ARG_ENABLE(qd3d-audio-logging,    [  --enable-qd3d-audio-logging     compile sound component and SDL audio diagnostics [default=no]], [WANT_QD3D_AUDIO_LOGGING=$enableval], [WANT_QD3D_AUDIO_LOGGING=no])
+AC_ARG_ENABLE(qd3d-media-logging,    [  --enable-qd3d-media-logging     compile CD/media I/O diagnostics [default=no]], [WANT_QD3D_MEDIA_LOGGING=$enableval], [WANT_QD3D_MEDIA_LOGGING=no])
+AC_ARG_ENABLE(qd3d-wait-logging,     [  --enable-qd3d-wait-logging      compile high-volume timing/wait diagnostics [default=no]], [WANT_QD3D_WAIT_LOGGING=$enableval], [WANT_QD3D_WAIT_LOGGING=no])
 
 dnl Checks for programs.
 AC_PROG_CC_C99
@@ -1760,7 +1768,58 @@ AC_SUBST(DYNGEN_CC)
 AC_SUBST(DYNGEN_CFLAGS)
 AC_SUBST(DYNGEN_CXXFLAGS)
 AC_SUBST(DYNGEN_OP_FLAGS)
+dnl SheepShaver graphics acceleration (NQD/RAVE/GL/DSp).
+dnl Mirrors SheepShaver/CMakeLists.txt (OpenGL backend; the Metal backend is
+dnl built only via the Apple CMake/Xcode path). Keep the source list and the
+dnl feature defines in sync with CMake.
+GFXACCEL_SRCS=""
+if [[ "x$WANT_GFXACCEL" = "xyes" ]]; then
+  AC_DEFINE(ENABLE_GFXACCEL, 1, [Define to enable SheepShaver graphics acceleration.])
+  AC_DEFINE(GFXACCEL_USE_OPENGL, 1, [Define to select the OpenGL gfxaccel backend.])
+  CPPFLAGS="$CPPFLAGS -I../gfxaccel -I../gfxaccel/include -I../gfxaccel/gl"
+  dnl Portable engine / policy / dispatch sources.
+  GFXACCEL_SRCS="../gfxaccel/display_mode_controller.cpp ../gfxaccel/dsp_dispatch.cpp \
+../gfxaccel/dsp_engine.cpp ../gfxaccel/dsp_install_hooks.cpp ../gfxaccel/dsp_mode_enumerate.cpp \
+../gfxaccel/dsp_thunks.cpp ../gfxaccel/gfxaccel_resources.cpp ../gfxaccel/gfxaccel_resources_heap.cpp \
+../gfxaccel/gl_defer.cpp ../gfxaccel/gl_dispatch.cpp ../gfxaccel/gl_engine.cpp ../gfxaccel/gl_state.cpp \
+../gfxaccel/gl_thunks.cpp ../gfxaccel/rave_dispatch.cpp ../gfxaccel/rave_draw_context.cpp \
+../gfxaccel/rave_engine.cpp ../gfxaccel/rave_thunks.cpp"
+  dnl OpenGL backend renderers / device / compositor.
+  GFXACCEL_SRCS="$GFXACCEL_SRCS ../gfxaccel/gl/gl_device.cpp ../gfxaccel/gl/gl_compositor.cpp \
+../gfxaccel/gl/vbl_source_sdl.cpp ../gfxaccel/gl/gfxaccel_resources_gl.cpp \
+../gfxaccel/gl/gfxaccel_resources_heap_gl.cpp ../gfxaccel/gl/gfxaccel_arc_shim.cpp \
+../gfxaccel/gl/pso_archive_gl.cpp ../gfxaccel/gl/nqd_gl_renderer.cpp ../gfxaccel/gl/rave_gl_renderer.cpp \
+../gfxaccel/gl/gl_ffp_renderer.cpp ../gfxaccel/gl/dsp_gl_renderer.cpp ../gfxaccel/gl/dsp_draw_context_gl.cpp \
+../gfxaccel/gl/gfxaccel_link_stubs.cpp"
+  if [[ "x$WANT_NATIVE_CINEPAK" = "xyes" ]]; then
+    GFXACCEL_SRCS="$GFXACCEL_SRCS ../gfxaccel/cinepak_decoder.cpp ../gfxaccel/cinepak_hooks.cpp"
+  fi
+  LIBS="$LIBS -lGL"
+fi
+if [[ "x$WANT_NATIVE_CINEPAK" = "xyes" ]]; then
+  AC_DEFINE(ENABLE_NATIVE_CINEPAK_PATCH, 1, [Define to patch QuickTime to use the native Cinepak decoder.])
+fi
+if [[ "x$WANT_STREAMING_AUDIO_PREFETCH" = "xyes" ]]; then
+  AC_DEFINE(STREAMING_AUDIO_PREFETCH, 1, [Define to enable host-side Sound Manager streaming prefetch.])
+fi
+if [[ "x$WANT_QD3D_INIT_LOGGING" = "xyes" ]]; then
+  AC_DEFINE(QD3D_INIT_LOGGING_ENABLED, 1, [Define to compile QuickDraw 3D/RAVE init diagnostics.])
+fi
+if [[ "x$WANT_QD3D_GRAPHICS_LOGGING" = "xyes" ]]; then
+  AC_DEFINE(QD3D_GRAPHICS_LOGGING_ENABLED, 1, [Define to compile high-volume QD3D graphics diagnostics.])
+fi
+if [[ "x$WANT_QD3D_AUDIO_LOGGING" = "xyes" ]]; then
+  AC_DEFINE(QD3D_AUDIO_LOGGING_ENABLED, 1, [Define to compile sound component and SDL audio diagnostics.])
+fi
+if [[ "x$WANT_QD3D_MEDIA_LOGGING" = "xyes" ]]; then
+  AC_DEFINE(QD3D_MEDIA_LOGGING_ENABLED, 1, [Define to compile CD/media I/O diagnostics.])
+fi
+if [[ "x$WANT_QD3D_WAIT_LOGGING" = "xyes" ]]; then
+  AC_DEFINE(QD3D_WAIT_LOGGING_ENABLED, 1, [Define to compile high-volume timing/wait diagnostics.])
+fi
+
 AC_SUBST(SYSSRCS)
+AC_SUBST(GFXACCEL_SRCS)
 AC_SUBST(CPUSRCS)
 AC_SUBST(BLESS)
 AC_SUBST(KEYCODES)
@@ -1783,6 +1842,10 @@ echo XFree86 DGA support .............. : $WANT_XF86_DGA
 echo XFree86 VidMode support .......... : $WANT_XF86_VIDMODE
 echo Using PowerPC emulator ........... : $EMULATED_PPC
 echo Enable JIT compiler .............. : $WANT_JIT
+echo Graphics acceleration ............ : $WANT_GFXACCEL
+echo Native Cinepak patch ............. : $WANT_NATIVE_CINEPAK
+echo Streaming audio prefetch ......... : $WANT_STREAMING_AUDIO_PREFETCH
+echo QD3D logging (init/gfx/audio/media/wait) : $WANT_QD3D_INIT_LOGGING/$WANT_QD3D_GRAPHICS_LOGGING/$WANT_QD3D_AUDIO_LOGGING/$WANT_QD3D_MEDIA_LOGGING/$WANT_QD3D_WAIT_LOGGING
 echo Enable video on SEGV signals ..... : $WANT_VOSF
 echo ESD sound support ................ : $WANT_ESD
 echo GTK user interface ............... : $WANT_GTK

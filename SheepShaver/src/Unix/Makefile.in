@@ -23,6 +23,7 @@ DEFS = @DEFS@ -D_REENTRANT -DDATADIR=\"$(datadir)/$(APP)\"
 LDFLAGS = @LDFLAGS@
 LIBS = @LIBS@
 SYSSRCS = @SYSSRCS@
+GFXACCEL_SRCS = @GFXACCEL_SRCS@
 CPUSRCS = @CPUSRCS@
 MONSRCS = @MONSRCS@
 PERL = @PERL@
@@ -71,7 +72,7 @@ SRCS = ../main.cpp main_unix.cpp ../prefs.cpp ../prefs_items.cpp prefs_unix.cpp 
     ../gfxaccel.cpp ../video.cpp ../audio.cpp ../ether.cpp ../thunks.cpp \
     ../serial.cpp ../extfs.cpp disk_sparsebundle.cpp tinyxml2.cpp \
     about_window_unix.cpp ../user_strings.cpp user_strings_unix.cpp rpc_unix.cpp \
-    sshpty.c strlcpy.c $(XPLAT_SRCS) $(SYSSRCS) $(CPUSRCS) $(MONSRCS) $(SLIRP_SRCS)
+    sshpty.c strlcpy.c $(XPLAT_SRCS) $(SYSSRCS) $(GFXACCEL_SRCS) $(CPUSRCS) $(MONSRCS) $(SLIRP_SRCS)
 APP = SheepShaver
 APP_EXE = $(APP)$(EXEEXT)
 APP_APP = $(APP).app

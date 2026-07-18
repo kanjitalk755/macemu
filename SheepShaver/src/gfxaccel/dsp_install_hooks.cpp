@@ -415,6 +415,24 @@ void DSpInstallHooks(void)
 }
 
 /*
+ *  DSpResetForReboot - clear the DSp hook-install latches for a guest reboot.
+ *
+ *  The DrawSprocketLib CFM fragment reloads fresh on a soft reboot, discarding
+ *  the symbol-table patches we wrote. Clear the install-latch triplet so the
+ *  accRun -> VideoInstallAccel -> DSpInstallHooks retry path re-patches the
+ *  fresh fragment. The emulated-app DSpStartup/Shutdown refcount lifecycle is
+ *  left to DSp itself; this only unwinds our guest-facing hook installation.
+ */
+void DSpResetForReboot(void)
+{
+	DSP_LOG("DSpResetForReboot: hooksInstalled=%d attempts=%d",
+	        dsp_hooks_installed, dsp_hooks_attempts);
+	dsp_hooks_installed   = false;
+	dsp_hooks_in_progress = false;
+	dsp_hooks_attempts    = 0;
+}
+
+/*
  *  DSpInstallHooksSweepComplete - public probe for sony.cpp's accRun gate.
  *
  *  Returns true once the install sweep

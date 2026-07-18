@@ -3093,6 +3093,25 @@ void GLInstallHooks()
 }
 
 
+/*
+ *  GLResetForReboot - clear the GL install latches for a guest soft reboot.
+ *
+ *  A soft reboot reloads the GL/AGL/GLU CFM libraries fresh, so the entry-point
+ *  patches we wrote are gone with the old image. Clearing the latches lets the
+ *  accRun -> VideoInstallAccel -> GLInstallHooks retry path re-patch the fresh
+ *  exports. (GLInstallHooks does not save original bytes, so there is nothing
+ *  to restore in place; the fresh library is unpatched by definition.)
+ */
+void GLResetForReboot(void)
+{
+	GL_LOG("GLResetForReboot: hooksInstalled=%d attempts=%d",
+	       gl_hooks_installed, gl_hooks_attempts);
+	gl_hooks_installed   = false;
+	gl_hooks_in_progress = false;
+	gl_hooks_attempts    = 0;
+}
+
+
 // ===========================================================================
 //  GLU Utility Functions
 // ===========================================================================

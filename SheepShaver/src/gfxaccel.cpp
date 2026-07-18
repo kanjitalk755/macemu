@@ -727,14 +727,42 @@ bool NQD_sync_hook(uint32 arg)
  *	Install Native QuickDraw acceleration hooks
  */
 
+// Cleared on guest soft reboot (GfxAccelResetForReboot) so VideoInstallAccel,
+// which the accRun periodic action keeps calling, reinstalls the NQD hooks into
+// the freshly reset guest instead of short-circuiting on the stale latch.
+static bool nqd_hooks_installed = false;
+
+/*
+ *	Unwind guest-facing gfxaccel registration for a guest soft reboot
+ *
+ *	A soft reboot resets the guest's driver/QuickDraw3D world (and reloads the
+ *	CFM libraries we patch), but our install latches persist across the reboot,
+ *	so the accRun -> VideoInstallAccel retry path skips reinstallation and the
+ *	fresh guest sees no accelerator (Descent II: "can't init the video card").
+ *	Clear the guest-facing latches / patches here; host GPU state is left alone.
+ *	Called from OP_RESET.
+ */
+void GfxAccelResetForReboot(void)
+{
+	QD3D_INIT_LOG("GfxAccelResetForReboot: nqdHooks=%d raveRegistered=%d",
+	              nqd_hooks_installed, RaveIsRegistered());
+	nqd_hooks_installed = false;
+	RaveResetForReboot();
+	GLResetForReboot();
+	DSpResetForReboot();
+#if defined(ENABLE_NATIVE_CINEPAK_PATCH) && ENABLE_NATIVE_CINEPAK_PATCH
+	CinepakResetForReboot();
+#endif
+}
+
 void VideoInstallAccel(void)
 {
 	QD3D_INIT_LOG("VideoInstallAccel: gfx=%d nqd=%d rave=%d gl=%d dsp=%d registered=%d",
 	              PrefsFindBool("gfxaccel"), PrefsFindBool("nqdaccel"),
 	              PrefsFindBool("raveaccel"), PrefsFindBool("glaccel"),
 	              PrefsFindBool("dspaccel"), RaveIsRegistered());
-	// Install NQD acceleration hooks (one-time only)
-	static bool nqd_hooks_installed = false;
+	// Install NQD acceleration hooks (one-time only; cleared on guest reboot
+	// by GfxAccelResetForReboot so the fresh guest gets the hooks reinstalled).
 	if (!nqd_hooks_installed && PrefsFindBool("nqdaccel")) {
 		nqd_hooks_installed = true;
 		D(bug("Video: Installing acceleration hooks\n"));

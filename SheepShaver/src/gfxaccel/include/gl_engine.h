@@ -1412,6 +1412,10 @@ extern uint32_t GLDispatchARC(uint32_t r3, uint32_t r4, uint32_t r5, uint32_t r6
 // Install library hooks to intercept GL/AGL/GLU/GLUT function lookups
 extern void GLInstallHooks();
 
+// Clear the GL install latches for a guest soft reboot so GLInstallHooks
+// re-patches the freshly reloaded GL/AGL/GLU libraries (see GfxAccelResetForReboot).
+extern void GLResetForReboot(void);
+
 // TVECT array indexed by sub-opcode (for stub-patching path)
 extern uint32_t gl_method_tvects[];
 

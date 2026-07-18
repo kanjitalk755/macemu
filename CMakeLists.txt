@@ -54,6 +54,9 @@ option(ENABLE_QD3D_WAIT_LOGGING
 option(ENABLE_NATIVE_CINEPAK_PATCH
 	"Patch QuickTime to use native Cinepak decoder"
 	OFF)
+option(ENABLE_STREAMING_AUDIO_PREFETCH
+	"Host-side Sound Manager streaming prefetch (Descent II movie audio)"
+	OFF)
 # GFXACCEL_BACKEND: auto | opengl | metal
 # auto = Metal on Apple, OpenGL elsewhere
 set(GFXACCEL_BACKEND "auto" CACHE STRING "gfxaccel GPU backend (auto|opengl|metal)")
@@ -98,5 +101,6 @@ message(STATUS "	QD3D graphics log: ${ENABLE_QD3D_GRAPHICS_LOGGING}")
 message(STATUS "	QD3D audio log: ${ENABLE_QD3D_AUDIO_LOGGING}")
 message(STATUS "	QD3D media log: ${ENABLE_QD3D_MEDIA_LOGGING}")
 message(STATUS "	QD3D wait log: ${ENABLE_QD3D_WAIT_LOGGING}")
+message(STATUS "	Streaming audio prefetch: ${ENABLE_STREAMING_AUDIO_PREFETCH}")
 message(STATUS "	Platform		 : ${CMAKE_SYSTEM_NAME} / ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "")

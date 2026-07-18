@@ -302,6 +302,10 @@ void EmulOp(M68kRegisters *r, uint32 pc, int selector)
 			EtherResetCachedAllocation();
 			ether_reset();
 			AudioReset();
+			// Unwind guest-facing gfxaccel registration so the fresh guest
+			// re-registers RAVE/NQD/GL/DSp (Descent II "can't init video card"
+			// on restart otherwise). Host GPU state is preserved.
+			GfxAccelResetForReboot();
 #ifdef USE_SDL_AUDIO
 			PlayStartupSound();
 #endif

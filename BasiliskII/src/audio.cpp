@@ -91,6 +91,7 @@ static uint32 diagnostic_poll_count;
  *  other TM tasks nested under EMUL_OP/GetTime have corrupted PPC state
  *  (execute_illegal abort). Leave timer/VBL to OP_IRQ.
  */
+#if STREAMING_AUDIO_PREFETCH
 void AudioServicePendingInterrupt(void)
 {
 	/* If an interrupt is already running (e.g. inside the moreRtn it will
@@ -103,6 +104,12 @@ void AudioServicePendingInterrupt(void)
 	ClearInterruptFlag(INTFLAG_AUDIO);
 	AudioInterrupt();
 }
+#else
+void AudioServicePendingInterrupt(void)
+{
+	// No host-side interrupt servicing without STREAMING_AUDIO_PREFETCH.
+}
+#endif
 
 /*
  *  Host-side streaming source servicing (Descent II intro class; general)
@@ -122,11 +129,12 @@ void AudioServicePendingInterrupt(void)
  *  moreRtn (pascal Boolean(SoundParamBlockPtr *)) through a small 68k thunk,
  *  convert/mix the samples into the block fetched from the mixer.
  */
+bool audio_interrupt_in_service = false;
+
+#if STREAMING_AUDIO_PREFETCH
 static uint32 stream_source;
 static uint32 stream_pb;
 static bool stream_armed;
-
-bool audio_interrupt_in_service = false;
 
 /* Sanity-check a Mac address before we read/write the streaming PB. */
 static bool audio_stream_addr_ok(uint32 a)
@@ -247,6 +255,7 @@ void AudioStreamHostMix(uint8 *buf, int *bytes, int want_bytes)
 		               src_rate, src_bits, src_ch);
 	}
 }
+#endif	// STREAMING_AUDIO_PREFETCH
 
 bool AudioAvailable = false;		// Flag: audio output available (from the software point of view)
 
@@ -694,6 +703,7 @@ int32 AudioDispatch(uint32 params, uint32 globals)
 				if (p - audio_data != adatData)
 					goto adat_error;
 
+#if STREAMING_AUDIO_PREFETCH
 				// Thunk to call a SoundParamBlock moreRtn:
 				// pascal Boolean routine(SoundParamBlockPtr *pb)
 				// entry: a0 = moreRtn UPP, a1 = &pbVar (adatStreamPbVar)
@@ -706,6 +716,7 @@ int32 AudioDispatch(uint32 params, uint32 globals)
 				WriteMacInt16(p, M68K_RTS); p += 2;	// rts
 				if (p - audio_data != adatStreamPbVar)
 					goto adat_error;
+#endif
 			}
 			AudioAvailable = true;
 			if (open_count == 0)
@@ -816,7 +827,9 @@ adat_error:	printf("FATAL: audio component data block initialization error\n");
 		case kSoundComponentRemoveSourceSelect:
 			D(bug(" RemoveSource\n"));
 			AudioStatus.num_sources--;
+#if STREAMING_AUDIO_PREFETCH
 			stream_armed = false;
+#endif
 			QD3D_AUDIO_LOG("RemoveSource sources=%d mixer=0x%08x",
 			                AudioStatus.num_sources, AudioStatus.mixer);
 			goto delegate_log_remove;
@@ -930,15 +943,21 @@ delegate:	// Delegate call to Apple Mixer
 				 * streaming sources (primed buffers, game sounds) still go through
 				 * the guest mixer unchanged. */
 				const uint32 more_rtn = pb ? ReadMacInt32(pb + 48) : 0;
+				(void)more_rtn;
+#if STREAMING_AUDIO_PREFETCH
 				const bool empty_streaming_start =
 					pb && !(actions & kSourcePaused) &&
 					frames_before == 0 && more_rtn != 0;
+#else
+				const bool empty_streaming_start = false;
+#endif
 
 				int16 final_pb_result;
 				uint32 data_after;
 				uint32 frames_after;
 
 				if (empty_streaming_start) {
+#if STREAMING_AUDIO_PREFETCH
 					#if QD3D_AUDIO_LOGGING_ENABLED
 					diagnostic_call_started = GetTicks_usec();
 					#endif
@@ -953,6 +972,7 @@ delegate:	// Delegate call to Apple Mixer
 					QD3D_AUDIO_LOG("streamHostArm (skipped guest PSB) tick=%u "
 					               "source=0x%08x pb=0x%08x moreRtn=0x%08x",
 					               ReadMacInt32(0x016a), source, pb, more_rtn);
+#endif
 				} else {
 					r.d[0] = actions;
 					r.a[0] = pb;
@@ -965,10 +985,11 @@ delegate:	// Delegate call to Apple Mixer
 					final_pb_result = pb ? ReadMacInt16(pb + 60) : 0;
 					data_after = pb ? ReadMacInt32(pb + 24) : 0;
 					frames_after = pb ? ReadMacInt32(pb + 20) : 0;
+					(void)data_after;
 
+#if STREAMING_AUDIO_PREFETCH
 					/* Fallback arm for a source that only reveals frames==0 +
 					 * moreRtn after the guest call. */
-					(void)data_after;
 					if (!(actions & kSourcePaused) && pb && frames_after == 0 &&
 					    more_rtn != 0) {
 						stream_source = source;
@@ -980,6 +1001,7 @@ delegate:	// Delegate call to Apple Mixer
 					} else if (stream_armed && source == stream_source) {
 						stream_armed = false;
 					}
+#endif
 				}
 				QD3D_AUDIO_LOG("PlaySourceBuffer tick=%u actions=0x%08x source=0x%08x pb=0x%08x recordBytes=%u format=%c%c%c%c %uHz/%ubit/%uch frames=%u data=0x%08x rateMultiplier=0x%08x moreRtn=0x%08x completionRtn=0x%08x refCon=0x%08x pbResult=%d->%d callResult=%d sources=%d usec=%llu",
 				                ReadMacInt32(0x016a), actions, source, pb,

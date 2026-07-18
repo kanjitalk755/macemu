@@ -25,6 +25,10 @@ extern bool CinepakInstallHooks(void);
  * MODE_EMUL_OP. Idempotent; returns true once registered. */
 extern bool CinepakRegisterFromNative(void);
 
+/* Clear the registration latch for a guest soft reboot so the decoder
+ * re-registers into the fresh Component Manager (see GfxAccelResetForReboot). */
+extern void CinepakResetForReboot(void);
+
 /* Native op handlers for the patched entry points (FN=1: they ARE the whole
  * function; original args arrive untouched in r3/r4). */
 extern uint32 CinepakOpenDefaultComponentHook(uint32 componentType,

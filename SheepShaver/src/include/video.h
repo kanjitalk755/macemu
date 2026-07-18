@@ -139,6 +139,9 @@ extern bool VideoInit(void);
 extern void VideoExit(void);
 extern void VideoVBL(void);
 extern void VideoInstallAccel(void);
+// Unwind guest-facing gfxaccel registration on a guest soft reboot so the
+// accRun/VideoInstallAccel retry path reinstalls into the fresh guest.
+extern void GfxAccelResetForReboot(void);
 extern void VideoQuitFullScreen(void);
 
 extern void video_set_palette(void);

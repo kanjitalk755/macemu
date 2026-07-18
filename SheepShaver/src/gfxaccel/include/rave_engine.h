@@ -371,6 +371,12 @@ extern uint32_t RaveDispatchARC(uint32_t r3, uint32_t r4, uint32_t r5,
 // Engine registration entry point
 extern void RaveRegisterEngine(void);
 
+// Full unwind of RaveRegisterEngine for a guest soft reboot: uninstalls the
+// enumeration hooks and clears the registration guards so the accRun retry
+// path re-registers our engine into the freshly reset RAVE manager. Called
+// from OP_RESET (see GfxAccelResetForReboot).
+extern void RaveResetForReboot(void);
+
 // Returns true if RAVE engine has been successfully registered
 extern bool RaveIsRegistered(void);
 

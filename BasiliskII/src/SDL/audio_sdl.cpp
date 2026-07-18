@@ -54,7 +54,9 @@
 
 
 #define MAC_MAX_VOLUME 0x0100
+#if STREAMING_AUDIO_PREFETCH
 #define AUDIO_PREFETCH_RETRY_MS 5
+#endif
 
 // The currently selected audio parameters (indices in audio_sample_rates[] etc. vectors)
 static int audio_sample_rate_index = 0;
@@ -65,12 +67,14 @@ static int audio_channel_count_index = 0;
 static SDL_sem *audio_irq_done_sem = NULL;			// Signal from interrupt to streaming thread: data block read
 static uint8 silence_byte;							// Byte value to use to fill sound buffers with silence
 static uint8 *audio_mix_buf = NULL;
+#if STREAMING_AUDIO_PREFETCH
 static uint8 *audio_fetch_buf = NULL;
 static SDL_AudioStream *audio_prefetch_stream = NULL;
 static SDL_Thread *audio_prefetch_thread = NULL;
 static SDL_atomic_t audio_prefetch_quit;
 static int audio_callback_bytes = 0;
 static int audio_fetch_bytes = 0;
+#endif
 static int main_volume = MAC_MAX_VOLUME;
 static int speaker_volume = MAC_MAX_VOLUME;
 static bool main_mute = false;
@@ -78,7 +82,9 @@ static bool speaker_mute = false;
 
 // Prototypes
 static void stream_func(void *arg, uint8 *stream, int stream_len);
+#if STREAMING_AUDIO_PREFETCH
 static int audio_prefetch_func(void *arg);
+#endif
 static int get_audio_volume();
 
 
@@ -154,6 +160,7 @@ static bool open_sdl_audio(void)
 	printf("Using SDL/%s audio output\n", driver_name ? driver_name : "");
 	silence_byte = audio_spec.silence;
 
+#if STREAMING_AUDIO_PREFETCH
 	audio_frames_per_block = audio_spec.samples;
 	audio_callback_bytes = audio_spec.size;
 	audio_mix_buf = (uint8*)malloc(audio_spec.size);
@@ -198,6 +205,13 @@ static bool open_sdl_audio(void)
 	                driver_name ? driver_name : "", audio_spec.size,
 	                silence_byte);
 	SDL_PauseAudio(0);
+#else
+	SDL_PauseAudio(0);
+
+	// Sound buffer size = 4096 frames
+	audio_frames_per_block = audio_spec.samples;
+	audio_mix_buf = (uint8*)malloc(audio_spec.size);
+#endif
 	return true;
 }
 
@@ -248,6 +262,7 @@ void AudioInit(void)
 
 static void close_audio(void)
 {
+#if STREAMING_AUDIO_PREFETCH
 	QD3D_AUDIO_LOG("SDL close format=%uHz/%ubit/%uch sources=%d",
 	                AudioStatus.sample_rate >> 16, AudioStatus.sample_size,
 	                AudioStatus.channels, AudioStatus.num_sources);
@@ -271,6 +286,16 @@ static void close_audio(void)
 	audio_callback_bytes = 0;
 	audio_fetch_bytes = 0;
 	audio_open = false;
+#else
+	// Close audio device
+#if defined(BINCUE)
+	CloseAudio_bincue();
+#endif
+	SDL_CloseAudio();
+	free(audio_mix_buf);
+	audio_mix_buf = NULL;
+	audio_open = false;
+#endif
 }
 
 void AudioExit(void)
@@ -308,6 +333,7 @@ void audio_exit_stream()
  *  Streaming function
  */
 
+#if STREAMING_AUDIO_PREFETCH
 static int audio_prefetch_func(void *arg)
 {
 	while (!SDL_AtomicGet(&audio_prefetch_quit)) {
@@ -506,6 +532,58 @@ static void stream_func(void *arg, uint8 *stream, int stream_len)
 #endif
 
 }
+#else	// STREAMING_AUDIO_PREFETCH
+
+static void stream_func(void *arg, uint8 *stream, int stream_len)
+{
+	if (AudioStatus.num_sources) {
+		// Trigger audio interrupt to get new buffer
+		D(bug("stream: triggering irq\n"));
+		SetInterruptFlag(INTFLAG_AUDIO);
+		TriggerInterrupt();
+		D(bug("stream: waiting for ack\n"));
+		SDL_SemWait(audio_irq_done_sem);
+		D(bug("stream: ack received\n"));
+
+		// Get size of audio data
+		uint32 apple_stream_info = ReadMacInt32(audio_data + adatStreamInfo);
+		if (apple_stream_info && !main_mute && !speaker_mute) {
+			int work_size = ReadMacInt32(apple_stream_info + scd_sampleCount) * (AudioStatus.sample_size >> 3) * AudioStatus.channels;
+			D(bug("stream: work_size %d\n", work_size));
+			if (work_size > stream_len)
+				work_size = stream_len;
+			if (work_size == 0)
+				goto silence;
+
+			// Send data to audio device
+			bool dbl = AudioStatus.channels == 2 &&
+				ReadMacInt16(apple_stream_info + scd_numChannels) == 1 &&
+				ReadMacInt16(apple_stream_info + scd_sampleSize) == 8;
+			uint8 *src = Mac2HostAddr(ReadMacInt32(apple_stream_info + scd_buffer));
+			if (dbl)
+				for (int i = 0; i < work_size; i += 2)
+					audio_mix_buf[i] = audio_mix_buf[i + 1] = src[i >> 1];
+			else memcpy(audio_mix_buf, src, work_size);
+			memset((uint8 *)stream, silence_byte, stream_len);
+			SDL_MixAudio(stream, audio_mix_buf, work_size, get_audio_volume());
+
+			D(bug("stream: data written\n"));
+
+		} else
+			goto silence;
+
+	} else {
+
+		// Audio not active, play silence
+		silence: memset(stream, silence_byte, stream_len);
+	}
+
+#if defined(BINCUE)
+	MixAudio_bincue(stream, stream_len);
+#endif
+
+}
+#endif	// STREAMING_AUDIO_PREFETCH
 
 
 /*
@@ -514,6 +592,7 @@ static void stream_func(void *arg, uint8 *stream, int stream_len)
 
 void AudioInterrupt(void)
 {
+#if STREAMING_AUDIO_PREFETCH
 	/* Reentrancy guard: AudioStreamHostMix calls the source's moreRtn, which
 	 * can hit A193/Microseconds and invoke AudioServicePendingInterrupt while
 	 * we are already inside AudioInterrupt. Re-entering here corrupts the
@@ -587,6 +666,23 @@ void AudioInterrupt(void)
 	D(bug("AudioInterrupt done\n"));
 
 	audio_interrupt_in_service = false;
+#else	// STREAMING_AUDIO_PREFETCH
+	D(bug("AudioInterrupt\n"));
+
+	// Get data from apple mixer
+	if (AudioStatus.mixer) {
+		M68kRegisters r;
+		r.a[0] = audio_data + adatStreamInfo;
+		r.a[1] = AudioStatus.mixer;
+		Execute68k(audio_data + adatGetSourceData, &r);
+		D(bug(" GetSourceData() returns %08lx\n", r.d[0]));
+	} else
+		WriteMacInt32(audio_data + adatStreamInfo, 0);
+
+	// Signal stream function
+	SDL_SemPost(audio_irq_done_sem);
+	D(bug("AudioInterrupt done\n"));
+#endif	// STREAMING_AUDIO_PREFETCH
 }
 
 

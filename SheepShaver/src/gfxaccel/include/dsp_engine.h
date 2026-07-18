@@ -575,6 +575,13 @@ extern bool DSpIsRegistered(void);
 extern void DSpInstallHooks(void);
 
 /*
+ *  DSpResetForReboot - clear the DSp hook-install latches for a guest soft
+ *  reboot so DSpInstallHooks re-patches the freshly reloaded DrawSprocketLib
+ *  (see GfxAccelResetForReboot). Does not touch the DSpStartup/Shutdown refcount.
+ */
+extern void DSpResetForReboot(void);
+
+/*
  *  DSpInstallHooksSweepComplete - retry-driver gate.
  *
  *  Returns true once DSpInstallHooks() has either committed (FULL SUCCESS

@@ -347,6 +347,21 @@ bool CinepakRegisterFromNative(void)
 	return CinepakEnsureRegistered();
 }
 
+/* Clear the registration latch for a guest soft reboot. The guest Component
+ * Manager is reset (our 'imdc'/'cvid' registration is gone) and the trap sites
+ * we hook reload fresh, so re-registration must run again. InitCallUniversalProc
+ * re-arms the search-site hooks on the fresh boot, and VideoInstallAccel's
+ * CinepakRegisterFromNative re-registers once flags are cleared here. The host
+ * RoutineDescriptor (s_entry_rd) is process-persistent and reused. */
+void CinepakResetForReboot(void)
+{
+	CINEPAK_LOG("CinepakResetForReboot: registered=%d\n", s_registered);
+	uninstall_site(s_odc);
+	uninstall_site(s_fnc);
+	s_registered = false;
+	s_register_in_progress = false;
+}
+
 /* ----------------------------------------------------------------------
  *  Per-sequence decoder contexts
  *

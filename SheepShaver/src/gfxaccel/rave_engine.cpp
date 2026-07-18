@@ -3257,6 +3257,63 @@ void RaveInstallHooks(void)
 
 
 /*
+ *  RaveUninstallHooks - reverse of RaveInstallHooks
+ *
+ *  Restores the original 16 bytes we overwrote at each RAVE-manager API entry
+ *  point and marks every patch inactive. On a soft reboot the RAVE library is
+ *  reloaded fresh, so the restore writes hit a stale (possibly reused) code
+ *  image; it is a harmless no-op in that case, but it keeps the unwind correct
+ *  if the image ever persists. What matters for reboot is that every patch is
+ *  marked inactive so a subsequent RaveInstallHooks re-patches the fresh copy.
+ */
+void RaveUninstallHooks(void)
+{
+	QD3D_INIT_LOG("RaveUninstallHooks: begin hooksInstalled=%d", rave_hooks_installed);
+	for (int i = 0; i < RAVE_NUM_HOOKED_APIS; i++) {
+		RaveHookPatchInfo &info = rave_hook_patches[i];
+		if (!info.active)
+			continue;
+
+		// Restore the saved entry-point instructions.
+		for (int j = 0; j < 4; j++)
+			WriteMacInt32(info.orig_code + j * 4, info.saved_instr[j]);
+#if EMULATED_PPC
+		FlushCodeCache(info.orig_code, info.orig_code + 16);
+#endif
+		info.active = false;
+	}
+	rave_hooks_installed = false;
+	QD3D_INIT_LOG("RaveUninstallHooks: done");
+}
+
+
+/*
+ *  RaveResetForReboot - full unwind of RaveRegisterEngine for a guest restart
+ *
+ *  A soft reboot resets the guest RAVE manager (and reloads its library), but
+ *  our registration guards persist across the reboot, so RaveRegisterEngine
+ *  short-circuits ("registered=true") and never re-publishes our engine into
+ *  the fresh manager - QD3D clients then find no engine and fail to init.
+ *
+ *  Undo the guest-facing registration and clear every latch so the existing
+ *  accRun -> VideoInstallAccel -> RaveRegisterEngine retry path re-registers
+ *  against the reloaded library. Host-side fan-out handlers
+ *  (RaveRegisterResourceHandlers) are idempotent and intentionally left in
+ *  place - they carry no guest state.
+ */
+void RaveResetForReboot(void)
+{
+	QD3D_INIT_LOG("RaveResetForReboot: registered=%d hooksInstalled=%d attempts=%d",
+	              rave_registered, rave_hooks_installed, rave_reg_attempts);
+	if (rave_hooks_installed)
+		RaveUninstallHooks();
+	rave_registered      = false;
+	rave_reg_in_progress = false;
+	rave_reg_attempts    = 0;
+}
+
+
+/*
  *  ATI RaveExtFuncs: textureUpdate
  *
  *  Re-uploads texture contents for an already-allocated texture.
