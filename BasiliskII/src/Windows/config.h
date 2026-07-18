@@ -22,9 +22,36 @@
 /* #undef HAVE_UNISTD_H */
 /* #undef HAVE_STRINGS_H */
 #define HAVE_FENV_H 1
+/* #undef HAVE_SYS_IOCTL_H */
+#define HAVE_FCNTL_H 1
+/* #undef HAVE_SYS_TIME_H */
+/* #undef HAVE_SYS_IOCTL_H */
+/* #undef HAVE_SYS_SOCKET_H */
+/* #undef HAVE_SYS_MMAN_H */
+/* #undef HAVE_SYS_SELECT_H */
+/* #undef HAVE_SYS_POLL_H */
+/* #undef HAVE_SYS_WAIT_H */
+/* #undef HAVE_SYS_FILIO_H */
+/* #undef HAVE_ARPA_INET_H */
+/* #undef HAVE_STROPTS_H */
+/* #undef HAVE_SYS_STROPTS_H */
+/* #undef HAVE_PTY_H */
+/* #undef HAVE_UTIL_H */
 
+/* #undef HAVE_PTHREADS */
+/* #undef HAVE_PTHREAD_CANCEL */
+/* #undef HAVE_PTHREAD_TESTCANCEL */
+/* #undef HAVE_PTHREAD_COND_INIT */
+/* #undef HAVE_PTHREAD_MUTEXATTR_SETPROTOCOL */
+/* #undef HAVE_PTHREAD_MUTEXATTR_SETTYPE */
 #define HAVE_STRDUP 1
 #define HAVE_STRERROR 1
+/* #undef HAVE_CFMAKERAW */
+/* #undef HAVE_NANOSLEEP */
+/* #undef HAVE_CLOCK_GETTIME */
+/* #undef HAVE_CLOCK_NANOSLEEP */
+/* #undef HAVE_GETPAGESIZE */
+/* #undef HAVE_SIGACTION */
 
 #define SIZEOF_SHORT 2
 #define SIZEOF_INT 4
@@ -40,6 +67,8 @@
 #define HAVE_WIN32_VM 1
 #define HAVE_WIN32_EXCEPTIONS 1
 #define HAVE_SIGSEGV_SKIP_INSTRUCTION 1
+/* #undef HAVE_SIGINFO_T */
+/* #undef HAVE_SIGCONTEXT_SUBTERFUGE */
 /* #undef HAVE_MMAP_VM */
 /* #undef HAVE_MPROTECT */
 

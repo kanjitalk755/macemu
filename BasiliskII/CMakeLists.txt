@@ -253,8 +253,10 @@ target_include_directories(BasiliskII PRIVATE
 target_compile_definitions(BasiliskII PRIVATE FPU_IEEE UNALIGNED_PROFITABLE)
 # DATADIR: runtime data path (keycodes etc.), matching the autoconf build's
 # -DDATADIR=\"$(datadir)/$(APP)\". Used by the SDL/X video code.
-target_compile_definitions(BasiliskII PRIVATE
-	DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/BasiliskII")
+if(NOT WIN32) # conflicts with win32 headers
+	target_compile_definitions(BasiliskII PRIVATE
+		DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/BasiliskII")
+endif()
 if(ENABLE_JIT)
 	target_compile_definitions(BasiliskII PRIVATE USE_JIT USE_JIT_FPU)
 endif()

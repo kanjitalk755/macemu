@@ -530,11 +530,12 @@ target_compile_definitions(SheepShaver PRIVATE
 	SHEEPSHAVER=1
 	POWERPC_ROM=1
 	EMULATED_PPC=1
-	# DATADIR: runtime data path, matching the autoconf build's
-	# -DDATADIR=\"$(datadir)/$(APP)\". Used by the SDL/X video code.
-	DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/SheepShaver"
 	${SS_GFXACCEL_DEFS}
 )
+if(NOT WIN32) # conflicts with win32 headers
+	target_compile_definitions(SheepShaver PRIVATE
+		DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/SheepShaver")
+endif()
 if(WIN32)
 	target_compile_definitions(SheepShaver PRIVATE CONFIG_WIN32=1 NATMEM_OFFSET=0x11000000)
 endif()
