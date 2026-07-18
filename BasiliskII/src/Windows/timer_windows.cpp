@@ -202,7 +202,7 @@ descent_usec_logged:
  *  A caller that busy-waits for the clock to advance past a target (QuickTime's
  *  movie sound clock) then spins tens of thousands of times per second while
  *  the value is frozen. This path gives it a monotonic, fine-grained value so
- *  each wait resolves in far fewer polls (descent-movie §32).
+ *  each wait resolves in far fewer polls.
  */
 
 void MicrosecondsRaw(uint32 &hi, uint32 &lo)

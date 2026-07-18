@@ -24,7 +24,7 @@
  * Single-owner rule: on iOS the compositor LUT is the ONLY place driver
  * gamma is applied. The legacy CPU bake in video.cpp cscSetEntries
  * (palette entries pre-multiplied through the guest gamma table) is
- * disabled under TARGET_OS_IPHONE — with the LUT also carrying the guest
+ * disabled under TARGET_OS_IPHONE - with the LUT also carrying the guest
  * table, the bake would apply gamma twice on every indexed path. Any new
  * consumer of csSave->gammaTable must route through
  * publish_gamma_lut_to_display_controller instead of baking.
@@ -83,7 +83,7 @@ static inline void GfxColorBuildDisplayGammaLUT(const uint8_t *mac_lut,
 	if (mac_lut == NULL || display_lut == NULL) return;
 
 	// A fade ramp must stay linear, and Linear gamma mode also wants the guest
-	// table verbatim — both are a straight passthrough of mac_lut.
+	// table verbatim - both are a straight passthrough of mac_lut.
 	if (fade_active || !apply_correction) {
 		memcpy(display_lut, mac_lut, 768);
 		return;

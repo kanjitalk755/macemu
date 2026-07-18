@@ -29,7 +29,7 @@ extern "C" {
 #endif
 
 /*
- *  Event kinds — DSp 1.7 PDF + Inside Macintosh: Toolbox Essentials.
+ *  Event kinds - DSp 1.7 PDF + Inside Macintosh: Toolbox Essentials.
  *  The classic Mac EventRecord.what enumeration; DSp uses a subset
  *  (mouseDown/Up + keyDown/Up + autoKey + osEvt). Listed in full to
  *  document the ABI; the sub-op-750 decode path examines osEvt.
@@ -48,7 +48,7 @@ enum {
 };
 
 /*
- *  osEvt subtype constants — encoded into the high byte of the
+ *  osEvt subtype constants - encoded into the high byte of the
  *  EventRecord.message field per Inside Macintosh: Toolbox Essentials.
  *  Used when decoding guest-supplied suspend/resume osEvt records.
  */
@@ -67,7 +67,7 @@ enum {
 };
 
 /*
- *  Context-loss reason codes — positive values, NOT error codes.
+ *  Context-loss reason codes - positive values, NOT error codes.
  *  Used as the EventRecord.message field of an osEvt enqueued ahead of
  *  the suspend osEvt when a context-loss event fires.
  *

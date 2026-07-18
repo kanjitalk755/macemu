@@ -188,7 +188,7 @@ extern "C" void gfxaccel_resources_heap_shutdown(void)
 	// Unregister the DMC bump-reset subscriber BEFORE
 	// tearing down Metal-side state. Tolerate kDMCErrSubscriberNotFound so
 	// repeated shutdowns (or shutdown-before-init via testing_reset) don't
-	// emit noise. Using the static .name pointer directly — matches the
+	// emit noise. Using the static .name pointer directly - matches the
 	// gfxaccel_resources unsubscribe precedent.
 	(void)dmc_unsubscribe(s_heap_reset_subscriber.name);
 

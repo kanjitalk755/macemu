@@ -1,4 +1,4 @@
-# macemu — master CMake build for Basilisk II and/or SheepShaver
+# macemu - master CMake build for Basilisk II and/or SheepShaver
 #
 #	 cmake -S . -B build -DSDL2_DIR=.../SDL2/cmake
 #	 cmake --build build --target BasiliskII

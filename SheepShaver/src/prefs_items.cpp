@@ -136,7 +136,7 @@ void AddPrefsDefaults(void)
 	PrefsAddBool("jit", true);
 #else
 	// No JIT on this host, or (arm64) the C++ core keeps this pref off as the
-	// interpreter baseline — enabling PPC_ENABLE_JIT must not self-activate it.
+	// interpreter baseline - enabling PPC_ENABLE_JIT must not self-activate it.
 	// The Mac Catalyst app defaults JIT on at the settings layer (see
 	// MiscellaneousSettings) and writes "jit" true when the user boots.
 	PrefsAddBool("jit", false);

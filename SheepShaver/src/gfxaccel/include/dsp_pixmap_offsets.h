@@ -18,16 +18,16 @@
 #define DSP_PIXMAP_OFFSETS_H
 
 /* Compact synthetic PixMap field offsets (bytes from shim PixMap base). */
-#define DSP_PIXMAP_OFF_BASEADDR     0    /* 4 bytes  — baseAddr      */
-#define DSP_PIXMAP_OFF_ROWBYTES     4    /* 2 bytes  — rowBytes      */
-#define DSP_PIXMAP_OFF_BOUNDS_TOP   6    /* 2 bytes  — bounds.top    */
-#define DSP_PIXMAP_OFF_BOUNDS_LEFT  8    /* 2 bytes  — bounds.left   */
-#define DSP_PIXMAP_OFF_BOUNDS_BOT  10    /* 2 bytes  — bounds.bottom */
-#define DSP_PIXMAP_OFF_BOUNDS_RIGHT 12   /* 2 bytes  — bounds.right  */
-#define DSP_PIXMAP_OFF_PIXELTYPE   14    /* 2 bytes  — pixelType     */
-#define DSP_PIXMAP_OFF_PIXELSIZE   16    /* 2 bytes  — pixelSize     */
-#define DSP_PIXMAP_OFF_CMPCOUNT    18    /* 2 bytes  — cmpCount      */
-#define DSP_PIXMAP_OFF_CMPSIZE     20    /* 2 bytes  — cmpSize       */
+#define DSP_PIXMAP_OFF_BASEADDR     0    /* 4 bytes  - baseAddr      */
+#define DSP_PIXMAP_OFF_ROWBYTES     4    /* 2 bytes  - rowBytes      */
+#define DSP_PIXMAP_OFF_BOUNDS_TOP   6    /* 2 bytes  - bounds.top    */
+#define DSP_PIXMAP_OFF_BOUNDS_LEFT  8    /* 2 bytes  - bounds.left   */
+#define DSP_PIXMAP_OFF_BOUNDS_BOT  10    /* 2 bytes  - bounds.bottom */
+#define DSP_PIXMAP_OFF_BOUNDS_RIGHT 12   /* 2 bytes  - bounds.right  */
+#define DSP_PIXMAP_OFF_PIXELTYPE   14    /* 2 bytes  - pixelType     */
+#define DSP_PIXMAP_OFF_PIXELSIZE   16    /* 2 bytes  - pixelSize     */
+#define DSP_PIXMAP_OFF_CMPCOUNT    18    /* 2 bytes  - cmpCount      */
+#define DSP_PIXMAP_OFF_CMPSIZE     20    /* 2 bytes  - cmpSize       */
 
 /* Real QuickDraw PixMap offsets for MainDevice.gdPMap. */
 #define DSP_MAINDEVICE_PIXMAP_OFF_BASEADDR     0
@@ -62,8 +62,8 @@
  *   0x0A  gdResPref     int16
  *   0x0C  gdSearchProc  Ptr     (4 bytes)
  *   0x10  gdCompProc    Ptr     (4 bytes)
- *   0x14  gdFlags       int16   <— NOTE: 2 bytes, not 4
- *   0x16  gdPMap        Handle  PixMapHandle <— this is what we want
+ *   0x14  gdFlags       int16   <- NOTE: 2 bytes, not 4
+ *   0x16  gdPMap        Handle  PixMapHandle <- this is what we want
  *   ...
  *
  * Canonical cross-reference: BasiliskII/src/video.cpp:439 uses

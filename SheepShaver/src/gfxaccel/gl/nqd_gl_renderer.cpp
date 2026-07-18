@@ -127,7 +127,7 @@ static void cpu_copy_rect(uint8 *src, int32 src_rb, uint8 *dst, int32 dst_rb,
                           int width_bytes, int height)
 {
 	if (!src || !dst || width_bytes <= 0 || height <= 0) return;
-	if (src == dst && src_rb == dst_rb) return; /* identity — no-op */
+	if (src == dst && src_rb == dst_rb) return; /* identity - no-op */
 
 	/* Same-surface overlapping copy (Finder file drags, window scrolls) needs
 	 * correct ordering on BOTH axes:
@@ -184,7 +184,7 @@ static void cpu_fill_rect(uint8 *dst, int32 row_bytes, int width_bytes, int heig
 	}
 }
 
-/* ---- Arithmetic / hilite helpers (IWQD modes 32–39, 50) ---- */
+/* ---- Arithmetic / hilite helpers (IWQD modes 32-39, 50) ---- */
 
 static inline uint32 nqd_read_pix(const uint8 *p, int bpp)
 {
@@ -227,7 +227,7 @@ static uint32 nqd_pack_hilite_color(int bpp)
 
 struct NQDOpColor { uint32 r, g, b; };
 
-/* Safe guest reads for the thePort → GrafVars → rgbOpColor walk (Metal parity). */
+/* Safe guest reads for the thePort -> GrafVars -> rgbOpColor walk (Metal parity). */
 static inline bool nqd_inrange(uint32 a)
 {
 	extern uint32 RAMBase;
@@ -249,7 +249,7 @@ static NQDOpColor nqd_read_op_color(void)
 	if (portPtr == 0 || !nqd_inrange(portPtr))
 		return fallback;
 
-	/* Step 2: CGrafPort portVersion @ +6 — high two bits mark colour port */
+	/* Step 2: CGrafPort portVersion @ +6 - high two bits mark colour port */
 	if (!nqd_inrange(portPtr + 7))
 		return fallback;
 	uint16 portVersion = nqd_walk_u16(portPtr + 6);
@@ -263,7 +263,7 @@ static NQDOpColor nqd_read_op_color(void)
 	if (grafVarsH == 0 || !nqd_inrange(grafVarsH) || !nqd_inrange(grafVarsH + 3))
 		return fallback;
 
-	/* Step 4: dereference Handle → GrafVars pointer */
+	/* Step 4: dereference Handle -> GrafVars pointer */
 	uint32 grafVarsPtr = nqd_walk_u32(grafVarsH);
 	if (grafVarsPtr == 0 || !nqd_inrange(grafVarsPtr))
 		return fallback;
@@ -333,17 +333,17 @@ static uint32 nqd_arith_pixel(uint32 mode, uint32 sp, uint32 dp, int bpp,
 		or_b = (sb * wb + db * (65535u - wb)) / 65535u;
 		break;
 	}
-	case 33: /* addPin — saturating add */
+	case 33: /* addPin - saturating add */
 		or_r = std::min(cmax, sr + dr);
 		or_g = std::min(cmax, sg + dg);
 		or_b = std::min(cmax, sb + db);
 		break;
-	case 34: /* addOver — modular wrap */
+	case 34: /* addOver - modular wrap */
 		or_r = (sr + dr) & cmax;
 		or_g = (sg + dg) & cmax;
 		or_b = (sb + db) & cmax;
 		break;
-	case 35: /* subPin — saturating subtract */
+	case 35: /* subPin - saturating subtract */
 		or_r = (sr > dr) ? (sr - dr) : 0;
 		or_g = (sg > dg) ? (sg - dg) : 0;
 		or_b = (sb > db) ? (sb - db) : 0;
@@ -353,7 +353,7 @@ static uint32 nqd_arith_pixel(uint32 mode, uint32 sp, uint32 dp, int bpp,
 		or_g = std::max(sg, dg);
 		or_b = std::max(sb, db);
 		break;
-	case 38: /* subOver — modular subtract */
+	case 38: /* subOver - modular subtract */
 		or_r = (sr - dr) & cmax;
 		or_g = (sg - dg) & cmax;
 		or_b = (sb - db) & cmax;
@@ -552,7 +552,7 @@ void NQDMetalBitblt(uint32 p)
 		srb = width_bytes;
 	}
 
-	/* Arithmetic 32–39 / hilite 50: per-pixel ops (standard depths only). */
+	/* Arithmetic 32-39 / hilite 50: per-pixel ops (standard depths only). */
 	if ((mode >= 32 && mode <= 39) || mode == 50) {
 		if (dps >= 8 && sps == dps) {
 			uint32 back = ReadMacInt32(p + NQD_acclBackPen);
@@ -575,7 +575,7 @@ void NQDMetalBitblt(uint32 p)
 		mode = bmap;
 	}
 
-	/* Boolean modes 0–7 (src) and 8–15 (pat) share the same low 3 bits. */
+	/* Boolean modes 0-7 (src) and 8-15 (pat) share the same low 3 bits. */
 	uint32 bool_mode = mode;
 	if (bool_mode >= 8 && bool_mode <= 15)
 		bool_mode -= 8;
@@ -635,9 +635,9 @@ void NQDMetalFillRect(uint32 p)
 	}
 	/*
 	 * Color selection matches stock gfxaccel.cpp / PocketShaver:
-	 *   penMode == 8 (patCopy) → ForePen, else → BackPen.
+	 *   penMode == 8 (patCopy) -> ForePen, else -> BackPen.
 	 * Using Fore always paints erase/white fills as black (typical
-	 * Fore=black, Back=white) — black Finder windows, dark chrome, etc.
+	 * Fore=black, Back=white) - black Finder windows, dark chrome, etc.
 	 */
 	const uint32 pen_mode = ReadMacInt32(p + NQD_acclPenMode);
 	const uint32 fore_pen = ReadMacInt32(p + NQD_acclForePen);
@@ -653,7 +653,7 @@ void NQDMetalFillRect(uint32 p)
 		return;
 	}
 
-	/* Transfer modes 8–15: solid pen as pattern (patCopy etc.) */
+	/* Transfer modes 8-15: solid pen as pattern (patCopy etc.) */
 	uint32 m = mode & 7;
 	if (mode >= 8 && mode <= 15) {
 		/* Build a solid pattern row from the selected pen color */

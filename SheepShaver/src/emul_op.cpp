@@ -537,7 +537,7 @@ void EmulOp(M68kRegisters *r, uint32 pc, int selector)
 #if ENABLE_NATIVE_MICROSECONDS_PATCH
 		/*
 		 * Host ClockGetTime (inline, replaces A82A at sample site only).
-		 * Stack: [header][TimeRecord*][CI][result] — trap never entered.
+		 * Stack: [header][TimeRecord*][CI][result] - trap never entered.
 		 *
 		 * Service pending audio only. Do not nest TimerInterrupt/moreRtn
 		 * here (caused powerpc_cpu::execute_illegal abort). Windows
@@ -582,7 +582,7 @@ void EmulOp(M68kRegisters *r, uint32 pc, int selector)
 				 * cleanup instruction (the one after the patched A82A), so the
 				 * thunk jumps straight there and the guest's own cleanup pops
 				 * the parameters. A82A is entered with the caller's registers
-				 * intact — in particular d0, which the guest set to 0 as the
+				 * intact - in particular d0, which the guest set to 0 as the
 				 * dispatch selector. Do not touch d0/a7 on this path.
 				 *
 				 * The jump target differs per call site, so rebuild the operand
@@ -623,7 +623,7 @@ void EmulOp(M68kRegisters *r, uint32 pc, int selector)
 
 			AudioServicePendingInterrupt();
 			if (AudioStatus.num_sources >= 2 && (hits & 31) == 0) {
-				/* Delay_usec(1000) → Sleep(1) on Windows. */
+				/* Delay_usec(1000) -> Sleep(1) on Windows. */
 				Delay_usec(1000);
 				AudioServicePendingInterrupt();
 			}
@@ -642,9 +642,9 @@ void EmulOp(M68kRegisters *r, uint32 pc, int selector)
 		case OP_QT_CLOCK_MICROS: {
 			/* QuickTime sound-clock GetTime. Return wall micros advanced by a
 			 * fixed offset so the movie's sound clock reads as if audio already
-			 * reached the video's media position — collapsing the ~0.85s A/V
+			 * reached the video's media position - collapsing the ~0.85s A/V
 			 * resync freeze when the music source starts late at time 0
-			 * (descent-movie §36). Offset applied only during movie phase. */
+			 * Offset applied only during movie phase. */
 			uint32 hi, lo;
 			Microseconds(hi, lo);
 			if (AudioStatus.num_sources >= 2 &&

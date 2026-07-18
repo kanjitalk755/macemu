@@ -230,7 +230,7 @@ void main() {
 static const char *kFS32 = R"GLSL(
 #version 120
 uniform sampler2D u_tex;
-uniform sampler2D u_gamma; // 256x3 R/G/B strips packed as 256x1 RGB via 3 rows in 1D? use 256x1 with .rgb channels per sample via 3 textures — we pack as 256x3
+uniform sampler2D u_gamma; // 256x3 R/G/B strips packed as 256x1 RGB via 3 rows in 1D? use 256x1 with .rgb channels per sample via 3 textures - we pack as 256x3
 varying vec2 v_uv;
 void main() {
   // Guest stores big-endian ARGB bytes; uploaded as BGRA so recovered as:
@@ -272,7 +272,7 @@ uniform float u_pixel_width;
 varying vec2 v_uv;
 void main() {
   float px = floor(v_uv.x * u_pixel_width);
-  float py = floor(v_uv.y * float(textureSize2D_fake)); // not available — use tex size via uniform
+  float py = floor(v_uv.y * float(textureSize2D_fake)); // not available - use tex size via uniform
   // Simpler path: CPU already expands indexed into RGBA8 each frame when needed.
   // For 8bpp we sample index texture.
   float idx = texture2D(u_tex, v_uv).r * 255.0;
@@ -578,7 +578,7 @@ static void draw_overlay_layer(const CompositeLayer *layer)
 	float y1 = y0 + dh;
 	float nx0 = (x0 / (float)s_width) * 2.f - 1.f;
 	float nx1 = (x1 / (float)s_width) * 2.f - 1.f;
-	/* Guest Y top-down → NDC Y up */
+	/* Guest Y top-down -> NDC Y up */
 	float ny0 = 1.f - (y1 / (float)s_height) * 2.f;
 	float ny1 = 1.f - (y0 / (float)s_height) * 2.f;
 
@@ -664,7 +664,7 @@ int MetalCompositorInit(int width, int height, int depth, int row_bytes,
 	sub.ctx = nullptr;
 	dmc_subscribe(&sub);
 
-	/* VBL source — SDL-driven from Present. */
+	/* VBL source - SDL-driven from Present. */
 	vbl_source_init(nullptr, nullptr, nullptr);
 
 	s_init = true;
@@ -731,7 +731,7 @@ void MetalCompositorPresent(void)
 		vbl_source_get_cadence_usec());
 	/* A pending classic-framebuffer upload (forced after a depth switch that
 	 * invalidated the upload baseline) must not be starved by the cadence
-	 * gate — otherwise the first 16bpp frame after a mid-movie SetDepth holds
+	 * gate - otherwise the first 16bpp frame after a mid-movie SetDepth holds
 	 * on screen for the full cadence window (Descent II intro hitch). */
 	const bool do_draw = !s_classic_fb_texture_valid ||
 	                     s_last_present_usec == 0 ||
@@ -1099,7 +1099,7 @@ void MetalCompositorGetPresentRect(int *out_x, int *out_y, int *out_w, int *out_
 	if (out_h) *out_h = (int)(uint32_t)(s & 0xffffffffu);
 }
 
-/* Internal helpers used by Metal submitframe module — provide stubs. */
+/* Internal helpers used by Metal submitframe module - provide stubs. */
 extern "C" int MetalCompositorSubmitFrame_BindPresentationContext(
     void *, void *, void *) { return 0; }
 extern "C" void MetalCompositorSubmitFrame_UnbindPresentationContext(void) {}

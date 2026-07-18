@@ -256,7 +256,7 @@ static void do_getscrap(void **handle, uint32 type, int32 offset)
 
 					// Add new data to clipboard via a tiny 68k trampoline.
 					// Under SheepShaver DIRECT_ADDRESSING + NATMEM_OFFSET,
-					// Host2MacAddr() only works for guest-mapped RAM — a host
+					// Host2MacAddr() only works for guest-mapped RAM - a host
 					// static array is outside that range and WriteMacInt32
 					// then crashes (vm_do_write_memory_4 AV on boot/scrap).
 					static const uint8 putscrap_proc_template[] = {

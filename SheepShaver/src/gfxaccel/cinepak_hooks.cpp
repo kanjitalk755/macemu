@@ -7,7 +7,7 @@
  *  QuickTime's Image Compression Manager picks a decompressor for 'cvid'
  *  frames through the Component Manager. We register a real 'imdc'/'cvid'
  *  component whose entry point is a SheepShaver routine descriptor that
- *  lands in CinepakDispatch() — decode happens in host code, eliminating
+ *  lands in CinepakDispatch() - decode happens in host code, eliminating
  *  both the one-time codec setup stall and the per-frame interpreter cost.
  *
  *  Registration timing is the crux: our component must be the one the ICM
@@ -15,13 +15,13 @@
  *  registered match first. So we register just-in-time: first-instruction
  *  hooks (FN=1 native ops, the InterfaceLib-Microseconds pattern) on
  *  OpenDefaultComponent and FindNextComponent watch for the first 'imdc'
- *  search, register our component right then — before the search executes —
+ *  search, register our component right then - before the search executes -
  *  and permanently restore both patch sites once registered.
  *
  *  The component implements the CLASSIC codec protocol (codecGetCodecInfo /
  *  codecPreDecompress / codecBandDecompress), which every QuickTime version
  *  services. If anything looks unsupported we return noCodecErr, and the
- *  ICM falls back to Apple's Cinepak — the movie still plays, just slow.
+ *  ICM falls back to Apple's Cinepak - the movie still plays, just slow.
  */
 
 #include "sysdeps.h"
@@ -40,7 +40,7 @@
 
 /* Bring-up diagnostics. Default OFF for the shipping build; flip to 1 to
  * trace registration, codec negotiation, blit geometry, and per-frame
- * cadence (the last verified the ~0.85s first-frame stall is gone — steady
+ * cadence (the last verified the ~0.85s first-frame stall is gone - steady
  * ~68ms/frame, zero >120ms gaps). */
 #ifndef CINEPAK_LOGGING_ENABLED
 #define CINEPAK_LOGGING_ENABLED 1
@@ -207,7 +207,7 @@ static uint32 call_original2(HookSite &s, uint32 arg1, uint32 arg2)
 /* Register our 'imdc'/'cvid' component. Runs from native-op context, where
  * call_macos into InterfaceLib is the established pattern (DSpInstallHooks /
  * FindLibSymbol do the same). Once registered, the trigger hooks restore
- * themselves — zero steady-state overhead. */
+ * themselves - zero steady-state overhead. */
 static bool CinepakEnsureRegistered(void)
 {
 	if (s_registered)
@@ -262,7 +262,7 @@ static bool CinepakEnsureRegistered(void)
 uint32 CinepakOpenDefaultComponentHook(uint32 componentType, uint32 componentSubType)
 {
 	if (componentType == FOURCC_IMDC) {
-		CINEPAK_LOG("OpenDefaultComponent('%c%c%c%c','%c%c%c%c') — registering\n",
+		CINEPAK_LOG("OpenDefaultComponent('%c%c%c%c','%c%c%c%c') - registering\n",
 		            (char)(componentType >> 24), (char)(componentType >> 16),
 		            (char)(componentType >> 8), (char)componentType,
 		            (char)(componentSubType >> 24), (char)(componentSubType >> 16),
@@ -281,7 +281,7 @@ uint32 CinepakFindNextComponentHook(uint32 aComponent, uint32 lookingDesc)
 			static int logged = 0;
 			if (logged < 8) {
 				logged++;
-				CINEPAK_LOG("FindNextComponent(type='%c%c%c%c' sub='%c%c%c%c') — registering\n",
+				CINEPAK_LOG("FindNextComponent(type='%c%c%c%c' sub='%c%c%c%c') - registering\n",
 				            (char)(type >> 24), (char)(type >> 16),
 				            (char)(type >> 8), (char)type,
 				            (char)(sub >> 24), (char)(sub >> 16),
@@ -322,7 +322,7 @@ bool CinepakInstallHooks(void)
 	/* Install the search-site hooks only. Registration itself must NOT run
 	 * here: this is called from InitCallUniversalProc, which executes in
 	 * MODE_EMUL_OP, and RegisterComponent starts a nested guest execution
-	 * (call_macos6) that wedges from EMUL_OP context — observed as an
+	 * (call_macos6) that wedges from EMUL_OP context - observed as an
 	 * "Illegal instruction" at boot. Registration is deferred to
 	 * CinepakRegisterFromNative(), driven from VideoInstallAccel (native-op
 	 * context, the same path DSp/RAVE register from safely).
@@ -336,8 +336,8 @@ bool CinepakInstallHooks(void)
 
 /* Native-op-context registration entry, called from VideoInstallAccel on
  * each accRun tick until it succeeds. Safe to call repeatedly (idempotent
- * via s_registered). Registering proactively — rather than only on a caught
- * search — is what actually gets us picked: QuickTime's ICM resolves its
+ * via s_registered). Registering proactively - rather than only on a caught
+ * search - is what actually gets us picked: QuickTime's ICM resolves its
  * codec through a bound FindNextComponent that never hits our InterfaceLib
  * patch sites (observed: the hooks install but never fire). Newest
  * registration wins, so as long as we register before QuickTime enumerates
@@ -351,7 +351,7 @@ bool CinepakRegisterFromNative(void)
  *  Per-sequence decoder contexts
  *
  *  Cinepak codebooks and the previous frame persist across frames, so each
- *  ImageSequence gets one long-lived host context. Small LRU table — a
+ *  ImageSequence gets one long-lived host context. Small LRU table - a
  *  movie uses one or two sequences.
  * ---------------------------------------------------------------------- */
 
@@ -522,7 +522,7 @@ static uint32 cinepak_band_decompress(uint32 p)
 
 #if CINEPAK_LOGGING_ENABLED
 	/* Frame cadence probe: log the wall-clock gap (ms) between decodes so a
-	 * stall — the ~0.85s first-frame freeze this work set out to kill — shows
+	 * stall - the ~0.85s first-frame freeze this work set out to kill - shows
 	 * as a large delta. GetTicks_usec() is BasiliskII's host microsecond
 	 * clock (already used by audio.cpp). */
 	{
@@ -571,7 +571,7 @@ static uint32 cinepak_band_decompress(uint32 p)
 	 * baseAddr addresses the pixel at (bounds.top, bounds.left) of the
 	 * destination pixmap. The image is mapped into destination space by the
 	 * decompress matrix; for Cinepak playback this is (observed) always an
-	 * identity/translate matrix — scale is 1 and rotation absent — so we
+	 * identity/translate matrix - scale is 1 and rotation absent - so we
 	 * honor just the integer translation and clip. Image pixel (ix,iy)
 	 * therefore lands at destination pixel (iy+ty, ix+tx), which is buffer
 	 * offset (iy+ty - bounds.top, ix+tx - bounds.left).
@@ -708,7 +708,7 @@ static uint32 cinepak_band_decompress(uint32 p)
 	/* Periodic probe every 8 blits (DESCENT_HITCH_DEBUG): shows whether
 	 * writes happen but the compositor still reports a frozen hash. Hash over
 	 * the region we actually wrote (dst_base) vs the compositor's sBufRegion
-	 * (same formula) — if ours changes while the compositor's is frozen, the
+	 * (same formula) - if ours changes while the compositor's is frozen, the
 	 * two pointers are different physical memory. */
 #if DESCENT_HITCH_DEBUG
 	static int bp_log_mod = 0;

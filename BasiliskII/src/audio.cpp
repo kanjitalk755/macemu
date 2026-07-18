@@ -194,7 +194,7 @@ void AudioStreamHostMix(uint8 *buf, int *bytes, int want_bytes)
 		uint32 data = ReadMacInt32(stream_pb + 24);
 		if (frames == 0 || data == 0) {
 			/* Buffer drained: pull the next chunk. completionRtn must NOT
-			 * be called here — it means "entire sound finished" and makes
+			 * be called here - it means "entire sound finished" and makes
 			 * the Sound Manager retire the stream (run11). */
 			more_calls++;
 			if (more_calls > 64 ||
@@ -901,7 +901,7 @@ delegate:	// Delegate call to Apple Mixer
 				/* Streaming start we cannot service: an empty PB + moreRtn
 				 * relies on the mixer pulling chunks at interrupt rate; our
 				 * mixer never services such a source (plays silence) and the
-				 * deferred moreRtn refill caps at one chunk per interrupt —
+				 * deferred moreRtn refill caps at one chunk per interrupt -
 				 * 8x too slow. Fail fast so the client falls back to its
 				 * primed-buffer path immediately instead of timing out
 				 * (Descent II first movie: ~1 s frozen video + silence).  */
@@ -918,7 +918,7 @@ delegate:	// Delegate call to Apple Mixer
 				 * QuickTime hands the Apple Mixer an empty buffer and expects it
 				 * to pull chunks via moreRtn at interrupt rate. AudioStreamHostMix
 				 * already services exactly this case host-side, so the guest
-				 * mixer's PlaySourceBuffer is pure overhead — and its FIRST call
+				 * mixer's PlaySourceBuffer is pure overhead - and its FIRST call
 				 * builds a SoundConverter (8bit/22k/mono -> 16bit/44k/stereo) on
 				 * the interpreter, a one-time ~3.2 s stall that freezes the movie
 				 * (video is timebase-locked to audio).

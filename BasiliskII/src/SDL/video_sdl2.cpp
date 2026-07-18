@@ -2291,7 +2291,7 @@ static bool is_cursor_in_mac_screen()
 /* Fast path for a depth-only mode switch at the same resolution (e.g. Descent
  * II's movie player calling SetDepth(16) mid-playback, 8bpp -> 16bpp). The full
  * video_close()/video_open() tears down and rebuilds the SDL window and the GL
- * compositor (shader recompile + VBL thread restart) — a single multi-hundred-ms
+ * compositor (shader recompile + VBL thread restart) - a single multi-hundred-ms
  * host stall that freezes the movie. Here we keep the window, GL context,
  * shaders and VBL thread alive and only reallocate the frame buffer + reformat
  * the compositor texture via MetalCompositorResize. Returns true if handled. */
@@ -2304,7 +2304,7 @@ static bool switch_depth_in_place(SDL_monitor_desc &monitor)
 		return false;
 	}
 	/* Same resolution only; a size change still needs the full reopen. The
-	 * compositor is the source of truth for what is currently on screen —
+	 * compositor is the source of truth for what is currently on screen -
 	 * drv->mode already reflects the NEW mode by the time we run. */
 	int live_x = 0, live_y = 0, live_depth = 0;
 	if (!MetalCompositorCurrentMode(&live_x, &live_y, &live_depth)) {
@@ -2357,7 +2357,7 @@ static bool switch_depth_in_place(SDL_monitor_desc &monitor)
 
 	/* Reformat the compositor texture FIRST, while our GL context binding is
 	 * fresh. create_guest_host_surfaces below touches the SDL renderer/texture,
-	 * which can steal the current GL context — doing it after would make the
+	 * which can steal the current GL context - doing it after would make the
 	 * compositor's internal MakeCurrent fail (rc=-1). Same host buffer, new
 	 * depth/pitch/row_bytes. */
 	int rc = MetalCompositorResize(VIDEO_MODE_X, VIDEO_MODE_Y, VIDEO_MODE_DEPTH,

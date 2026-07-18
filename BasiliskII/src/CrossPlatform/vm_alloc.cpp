@@ -316,7 +316,7 @@ static void *vm_acquire_internal(size_t size, int options)
 		 * SheepShaver DIRECT_ADDRESSING uses Host2MacAddr(p) = p - NATMEM_OFFSET
 		 * (0x11000000). Allocations BELOW that base underflow the Mac address
 		 * (e.g. host 0x10000000 -> mac 0xff000000) and Mac2Host no longer
-		 * round-trips — GrayPage then SEGVs on every store (hang with
+		 * round-trips - GrayPage then SEGVs on every store (hang with
 		 * ignoresegv). Keep host pointers in [0x12000000, 0x70000000].
 		 */
 		const vm_uintptr_t kMinHost = 0x12000000;

@@ -203,7 +203,7 @@ enum {
 	kRaveHookAccessBitmap     = 218,  // QAAccessBitmap hook
 	kRaveHookAccessBitmapEnd  = 219,  // QAAccessBitmapEnd hook
 	// Q3Pixmap_Set_Image intercept. Dispatch
-	// sub-opcode only — the activation path (FindLibSymbol hook on the
+	// sub-opcode only - the activation path (FindLibSymbol hook on the
 	// QuickDraw 3D library fragment) is deferred to a follow-up change.
 	// When activated, the PPC thunk dispatches here with
 	// r3 = pixmapAddr, r4 = srcHostAddr, r5 = byteCount. Tests invoke
@@ -429,7 +429,7 @@ struct RaveHookPatchInfo {
 #define RAVE_NUM_HOOKED_APIS 22
 extern RaveHookPatchInfo rave_hook_patches[RAVE_NUM_HOOKED_APIS];
 
-// Hook indices into rave_hook_patches[] — matches apis[] order in RaveInstallHooks
+// Hook indices into rave_hook_patches[] - matches apis[] order in RaveInstallHooks
 enum {
 	kRaveHookIdx_GetFirstEngine   = 0,
 	kRaveHookIdx_GetNextEngine    = 1,
@@ -579,7 +579,7 @@ struct RaveResourceEntry {
 	// Q3Pixmap_Set_Image intercept. When set to true by
 	// NativeHookQ3PixmapSetImage, the draw-time read paths
 	// (RaveRealizeDeferredTexture, RaveRefreshTextureFromPixmap) must
-	// prefer cpu_pixel_data over pixmap_mac_addr — cpu_pixel_data holds
+	// prefer cpu_pixel_data over pixmap_mac_addr - cpu_pixel_data holds
 	// the synchronously-copied "authoritative" pixels and the
 	// pixmap_mac_addr Mac heap region may have been freed by the game
 	// (classic-Mac lifecycle pattern). Stays false for textures where
@@ -604,7 +604,7 @@ static inline bool RaveTextureNeedsLivePixmapRefresh(const RaveResourceEntry *en
 
 // UT's surface cache + firing effects keep a working set well over the old 512
 // (turny.txt logged "resource table full (512 slots)" + "QATextureNew FAILED" during
-// chaotic gameplay → new surface textures failed to allocate → those surfaces rendered
+// chaotic gameplay -> new surface textures failed to allocate -> those surfaces rendered
 // untextured/black = the "solid surfaces dropping out after shooting" bug). The table is
 // a static array of pointer-based entries (~200 B each), so 4096 is ~800 KB; actual GPU
 // memory stays bounded by what the guest actually creates.
@@ -625,7 +625,7 @@ extern void RaveForgetRTTResourceHandle(uint32_t handle, uint32_t generation);
 
 // Lookup a RAVE texture entry whose
 // pixmap_mac_addr matches `pixmapAddr`. Returns nullptr if no match
-// (most common case — not every Q3Pixmap is tracked by a RAVE texture).
+// (most common case - not every Q3Pixmap is tracked by a RAVE texture).
 // O(n) over rave_resource_table[0..RAVE_MAX_RESOURCES-1]; n is bounded
 // small (512) so this is cheap enough to run from the Q3Pixmap_Set_Image
 // intercept callback. Thread-safety: callers must hold the same
@@ -651,7 +651,7 @@ extern RaveResourceEntry *RaveFindTextureByPixmapAddr(uint32_t pixmapAddr);
 //                 entry's cpu_pixel_data_size).
 //
 // If no RAVE texture is tracking `pixmapAddr`, returns silently (the
-// write is unrelated to any RAVE-managed texture — common case). If a
+// write is unrelated to any RAVE-managed texture - common case). If a
 // match is found and the entry has a valid cpu_pixel_data allocation,
 // copies min(byteCount, cpu_pixel_data_size) bytes and sets
 // cpu_pixel_data_is_authoritative = true. Tests call this directly from

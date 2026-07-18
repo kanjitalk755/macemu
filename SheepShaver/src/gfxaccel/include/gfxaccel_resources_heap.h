@@ -125,7 +125,7 @@ void *gfxaccel_resources_heap_alloc_buffer(uint32_t heap_id,
  * Reset the bump allocator's offset counter for a single heap. Returns
  * the number of bytes reclaimed (equal to the previous next_offset).
  * Idempotent: a second call on a freshly-reset heap returns 0.
- * Does NOT release the underlying MTLHeap — only resets the offset.
+ * Does NOT release the underlying MTLHeap - only resets the offset.
  *
  * Typically called from the DMC on_mode_exit fan-out (bump allocator is
  * per-mode-scope). Direct callers outside the DMC subscriber exist for
@@ -153,8 +153,8 @@ uint32_t gfxaccel_resources_heap_live_allocation_count(uint32_t heap_id);
  * Record that a command buffer referencing memory sub-allocated from
  * heap_id is about to be committed. MUST be called BEFORE the commit
  * (addCompletedHandler is illegal after commit). The bump reset
- * (gfxaccel_resources_heap_reset) defers — returns 0, next_offset
- * untouched — while any noted command buffer has not yet completed, so
+ * (gfxaccel_resources_heap_reset) defers - returns 0, next_offset
+ * untouched - while any noted command buffer has not yet completed, so
  * a reset + immediate re-alloc cannot placement-alias bytes an
  * in-flight GPU read may still touch (heaps are hazard-untracked; the
  * live-allocation count covers CPU ownership only). command_buffer is
@@ -166,7 +166,7 @@ void gfxaccel_resources_heap_note_gpu_commit(uint32_t heap_id,
 /*
  * Bump-reset variant for callers that have already proven GPU idleness
  * (e.g. the background-enter path runs after an explicit
- * waitUntilCompleted on the shared queue — see gfxaccel_resources.mm
+ * waitUntilCompleted on the shared queue - see gfxaccel_resources.mm
  * Step 2). Skips the GPU-completion latch; the live-allocation gate
  * still applies. Same return semantics as gfxaccel_resources_heap_reset.
  */
@@ -243,7 +243,7 @@ void gfxaccel_rave_ring_frame_end(void *command_buffer);
 /*
  * Returns 1 when the in-progress (uncommitted) submission window holds
  * enough ring slots that a worst-case draw sequence could block acquiring
- * a credit the window itself holds — only frame_end (commit) returns those
+ * a credit the window itself holds - only frame_end (commit) returns those
  * credits, so without a mid-frame commit the wait could never complete.
  * The RAVE renderer polls this at draw-sequence boundaries (before per-draw
  * encoder state is applied) and commits + restarts the render pass when set.

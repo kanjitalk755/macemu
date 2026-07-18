@@ -390,7 +390,7 @@ int32 NativeDrawPrivateNew(uint32 drawContextAddr, uint32 deviceAddr,
 	rave_context_count++;
 
 	// Initialize Metal overlay (viewport-sized) and per-context resources.
-	// Shared-overlay retain call deleted — per-engine ownership
+	// Shared-overlay retain call deleted - per-engine ownership
 	// via gfxaccel_resources eliminates the shared refcount model entirely.
 	// RaveCreateMetalOverlay vends a per-engine overlay texture from
 	// gfxaccel_resources directly.
@@ -491,9 +491,9 @@ int32 NativeDrawPrivateDelete(uint32 drawPrivateHandle)
 	// The gfxaccel_resources fan-out (RaveOnDetach in rave_engine.cpp) will
 	// release it on real mode changes, and RaveOnAttach will re-vend at the
 	// new resolution. Tearing down here caused visible black flashes on every
-	// Nanosaur scene transition (menu ↔ gameplay) because the host's main-
+	// Nanosaur scene transition (menu <-> gameplay) because the host's main-
 	// thread VBL presented frames during the interval between destroy and the
-	// next DrawPrivateNew → RaveCreateMetalOverlay call.
+	// next DrawPrivateNew -> RaveCreateMetalOverlay call.
 
 	// Clamp for safety
 	if (rave_context_count <= 0) {

@@ -184,7 +184,7 @@ endif()
 macemu_slirp_sources("${B2_SRC}" SS_SLIRP)
 macemu_sdl_sources("${B2_SRC}" SS_SDL)
 # Resolve CrossPlatform sources (sigsegv/vm_alloc/video_blit) via text stubs or
-# real SS overrides — never hardcode only BasiliskII while a full SS copy sits
+# real SS overrides - never hardcode only BasiliskII while a full SS copy sits
 # in the tree for the IDE to open (that made "Build" look like it ignored edits).
 macemu_xplat_sources_resolved("${SS_SRC}" "${B2_SRC}" SS_XPLAT)
 macemu_check_shared_source_traps("${SS_SRC}" "${B2_SRC}")
@@ -270,7 +270,7 @@ if(WIN32)
 	# Staging .cpp broke MSVC/VS incremental rebuilds: the IDE tracked the
 	# staged copy while you edited the original, so "Build" often did nothing.
 	#
-	# Shared BasiliskII Windows sources (clip_windows.cpp, posix_emu.cpp, …)
+	# Shared BasiliskII Windows sources (clip_windows.cpp, posix_emu.cpp, &)
 	# still need SheepShaver's sysdeps.h: MSVC searches the .cpp's directory
 	# first for #include "sysdeps.h". Force-include SS sysdeps first (/FI);
 	# both headers use the SYSDEPS_H guard so the later include is a no-op.
@@ -486,7 +486,7 @@ if(SS_STAGE_OUTPUTS)
 	add_dependencies(SheepShaver SheepShaver_stage)
 endif()
 
-# NOTE: Do not use cmake -E echo with ">" in the message under cmd.exe —
+# NOTE: Do not use cmake -E echo with ">" in the message under cmd.exe -
 # the shell treats it as a redirect and can overwrite the .exe (we hit this).
 # Ensure generated impl is present before compiling ppc-execute.cpp
 set_source_files_properties(

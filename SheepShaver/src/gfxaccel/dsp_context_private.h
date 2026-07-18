@@ -10,7 +10,7 @@
  *  the Free Software Foundation; either version 2 of the License, or
  *  (at your option) any later version.
  *
- *  Strictly private to the gfxaccel/ tree — NOT exported via include/ —
+ *  Strictly private to the gfxaccel/ tree - NOT exported via include/ -
  *  only dsp_draw_context.mm and dsp_metal_renderer.mm include it. Public
  *  consumers (dsp_dispatch.cpp, dsp_engine.cpp, test code) use the opaque
  *  `struct DSpContextPrivate;` forward declaration in dsp_engine.h /
@@ -25,7 +25,7 @@
  *  Field naming note:
  *    `persisted_palette_generation` / `persisted_gamma_generation` use the
  *    longer suffixes so the DMC write-site inventory grep-gate in
- *    DMCWriteSiteInventoryTests does not match — only the DMC controller
+ *    DMCWriteSiteInventoryTests does not match - only the DMC controller
  *    module may declare the bare-word generation-counter identifiers.
  *    DSp stores local snapshots of the DMC values here for background/
  *    foreground persistence.
@@ -52,7 +52,7 @@ struct DSpContextPrivate {
 	uint32_t              state;          /* DSpContextState enum value */
 	uint32_t              handle;
 
-	/* Debug session `dsp-sims-enumeration-stall` fix (2026-04-19) — index
+	/* Debug session `dsp-sims-enumeration-stall` fix (2026-04-19) - index
 	 * into s_dsp_modes[] that this metadata-only context was vended from
 	 * during DSpGetFirstContext / DSpGetNextContext iteration. Used by
 	 * DSpGetNextContextHandler to advance the enumeration cursor so apps
@@ -60,21 +60,21 @@ struct DSpContextPrivate {
 	 * (`while (theContext) { ...; GetNextContext(theContext, &theContext); }`).
 	 *
 	 * The Sims UAT capture (loggo.txt:542-549, 2026-04-19) showed The Sims
-	 * calling GetFirstContext → GetAttributes → GetNextContext, finding only
+	 * calling GetFirstContext -> GetAttributes -> GetNextContext, finding only
 	 * one 1bpp mode (the lowest-sorted entry of s_dsp_modes), and bailing
 	 * out because it needs 16bpp. Pre-fix GetNextContext was a stub that
-	 * always returned kDSpContextNotFoundErr — so multi-mode iteration
+	 * always returned kDSpContextNotFoundErr - so multi-mode iteration
 	 * never worked. Post-fix GetNextContext walks the cache forward using
 	 * this field as the cursor.
 	 *
 	 * DSP_ENUMERATION_INDEX_NONE (== UINT32_MAX) means "not part of the
-	 * GetFirst/GetNext enumeration chain" — applies to (a) fully-Reserved
+	 * GetFirst/GetNext enumeration chain" - applies to (a) fully-Reserved
 	 * contexts created via DSpContext_Reserve (they own Metal resources
 	 * and are not iteration placeholders), and (b) FindBest-vended
 	 * metadata contexts (they represent a best-match, not a cursor
 	 * position in the mode list). Calling GetNextContext with such a
 	 * handle returns kDSpContextNotFoundErr per PDF p.17 "last context
-	 * in the list" — a fully-reserved or best-match context has no
+	 * in the list" - a fully-reserved or best-match context has no
 	 * successor in the enumeration.
 	 *
 	 * Value-initialized to 0 by `new DSpContextPrivate()`, but that zero
@@ -82,11 +82,11 @@ struct DSpContextPrivate {
 	 * all construction paths MUST explicitly set this field: GetFirst vends
 	 * index 0; FindBest and Reserve_Core both assign DSP_ENUMERATION_INDEX_NONE.
 	 *
-	 * Threading: single-writer emul-thread — same contract as every other
+	 * Threading: single-writer emul-thread - same contract as every other
 	 * DSpContextPrivate field. No mutex, no _Atomic. */
 	uint32_t              enumeration_mode_index;
 
-	/* Back-buffer Metal resources — populated via
+	/* Back-buffer Metal resources - populated via
 	 * DSpAllocateBackBuffer (gfxaccel_resources_heap_alloc_buffer on
 	 * kHeapCompositor, MTLStorageModeShared). Release order
 	 * MUST be texture-first, buffer-second. */
@@ -105,7 +105,7 @@ struct DSpContextPrivate {
 	bool                  front_staging_owned_sysheap;
 	DSpFrontStagingPresentState front_staging_present_state;
 
-	/* Dirty-region accumulator — populated with the real
+	/* Dirty-region accumulator - populated with the real
 	 * InvalBackBufferRect-driven union. */
 	int16_t               dirty_left, dirty_top, dirty_right, dirty_bottom;
 	bool                  dirty_empty;
@@ -129,7 +129,7 @@ struct DSpContextPrivate {
 	uint32_t              front_staging_refresh_swap_generation;
 	/* Geometry the front staging was last vended with. A mismatch on the
 	 * next ensure means the allocation is being reused across a mode
-	 * switch and its pixels have the wrong pitch — refresh regardless of
+	 * switch and its pixels have the wrong pitch - refresh regardless of
 	 * swap generation. */
 	uint32_t              front_staging_row_bytes;
 	uint32_t              front_staging_height;
@@ -139,13 +139,13 @@ struct DSpContextPrivate {
 	 * the bump allocator lives outside the vm_alloc region on arm64 iOS),
 	 * DSpGetBackBufferCGrafPtr reserves a guest-writable pixel-staging
 	 * region and stores the Mac address here. At
-	 * SwapBuffers time the handler memcpys staging → back_buffer.contents
+	 * SwapBuffers time the handler memcpys staging -> back_buffer.contents
 	 * before the GPU blit. Zero means Host2MacAddr produced a guest-RAM
 	 * address and no staging indirection is needed.
 	 *
 	 * Preserving guest-writable CGrafPtr semantics via a host memcpy is
 	 * strictly better than a raw (uint32)(uintptr_t) cast of the contents
-	 * pointer — the latter is undefined behaviour on arm64 iOS (64-bit
+	 * pointer - the latter is undefined behaviour on arm64 iOS (64-bit
 	 * host VA truncated to 32-bit Mac address). Graceful degradation: if
 	 * a guest-writable staging allocation cannot be vended,
 	 * GetBackBufferHandler returns
@@ -182,9 +182,9 @@ struct DSpContextPrivate {
 	uint8_t   saved_pixmap_reserved[3]; /* alignment padding (preserves uint16 alignment of any trailing fields) */
 
 	/* Per-context CLUT storage.
-	 * clut_bytes is the writer-visible state — DSpContext_SetCLUTEntries
+	 * clut_bytes is the writer-visible state - DSpContext_SetCLUTEntries
 	 * writes here. clut_bytes_latched is the reader-visible
-	 * snapshot — GetCLUTEntries reads from here. The VBL
+	 * snapshot - GetCLUTEntries reads from here. The VBL
 	 * secondary callback DSpVBLClutLatchCallback memcpy's
 	 * clut_bytes -> clut_bytes_latched on each VBL tick so
 	 * GetCLUTEntries returns last-VBL-boundary state.
@@ -196,8 +196,8 @@ struct DSpContextPrivate {
 	uint8_t               clut_bytes_latched[768];
 
 	/* Per-context gamma persistence buffer
-	 * for Pause→Resume replay. When the context is Resumed via
-	 * DSpContext_SetStateHandler's Paused→Active arm, the persisted gamma
+	 * for Pause->Resume replay. When the context is Resumed via
+	 * DSpContext_SetStateHandler's Paused->Active arm, the persisted gamma
 	 * is re-pushed into the DMC snapshot via dmc_record_gamma_change_with_lut
 	 * so the compositor's existing VBL gamma block in metal_compositor.mm
 	 * picks it up at the next VBL. SetGamma updates this
@@ -240,7 +240,7 @@ struct DSpContextPrivate {
 	/* Per-context VBLProc registration.
 	 * vbl_proc_ptr is the guest PPC TVECT address of the VBLProc the app
 	 * registered via DSpContext_SetVBLProc (sub-opcode 500); 0 means no
-	 * proc is installed (per DSp 1.7 spec p.81 — SetVBLProc(ptr=0)
+	 * proc is installed (per DSp 1.7 spec p.81 - SetVBLProc(ptr=0)
 	 * uninstalls). vbl_proc_refcon is the opaque 4-byte refCon the app
 	 * passed at registration time; DSpVBLServiceCallback hands it back
 	 * on every invocation via the DSp 1.7 VBLProc ABI
@@ -260,7 +260,7 @@ struct DSpContextPrivate {
 	 * when the atomic lifecycle drain auto-Pauses an Active context.
 	 * Cleared to 0 by DSpHandleForegroundFromEmulThread after
 	 * auto-Resuming. User-initiated DSpContext_SetState(Paused) does NOT
-	 * touch this flag — so a context the user paused before backgrounding
+	 * touch this flag - so a context the user paused before backgrounding
 	 * stays Paused after foreground (it has paused_by_background == 0, so
 	 * the foreground drain skips it). Default-initialized to 0 by
 	 * `new DSpContextPrivate()` (POD default init preserves the existing
@@ -286,7 +286,7 @@ struct DSpContextPrivate {
 	 * the 32x32 base grid unit at Set time; 0 means "default to the base unit"
 	 * until a Set lands.
 	 *
-	 * Threading: single-writer emul-thread — same contract as every other
+	 * Threading: single-writer emul-thread - same contract as every other
 	 * DSpContextPrivate field. No mutex, no _Atomic. Value-initialized to 0 by
 	 * `new DSpContextPrivate()` (POD default-init, like enumeration_mode_index
 	 * before its explicit sentinel assignment); both construction paths
@@ -304,7 +304,7 @@ struct DSpContextPrivate {
 	 * kind alt-buffers); only the underlay path is wired but the
 	 * field is scaffolded so the record-table + handler shape is symmetric.
 	 *
-	 * Threading: single-writer emul-thread — same contract as every other
+	 * Threading: single-writer emul-thread - same contract as every other
 	 * DSpContextPrivate field. NO _Atomic, NO mutex (the retired
 	 * sub-op-600 cross-thread SPSC ring was the anti-pattern here,
 	 * deliberately NOT copied). Value-initialized to 0 by
@@ -327,10 +327,10 @@ struct DSpContextPrivate {
 	 * (the field name "queued" refers to the DSp deferred-switch concept, not
 	 * a concurrent data structure).
 	 *
-	 * Threading: single-writer emul-thread — same contract as every other
+	 * Threading: single-writer emul-thread - same contract as every other
 	 * DSpContextPrivate field. NO _Atomic, NO mutex (the retired
 	 * sub-op-600 cross-thread SPSC ring was the anti-pattern here,
-	 * deliberately NOT copied — none of the heavy handlers need
+	 * deliberately NOT copied - none of the heavy handlers need
 	 * cross-thread state). Value-initialized to 0 by `new DSpContextPrivate()`
 	 * (POD default-init, like max_frame_rate / underlay_alt_buffer); both
 	 * construction paths (Reserve_Core, AllocFirstContextHandle) get the zero

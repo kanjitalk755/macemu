@@ -792,7 +792,7 @@ void NativeGLFrustum(GLContext *ctx, double l, double r, double b, double t, dou
 
 void NativeGLOrtho(GLContext *ctx, double l, double r, double b, double t, double n, double f)
 {
-	// Pass parameters through unmodified — the game's projection matrix
+	// Pass parameters through unmodified - the game's projection matrix
 	// already encodes the Y orientation it expects.  The GL-to-Metal NDC
 	// depth remap is handled in the vertex shader (z * 0.5 + w * 0.5).
 	mat4_ortho(gl_get_current_matrix(ctx), l, r, b, t, n, f);
@@ -1787,12 +1787,12 @@ uint32_t NativeGLGetString(GLContext *ctx, uint32_t name)
 		// implements are exposed as explicit extension tokens below.
 		return alloc_string(gl_string_version_addr,  "1.1");
 	// The EXT texture-env COMBINE extension token is DE-ADVERTISED.
-	// The GL_COMBINE_EXT (0x8570) crossbar is store-only — env_mode is recorded but
+	// The GL_COMBINE_EXT (0x8570) crossbar is store-only - env_mode is recorded but
 	// GLTexEnvModeToShader has no GL_COMBINE case (it falls to default = modulate), so
 	// advertising the token would be silent-wrong-output for a conformant app querying
 	// the COMBINE crossbar (silent wrong output). De-advertisement
 	// IS the honest fix: a conformant app detects absence and branches around it.
-	// GL_ARB_multitexture stays advertised — it honestly covers the 2-unit modulate/add
+	// GL_ARB_multitexture stays advertised - it honestly covers the 2-unit modulate/add
 	// texenv path now wired. (The exact token is intentionally NOT spelled out here so
 	// the GLARBExtensionTests source-scan absence assertion stays robust.)
 	//
@@ -1805,7 +1805,7 @@ uint32_t NativeGLGetString(GLContext *ctx, uint32_t name)
 	// imaging convolution/histogram). The handlers log their known limitation; the
 	// GLARBExtensionTests gate tests assert the token's absence. (The umbrella token is
 	// intentionally NOT spelled out as a literal here so the source-scan absence assertion
-	// stays robust — same robustness discipline as the COMBINE de-advertisement.)
+	// stays robust - same robustness discipline as the COMBINE de-advertisement.)
 	//
 	// DELIBERATE (texture compression): the ARB compression token is ABSENT from the
 	// string below. Only 2D DXT upload/sub-upload paths decompress into Metal textures;
@@ -3248,8 +3248,8 @@ void NativeGLTexImage2D(GLContext *ctx, uint32_t target, int32_t level,
 	// ARB_imaging color-table LUT apply: when GL_COLOR_TABLE is
 	// enabled and a primary color table is defined, remap each BGRA8 texel through the
 	// LUT before the GPU upload. This makes color_table_enabled a READ (was write-only)
-	// and applies the stored LUT in the existing CPU upload seam — no new compute pass,
-	// no new shader, no command-encoder dependency. Per OpenGL 1.2.1 §3.6.3 the
+	// and applies the stored LUT in the existing CPU upload seam - no new compute pass,
+	// no new shader, no command-encoder dependency. Per OpenGL 1.2.1 ?3.6.3 the
 	// color table maps incoming component values through the table; the minimal-correct
 	// paletted-texture case routes through the red component as the index (the common
 	// 1-channel LUT-remap use). The index is clamped to [0, width-1] and the hard
@@ -3288,8 +3288,8 @@ void NativeGLTexSubImage2D(GLContext *ctx, uint32_t target, int32_t level,
 	if (!converted) return;
 
 	// ARB_imaging color-table LUT apply: same upload-path remap as
-	// NativeGLTexImage2D — the color table applies during pixel transfer for the sub-image
-	// upload too (OpenGL 1.2.1 §3.6.3). Index clamped before any LUT read.
+	// NativeGLTexImage2D - the color table applies during pixel transfer for the sub-image
+	// upload too (OpenGL 1.2.1 ?3.6.3). Index clamped before any LUT read.
 	GLApplyColorTableLUT(ctx, converted, width, height, dataLen);
 
 	GLMetalUploadSubTexture(ctx, &tex, level, xoffset, yoffset, width, height,
@@ -3536,7 +3536,7 @@ void NativeGLBitmap(GLContext *ctx, int32_t width, int32_t height, float xorig, 
 {
 	// Render the bitmap if we have valid data and raster position
 	if (bitmap_ptr != 0 && ctx->raster_pos_valid && width > 0 && height > 0) {
-		// Unpack 1-bit bitmap to BGRA8: bit=1 → current_color, bit=0 → transparent
+		// Unpack 1-bit bitmap to BGRA8: bit=1 -> current_color, bit=0 -> transparent
 		int dstBytes = width * height * 4;
 		uint8_t *bgra = (uint8_t *)malloc(dstBytes);
 		if (bgra) {
@@ -4127,7 +4127,7 @@ static void SelectionRecordHit(GLContext *ctx, float z_min, float z_max)
 
 // Called from NativeGLEnd when in GL_SELECT mode.
 // Scans all vertices in im_vertices to find Z range, then records a hit.
-// All primitives are considered hits (no clip-volume culling — conservative approach).
+// All primitives are considered hits (no clip-volume culling - conservative approach).
 void GLSelectionRecordPrimitive(GLContext *ctx)
 {
 	if (ctx->im_vertices.empty()) return;
@@ -4565,7 +4565,7 @@ void NativeGLGetTexGenfv(GLContext *ctx, uint32_t coord, uint32_t pname, uint32_
 void NativeGLGetTexGeniv(GLContext *ctx, uint32_t coord, uint32_t pname, uint32_t p) { (void)coord; (void)pname; WriteMacInt32(p, 0); }
 void NativeGLGetTexImage(GLContext *ctx, uint32_t target, int32_t level, uint32_t fmt, uint32_t type, uint32_t p)
 {
-	// Return zeroed data with warning — full Metal texture readback not yet implemented
+	// Return zeroed data with warning - full Metal texture readback not yet implemented
 	GL_LOG("WARNING: glGetTexImage returning zeroes (known limitation)");
 	uint32_t tex = ctx->tex_units[ctx->active_texture].bound_texture_2d;
 	auto it = ctx->texture_objects.find(tex);
@@ -5184,7 +5184,7 @@ void NativeGLMultTransposeMatrixfARB(GLContext *ctx, uint32_t mac_ptr)
 
 
 // ============================================================================
-//  ARB_texture_compression — DXT1/3/5 CPU decompression
+//  ARB_texture_compression - DXT1/3/5 CPU decompression
 // ============================================================================
 
 // Decode one RGB565 value to R,G,B bytes
@@ -5195,7 +5195,7 @@ static inline void dxt_rgb565_to_rgb(uint16_t c, uint8_t *r, uint8_t *g, uint8_t
 	*b = (uint8_t)(((c)       & 0x1F) * 255 / 31);
 }
 
-// Decompress one DXT1 4×4 block (8 bytes) to 16 BGRA8 pixels
+// Decompress one DXT1 4x4 block (8 bytes) to 16 BGRA8 pixels
 static void dxt1_decompress_block(const uint8_t *src, uint8_t *dst, bool has_alpha)
 {
 	uint16_t c0 = src[0] | (src[1] << 8);
@@ -5230,7 +5230,7 @@ static void dxt1_decompress_block(const uint8_t *src, uint8_t *dst, bool has_alp
 	}
 }
 
-// Decompress one DXT3 4×4 block (16 bytes) to 16 BGRA8 pixels
+// Decompress one DXT3 4x4 block (16 bytes) to 16 BGRA8 pixels
 static void dxt3_decompress_block(const uint8_t *src, uint8_t *dst)
 {
 	// First 8 bytes: explicit 4-bit alpha for each pixel
@@ -5252,7 +5252,7 @@ static void dxt3_decompress_block(const uint8_t *src, uint8_t *dst)
 	}
 }
 
-// Decompress one DXT5 4×4 block (16 bytes) to 16 BGRA8 pixels
+// Decompress one DXT5 4x4 block (16 bytes) to 16 BGRA8 pixels
 static void dxt5_decompress_block(const uint8_t *src, uint8_t *dst)
 {
 	// First 8 bytes: interpolated alpha block
@@ -5341,7 +5341,7 @@ void NativeGLCompressedTexImage3DARB(GLContext *ctx, uint32_t target, int32_t le
 	uint32_t ifmt, int32_t w, int32_t h, int32_t d, int32_t border, int32_t imageSize, uint32_t data_ptr)
 {
 	GL_LOG("CompressedTexImage3D fmt=0x%x %dx%dx%d size=%d (known limitation)", ifmt, w, h, d, imageSize);
-	// 3D compressed textures extremely rare in classic Mac games — known limitation
+	// 3D compressed textures extremely rare in classic Mac games - known limitation
 }
 
 void NativeGLCompressedTexImage2DARB(GLContext *ctx, uint32_t target, int32_t level,
@@ -5380,7 +5380,7 @@ void NativeGLCompressedTexImage1DARB(GLContext *ctx, uint32_t target, int32_t le
 	uint32_t ifmt, int32_t w, int32_t border, int32_t imageSize, uint32_t data_ptr)
 {
 	GL_LOG("CompressedTexImage1D fmt=0x%x %d size=%d (known limitation)", ifmt, w, imageSize);
-	// 1D compressed textures essentially never used — known limitation
+	// 1D compressed textures essentially never used - known limitation
 }
 
 void NativeGLCompressedTexSubImage3DARB(GLContext *ctx, uint32_t target, int32_t level,
@@ -5425,7 +5425,7 @@ void NativeGLCompressedTexSubImage1DARB(GLContext *ctx, uint32_t target, int32_t
 
 void NativeGLGetCompressedTexImageARB(GLContext *ctx, uint32_t target, int32_t level, uint32_t img_ptr)
 {
-	GL_LOG("GetCompressedTexImage (known limitation — readback of decompressed data impractical)");
+	GL_LOG("GetCompressedTexImage (known limitation - readback of decompressed data impractical)");
 }
 
 
@@ -5530,7 +5530,7 @@ void NativeGLSecondaryColorPointerEXT(GLContext *ctx, int32_t size, uint32_t typ
 
 
 // ============================================================================
-//  OpenGL 1.2 imaging subset — CPU state storage
+//  OpenGL 1.2 imaging subset - CPU state storage
 // ============================================================================
 
 // Helper: resolve color table target to index (0-2)
@@ -5561,14 +5561,14 @@ static int gl_convolution_index(uint32_t target) {
 // read the framebuffer via GLMetalReadFramebufferRect with overflow-safe bounds.
 // The CONVOLUTION (478-490) and HISTOGRAM/MINMAX (491-500)
 // handlers still store state only and do NOT apply their transforms in the Metal pipeline (a
-// full convolution/histogram pass is DELIBERATELY not built — owned by later work; classic
+// full convolution/histogram pass is DELIBERATELY not built - owned by later work; classic
 // Mac games do not use imaging convolution/histogram). Those families are
 // honestly DE-ADVERTISED: the ARB imaging umbrella token is NOT in the GL_EXTENSIONS string
 // (over-advertising would be the silent-wrong-output the Core Value forbids), and each
 // handler LOGS its known limitation so the disposition is visible at runtime,
 // never a silent claim of success. (The umbrella token is intentionally not
 // spelled out as a literal so the GLARBExtensionTests source-scan absence assertion stays
-// robust — same discipline as the COMBINE de-advertisement.)
+// robust - same discipline as the COMBINE de-advertisement.)
 
 // --- Color table operations (9 functions) ---
 
@@ -5605,14 +5605,14 @@ void NativeGLColorTable(GLContext *ctx, uint32_t target, uint32_t ifmt, int32_t 
 
 void NativeGLColorTableParameterfv(GLContext *ctx, uint32_t target, uint32_t pname, uint32_t params) {
 	// The color-table scale/bias params are NOT consumed by the implemented
-	// single-channel LUT apply; the knob is honestly inert — a
+	// single-channel LUT apply; the knob is honestly inert - a
 	// conformant app gets no scale/bias transform rather than a silent partial
 	// one. Logging-only, no state mutation (additive marker only).
-	GL_LOG("ColorTableParameterfv target=0x%x pname=0x%x (known limitation — color-table scale/bias not consumed by the single-channel LUT apply; honestly inert)", target, pname);
+	GL_LOG("ColorTableParameterfv target=0x%x pname=0x%x (known limitation - color-table scale/bias not consumed by the single-channel LUT apply; honestly inert)", target, pname);
 }
 
 void NativeGLColorTableParameteriv(GLContext *ctx, uint32_t target, uint32_t pname, uint32_t params) {
-	GL_LOG("ColorTableParameteriv target=0x%x pname=0x%x (known limitation — color-table scale/bias not consumed by the single-channel LUT apply; honestly inert)", target, pname);
+	GL_LOG("ColorTableParameteriv target=0x%x pname=0x%x (known limitation - color-table scale/bias not consumed by the single-channel LUT apply; honestly inert)", target, pname);
 }
 
 void NativeGLCopyColorTable(GLContext *ctx, uint32_t target, uint32_t ifmt, int32_t x, int32_t y, int32_t w) {
@@ -5631,7 +5631,7 @@ void NativeGLCopyColorTable(GLContext *ctx, uint32_t target, uint32_t ifmt, int3
 	int outLen = 0;
 	uint8_t *bgra = GLMetalReadFramebufferRect(ctx, x, y, w, 1, &outLen);
 	if (!bgra) {
-		GL_LOG("CopyColorTable: framebuffer read failed (no overlay) — not stored");
+		GL_LOG("CopyColorTable: framebuffer read failed (no overlay) - not stored");
 		return;
 	}
 	// Store the strip into color_tables[idx] as float RGBA (BGRA8: B@+0,G@+1,R@+2,A@+3).
@@ -5728,12 +5728,12 @@ void NativeGLColorSubTable(GLContext *ctx, uint32_t target, int32_t start, int32
 	if (start < 0 || start > 255) return;
 	if (count <= 0) return;
 	if (count > 256 - start) return;        // overflow-safe headroom check (NOT the naive sum)
-	// Core Value: no silent no-op — the loop below only handles
+	// Core Value: no silent no-op - the loop below only handles
 	// GL_RGBA + GL_UNSIGNED_BYTE. Any other format/type combination would silently
 	// do nothing after the bounds pass; log the known limitation and fail honestly
 	// instead (mirrors the de-advertised imaging-family known-limitation logs).
 	if (fmt != GL_RGBA || type != GL_UNSIGNED_BYTE) {
-		GL_LOG("ColorSubTable: unhandled fmt=0x%x type=0x%x (known limitation — only GL_RGBA/GL_UNSIGNED_BYTE applied)", fmt, type);
+		GL_LOG("ColorSubTable: unhandled fmt=0x%x type=0x%x (known limitation - only GL_RGBA/GL_UNSIGNED_BYTE applied)", fmt, type);
 		return;
 	}
 	int n = count;
@@ -5758,7 +5758,7 @@ void NativeGLCopyColorSubTable(GLContext *ctx, uint32_t target, int32_t start, i
 	if (!ct.defined) return;
 	// ASVS-V5 bounds (HIGH): start and w are guest-controlled and index into the
 	// fixed GLColorTable.data[256][4] array. Use the OVERFLOW-SAFE headroom comparison
-	// `w > 256 - start` rather than the naive sum-then-compare form — the naive sum
+	// `w > 256 - start` rather than the naive sum-then-compare form - the naive sum
 	// 32-bit-overflows when the guest supplies a large start (the DSp CLUT
 	// integer-overflow -> stack-OOB precedent). Reject start out of range, a zero/negative
 	// width, or a strip that would not fit in the headroom BEFORE any framebuffer read / write.
@@ -5770,7 +5770,7 @@ void NativeGLCopyColorSubTable(GLContext *ctx, uint32_t target, int32_t start, i
 	int outLen = 0;
 	uint8_t *bgra = GLMetalReadFramebufferRect(ctx, x, y, w, 1, &outLen);
 	if (!bgra) {
-		GL_LOG("CopyColorSubTable: framebuffer read failed (no overlay) — not stored");
+		GL_LOG("CopyColorSubTable: framebuffer read failed (no overlay) - not stored");
 		return;
 	}
 	int avail = (outLen >= 0) ? outLen / 4 : 0;
@@ -5792,18 +5792,18 @@ void NativeGLCopyColorSubTable(GLContext *ctx, uint32_t target, int32_t start, i
 
 // DELIBERATE de-advertisement: the ARB imaging
 // CONVOLUTION family (sub-ops 478-490) stores its kernel/params honestly but is
-// NOT applied to any pixel — a convolution pass is DELIBERATELY not built (classic
+// NOT applied to any pixel - a convolution pass is DELIBERATELY not built (classic
 // Mac games do not use imaging convolution).
 // Over-advertising the capability would be the silent-wrong-output the Core Value
 // forbids: a conformant app that sees the imaging umbrella token would call this
 // path and silently get an un-convolved result. The honest fix is capability-gating
-// — the umbrella token is ABSENT from the GL_EXTENSIONS string (see the glGetString
+// - the umbrella token is ABSENT from the GL_EXTENSIONS string (see the glGetString
 // switch above) and each handler LOGS its known limitation so the disposition is
 // visible. State is kept for API completeness (glGet* round-trips), never claimed
 // as applied. Real apply path is owned by later work. (The umbrella token is not
 // spelled out as a literal so the source-scan absence assertion stays robust.)
 void NativeGLConvolutionFilter1D(GLContext *ctx, uint32_t target, uint32_t ifmt, int32_t w, uint32_t fmt, uint32_t type, uint32_t data) {
-	GL_LOG("ConvolutionFilter1D target=0x%x width=%d (known limitation — kernel stored, NOT applied; imaging umbrella de-advertised)", target, w);
+	GL_LOG("ConvolutionFilter1D target=0x%x width=%d (known limitation - kernel stored, NOT applied; imaging umbrella de-advertised)", target, w);
 	if (!ctx) return;
 	int idx = gl_convolution_index(target);
 	if (idx < 0) idx = 0; // default to 1D
@@ -5832,7 +5832,7 @@ void NativeGLConvolutionFilter1D(GLContext *ctx, uint32_t target, uint32_t ifmt,
 }
 
 void NativeGLConvolutionFilter2D(GLContext *ctx, uint32_t target, uint32_t ifmt, int32_t w, int32_t h, uint32_t fmt, uint32_t type, uint32_t data) {
-	GL_LOG("ConvolutionFilter2D target=0x%x %dx%d (known limitation — kernel stored, NOT applied; imaging umbrella de-advertised)", target, w, h);
+	GL_LOG("ConvolutionFilter2D target=0x%x %dx%d (known limitation - kernel stored, NOT applied; imaging umbrella de-advertised)", target, w, h);
 	if (!ctx) return;
 	int idx = gl_convolution_index(target);
 	if (idx < 0) idx = 1; // default to 2D
@@ -5866,12 +5866,12 @@ void NativeGLConvolutionFilter2D(GLContext *ctx, uint32_t target, uint32_t ifmt,
 }
 
 void NativeGLConvolutionParameterf(GLContext *ctx, uint32_t target, uint32_t pname, float param) {
-	GL_LOG("ConvolutionParameterf target=0x%x pname=0x%x val=%f (known limitation — convolution de-advertised)", target, pname, param);
-	// Border mode parameter — stored but not applied in Metal pipeline (DELIBERATE)
+	GL_LOG("ConvolutionParameterf target=0x%x pname=0x%x val=%f (known limitation - convolution de-advertised)", target, pname, param);
+	// Border mode parameter - stored but not applied in Metal pipeline (DELIBERATE)
 }
 
 void NativeGLConvolutionParameterfv(GLContext *ctx, uint32_t target, uint32_t pname, uint32_t params) {
-	GL_LOG("ConvolutionParameterfv target=0x%x pname=0x%x (known limitation — convolution de-advertised)", target, pname);
+	GL_LOG("ConvolutionParameterfv target=0x%x pname=0x%x (known limitation - convolution de-advertised)", target, pname);
 	if (!ctx || params == 0) return;
 	int idx = gl_convolution_index(target);
 	if (idx < 0) return;
@@ -5884,19 +5884,19 @@ void NativeGLConvolutionParameterfv(GLContext *ctx, uint32_t target, uint32_t pn
 }
 
 void NativeGLConvolutionParameteri(GLContext *ctx, uint32_t target, uint32_t pname, int32_t param) {
-	GL_LOG("ConvolutionParameteri target=0x%x pname=0x%x val=%d (known limitation — convolution de-advertised)", target, pname, param);
+	GL_LOG("ConvolutionParameteri target=0x%x pname=0x%x val=%d (known limitation - convolution de-advertised)", target, pname, param);
 }
 
 void NativeGLConvolutionParameteriv(GLContext *ctx, uint32_t target, uint32_t pname, uint32_t params) {
-	GL_LOG("ConvolutionParameteriv target=0x%x pname=0x%x (known limitation — convolution de-advertised)", target, pname);
+	GL_LOG("ConvolutionParameteriv target=0x%x pname=0x%x (known limitation - convolution de-advertised)", target, pname);
 }
 
 void NativeGLCopyConvolutionFilter1D(GLContext *ctx, uint32_t target, uint32_t ifmt, int32_t x, int32_t y, int32_t w) {
-	GL_LOG("CopyConvolutionFilter1D (known limitation — requires framebuffer read)");
+	GL_LOG("CopyConvolutionFilter1D (known limitation - requires framebuffer read)");
 }
 
 void NativeGLCopyConvolutionFilter2D(GLContext *ctx, uint32_t target, uint32_t ifmt, int32_t x, int32_t y, int32_t w, int32_t h) {
-	GL_LOG("CopyConvolutionFilter2D (known limitation — requires framebuffer read)");
+	GL_LOG("CopyConvolutionFilter2D (known limitation - requires framebuffer read)");
 }
 
 void NativeGLGetConvolutionFilter(GLContext *ctx, uint32_t target, uint32_t fmt, uint32_t type, uint32_t data) {
@@ -6034,20 +6034,20 @@ void NativeGLSeparableFilter2D(GLContext *ctx, uint32_t target, uint32_t ifmt, i
 
 // DELIBERATE de-advertisement: the ARB imaging
 // HISTOGRAM / MINMAX family (sub-ops 491-500) tracks its bins/min-max state
-// honestly but is NOT fed by the actual pixel pipeline — a real histogram/minmax
+// honestly but is NOT fed by the actual pixel pipeline - a real histogram/minmax
 // pass is DELIBERATELY not built (classic Mac games do not use imaging
 // histogram/minmax). Advertising the
 // capability would be the silent-wrong-output the Core Value forbids: a conformant
 // app that sees the imaging umbrella token would read GetHistogram/GetMinmax
 // expecting collected pixel statistics and silently get the un-collected defaults.
-// The honest fix is capability-gating — the umbrella token is ABSENT from the
+// The honest fix is capability-gating - the umbrella token is ABSENT from the
 // GL_EXTENSIONS string (see the glGetString switch above) and each handler LOGS its
 // known limitation so the disposition is visible. State is kept for API
 // completeness, never claimed as collected. Real collection path is owned by
 // later work. (The umbrella token is not spelled out as a literal so the source-scan
 // absence assertion stays robust.)
 void NativeGLHistogram(GLContext *ctx, uint32_t target, int32_t width, uint32_t ifmt, uint32_t sink) {
-	GL_LOG("Histogram target=0x%x width=%d fmt=0x%x sink=%d (known limitation — bins tracked, NOT collected from pixels; imaging umbrella de-advertised)", target, width, ifmt, sink);
+	GL_LOG("Histogram target=0x%x width=%d fmt=0x%x sink=%d (known limitation - bins tracked, NOT collected from pixels; imaging umbrella de-advertised)", target, width, ifmt, sink);
 	if (!ctx) return;
 	ctx->histogram.width = width;
 	ctx->histogram.internal_format = ifmt;
@@ -6057,7 +6057,7 @@ void NativeGLHistogram(GLContext *ctx, uint32_t target, int32_t width, uint32_t 
 }
 
 void NativeGLMinmax(GLContext *ctx, uint32_t target, uint32_t ifmt, uint32_t sink) {
-	GL_LOG("Minmax target=0x%x fmt=0x%x sink=%d (known limitation — min/max tracked, NOT collected from pixels; imaging umbrella de-advertised)", target, ifmt, sink);
+	GL_LOG("Minmax target=0x%x fmt=0x%x sink=%d (known limitation - min/max tracked, NOT collected from pixels; imaging umbrella de-advertised)", target, ifmt, sink);
 	if (!ctx) return;
 	ctx->minmax.internal_format = ifmt;
 	ctx->minmax.sink = (sink != 0);
@@ -6084,7 +6084,7 @@ void NativeGLResetMinmax(GLContext *ctx, uint32_t target) {
 }
 
 void NativeGLGetHistogram(GLContext *ctx, uint32_t target, uint32_t reset, uint32_t fmt, uint32_t type, uint32_t data) {
-	GL_LOG("GetHistogram target=0x%x reset=%d (known limitation — returns tracked bins, NOT pixel-collected; imaging umbrella de-advertised)", target, reset);
+	GL_LOG("GetHistogram target=0x%x reset=%d (known limitation - returns tracked bins, NOT pixel-collected; imaging umbrella de-advertised)", target, reset);
 	if (!ctx || data == 0) return;
 	if (!ctx->histogram.defined) return;
 	int w = ctx->histogram.width;
@@ -6100,7 +6100,7 @@ void NativeGLGetHistogram(GLContext *ctx, uint32_t target, uint32_t reset, uint3
 }
 
 void NativeGLGetHistogramParameterfv(GLContext *ctx, uint32_t target, uint32_t pname, uint32_t params) {
-	GL_LOG("GetHistogramParameterfv target=0x%x pname=0x%x (known limitation — histogram de-advertised)", target, pname);
+	GL_LOG("GetHistogramParameterfv target=0x%x pname=0x%x (known limitation - histogram de-advertised)", target, pname);
 	if (!ctx || params == 0) return;
 	float val = 0;
 	switch (pname) {
@@ -6114,7 +6114,7 @@ void NativeGLGetHistogramParameterfv(GLContext *ctx, uint32_t target, uint32_t p
 }
 
 void NativeGLGetHistogramParameteriv(GLContext *ctx, uint32_t target, uint32_t pname, uint32_t params) {
-	GL_LOG("GetHistogramParameteriv target=0x%x pname=0x%x (known limitation — histogram de-advertised)", target, pname);
+	GL_LOG("GetHistogramParameteriv target=0x%x pname=0x%x (known limitation - histogram de-advertised)", target, pname);
 	if (!ctx || params == 0) return;
 	int32_t val = 0;
 	switch (pname) {

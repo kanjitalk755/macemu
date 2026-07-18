@@ -59,7 +59,7 @@ static char *bincue_dirname(char *path)
 		return path;
 	}
 	if (sep == path) {
-		/* Root path like "C:\" or "\" — keep one separator */
+		/* Root path like "C:\" or "\" - keep one separator */
 		sep[1] = '\0';
 	} else {
 		*sep = '\0';

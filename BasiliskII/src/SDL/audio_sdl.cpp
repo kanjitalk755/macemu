@@ -329,8 +329,8 @@ static int audio_prefetch_func(void *arg)
 		 * intro video until its sound clock reaches the video's media time, and
 		 * that clock only advances as GetSourceData drains the mixed source.
 		 * The game prepares the music source ~1s late, so video runs ~1s ahead
-		 * and QuickTime freezes it ~0.85s while audio plays out (descent-movie
-		 * §34-35). Pulling GetSourceData far ahead of real-time output drains
+		 * and QuickTime freezes it ~0.85s while audio plays out. 
+		 * Pulling GetSourceData far ahead of real-time output drains
 		 * the source clock faster -> QuickTime resyncs sooner. The prefetch
 		 * stream buffers the extra audio; the SDL callback still drains it at
 		 * true playback rate, so audio pitch/quality is unchanged. */

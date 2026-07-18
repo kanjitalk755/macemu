@@ -427,7 +427,7 @@ PRIVATE inline void FFPU MAKE_NAN (fpu_register & f, bool negative)
 
 /*
 For single- and double-precision infinities the fraction is a zero.
-For extended-precision infinities, the mantissa�s MSB, the explicit
+For extended-precision infinities, the mantissa?s MSB, the explicit
 integer bit, can be either one or zero.
 */
 PRIVATE inline uae_u32 FFPU IS_INFINITY (fpu_register const & f)

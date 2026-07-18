@@ -1139,7 +1139,7 @@ struct GLContext {
     // ---- Enable/disable caps ----
     bool     depth_test;
     bool     blend;
-    bool     color_sum;                // GL_COLOR_SUM (EXT_secondary_color) — add secondary color after texturing
+    bool     color_sum;                // GL_COLOR_SUM (EXT_secondary_color) - add secondary color after texturing
     bool     cull_face_enabled;
     uint32_t cull_face_mode;           // GL_FRONT, GL_BACK, GL_FRONT_AND_BACK
     uint32_t front_face;               // GL_CCW or GL_CW

@@ -63,20 +63,20 @@ enum {
 	kDSpFindBestContext             = 201,
 	kDSpContext_GetAttributes       = 202,
 
-	/* Sub-opcode 203 — DSpGetNextContext. Advances the current enumeration
+	/* Sub-opcode 203 - DSpGetNextContext. Advances the current enumeration
 	 * cursor through the DSp mode cache and terminates with
 	 * kDSpContextNotFoundErr at end-of-list per DSp 1.7 PDF p.17. */
 	kDSpGetNextContext              = 203,
 
-	/* Palette — SetCLUTEntries / GetCLUTEntries (300-399 reservation for CLUT). */
+	/* Palette - SetCLUTEntries / GetCLUTEntries (300-399 reservation for CLUT). */
 	kDSpContext_SetCLUTEntries      = 300,
 	kDSpContext_GetCLUTEntries      = 301,
 
-	/* Gamma + Fade — FadeGammaIn / FadeGammaOut / FadeGamma (400-499
+	/* Gamma + Fade - FadeGammaIn / FadeGammaOut / FadeGamma (400-499
 	 * reservation for Gamma).
 	 *
 	 * The non-canonical kDSpContext_SetGamma (400) and kDSpContext_GetGamma
-	 * (401) were dropped — DSpContext_SetGamma / DSpContext_GetGamma are
+	 * (401) were dropped - DSpContext_SetGamma / DSpContext_GetGamma are
 	 * proven ABSENT from the canonical DrawSprocketLib PEF export table
 	 * (offline parse). 400/401 stay reserved / unused so the FadeGamma slots
 	 * keep their historical numbering. */
@@ -84,16 +84,16 @@ enum {
 	kDSpContext_FadeGammaOut        = 403,
 	kDSpContext_FadeGamma           = 404,
 
-	/* VBL Service — SetVBLProc / GetVBLProc (500-599 reservation for VBL).
+	/* VBL Service - SetVBLProc / GetVBLProc (500-599 reservation for VBL).
 	 *
-	 * GetVBLProc (sub-opcode 503) is an internal round-trip helper — not
+	 * GetVBLProc (sub-opcode 503) is an internal round-trip helper - not
 	 * called from guest Mac apps directly. DSp 1.7 spec p.81 documents
 	 * SetVBLProc(ptr=0) as the uninstall path (no separate GetVBLProc in the
 	 * spec); 503 is our internal affordance and is intentionally
 	 * NOT installed in dsp_install_symbols[].
 	 *
 	 * The non-canonical kDSpContext_GetVBLCount (501) and
-	 * kDSpContext_BlankFill (502) were dropped — DSpContext_GetVBLCount /
+	 * kDSpContext_BlankFill (502) were dropped - DSpContext_GetVBLCount /
 	 * DSpContext_BlankFill are proven ABSENT from the canonical
 	 * DrawSprocketLib PEF export table (offline parse). 501/502 stay reserved
 	 * / unused. */
@@ -102,10 +102,10 @@ enum {
 
 	/* DSp Event Integration (600-699 reservation for events).
 	 *
-	 * The non-canonical kDSpContext_ProcessEvent (600 — the SPSC-ring DEQUEUE
+	 * The non-canonical kDSpContext_ProcessEvent (600 - the SPSC-ring DEQUEUE
 	 * direction) was dropped. DSpContext_ProcessEvent is proven ABSENT from
 	 * the canonical DrawSprocketLib PEF export table; the real, canonical
-	 * export is DSpProcessEvent(EventRecord*, Boolean*) — the OPPOSITE
+	 * export is DSpProcessEvent(EventRecord*, Boolean*) - the OPPOSITE
 	 * direction (the app passes its event IN; DSp inspects for
 	 * suspend/resume). The canonical kDSpProcessEvent lands at 750 below.
 	 * 600 stays reserved / unused. */
@@ -117,7 +117,7 @@ enum {
 	 * discovery, 750 canonical DSpProcessEvent, 760 SetBlankingColor, 761
 	 * SetDebugMode. */
 
-	/* 700-705 — AltBuffers (underlay/overlay). */
+	/* 700-705 - AltBuffers (underlay/overlay). */
 	kDSpAltBuffer_New                 = 700,
 	kDSpAltBuffer_Dispose             = 701,
 	kDSpAltBuffer_GetCGrafPtr         = 702,
@@ -125,17 +125,17 @@ enum {
 	kDSpContext_GetUnderlayAltBuffer  = 704,
 	kDSpContext_SetUnderlayAltBuffer  = 705,
 
-	/* 710-711 — Blit. */
+	/* 710-711 - Blit. */
 	kDSpBlit_Faster                   = 710,
 	kDSpBlit_Fastest                  = 711,
 
-	/* 720-723 — coords / mouse. */
+	/* 720-723 - coords / mouse. */
 	kDSpGetMouse                      = 720,
 	kDSpContext_GlobalToLocal         = 721,
 	kDSpContext_LocalToGlobal         = 722,
 	kDSpFindContextFromPoint          = 723,
 
-	/* 730-739 — queries / dirty-rect grid / frame-rate. */
+	/* 730-739 - queries / dirty-rect grid / frame-rate. */
 	kDSpContext_IsBusy                = 730,
 	kDSpContext_GetDisplayID          = 731,
 	kDSpContext_GetFrontBuffer        = 732,
@@ -146,7 +146,7 @@ enum {
 	kDSpContext_SetDirtyRectGridSize  = 737,
 	kDSpContext_GetDirtyRectGridUnits = 738,
 
-	/* 739-747 — save/restore/flatten + queue/switch + discovery. */
+	/* 739-747 - save/restore/flatten + queue/switch + discovery. */
 	kDSpContext_Flatten               = 739,
 	kDSpContext_GetFlattenedSize      = 740,
 	kDSpContext_Restore               = 741,
@@ -157,11 +157,11 @@ enum {
 	kDSpCanUserSelectContext          = 746,
 	kDSpUserSelectContext             = 747,
 
-	/* 750 — canonical DSpProcessEvent (replaces the dropped non-canonical
+	/* 750 - canonical DSpProcessEvent (replaces the dropped non-canonical
 	 * 600 dequeue handler). */
 	kDSpProcessEvent                  = 750,
 
-	/* 760-761 — blanking color + debug mode. */
+	/* 760-761 - blanking color + debug mode. */
 	kDSpSetBlankingColor              = 760,
 	kDSpSetDebugMode                  = 761,
 
@@ -177,7 +177,7 @@ enum {
  *  otherwise unbounded, so a crafted request overflows the uint32 row-bytes /
  *  buffer-size products (under-allocating for a record whose width/height are
  *  huge) and/or hands a multi-GiB allocation to the GPU heap (iOS low-memory
- *  termination — a hard constraint). These caps bound both failure modes.
+ *  termination - a hard constraint). These caps bound both failure modes.
  *
  *  DSP_ALT_MAX_DIM = 4032 is the LARGEST 32-bpp BGRA8 width whose 256-aligned
  *  rowBytes still fits the classic 15-bit QuickDraw PixMap rowBytes field:
@@ -200,10 +200,10 @@ enum {
  *  There is NO "resolution-not-supported" constant in the spec.
  *  `kDSpContextNotFoundErr = -30446` is used for unsupported-mode returns
  *  from both DSpFindBestContext (PDF p.13 explicit) and DSpGetFirstContext
- *  (symmetric with FindBest). Do NOT add a new kDSp*NotSupported* constant —
+ *  (symmetric with FindBest). Do NOT add a new kDSp*NotSupported* constant -
  *  it would fail the behavior-exact fidelity gate against DrawSprocketLib.
  *
- *  DSp 1.7 Result Codes — authoritative range from
+ *  DSp 1.7 Result Codes - authoritative range from
  *  resources/DrawSprocket1.7.pdf p.87. An earlier `kDSpErrGeneric = -24000`
  *  placeholder was a transcription error; apps probe return codes directly
  *  against DSp 1.7's documented header, so the range MUST be -30440..-30450
@@ -251,7 +251,7 @@ enum {
  *  fires.
  *
  *  Only kDSpContextReason_Lost is needed (the iOS-equivalent trigger is app
- *  entering background — there's no display-disconnect on iOS, so the bg
+ *  entering background - there's no display-disconnect on iOS, so the bg
  *  event is the only context-loss vector). Other reason codes (display
  *  disconnect, user-toggled fullscreen-off) have no iOS equivalent and are
  *  deferred.
@@ -299,7 +299,7 @@ enum {
 };
 
 /*
- *  DSp context options — bit-or at Reserve time via
+ *  DSp context options - bit-or at Reserve time via
  *  DSpContextAttributes.contextOptions. Values per DrawSprocket1.7.pdf
  *  p.74. SwapBuffers consults kDSpContextOption_DontSyncVBL to decide
  *  whether to block on the DSp frame-pacing lane before submitting the
@@ -315,9 +315,9 @@ enum {
 };
 
 /*
- *  DSpContextAttributes struct — corrected 2026-04-21 via debug session
+ *  DSpContextAttributes struct - corrected 2026-04-21 via debug session
  *  `dsp-sims-rejects-all-modes` (The Sims read displayWidth=0 for every
- *  advertised mode and rejected all of them under the original layout —
+ *  advertised mode and rejected all of them under the original layout -
  *  that layout mis-read the PDF).
  *
  *  Field ORDER matches DrawSprocket 1.7 PDF pp.65-67 on-wire byte layout:
@@ -340,14 +340,14 @@ enum {
  *  Total on-wire size: 72 bytes.
  *
  *  In-struct widening rule: every on-wire field is stored as `uint32_t`
- *  for API stability — host-struct consumers read via `attr.fieldName`
+ *  for API stability - host-struct consumers read via `attr.fieldName`
  *  without caring about on-wire width. Byte-level PDF correctness is
  *  preserved only when the struct is populated from / read back to Mac
  *  memory via the ReadMacInt{8,16,32} / WriteMacInt{8,16,32} helpers in
  *  `DSpContext_ReserveHandler` etc., which use the PDF-exact offsets above.
  *
  *  Host-only fields (NOT on the wire; PDF has no backBufferWidth/Height):
- *    backBufferWidth / backBufferHeight — mirror displayWidth /
+ *    backBufferWidth / backBufferHeight - mirror displayWidth /
  *    displayHeight for the host-side dirty-rect clip code in
  *    dsp_draw_context.mm (DSpInvalBackBufferRect).
  *    Populated from displayWidth / displayHeight at Reserve_Core +
@@ -356,28 +356,28 @@ enum {
  *    exact when the struct is byte-serialized.
  *
  *  filler1 (offset 50, UInt16) from the pre-correction layout no longer
- *  exists — under the PDF-exact layout that storage belongs to filler[3]
+ *  exists - under the PDF-exact layout that storage belongs to filler[3]
  *  (+52..+54) + gameMustConfirmSwitch (+55) + reserved3 padding. Any code
  *  that wrote `.filler1 = 0` should be migrated to set the appropriate
  *  fields (gameMustConfirmSwitch = 0 + reserved3 = 0).
  */
 typedef struct DSpContextAttributes {
-	uint32_t  frequency;              /* Offset 0  (4 bytes, Fixed) — Input ignored per PDF p.66; output 0 if unavailable */
-	uint32_t  displayWidth;           /* Offset 4  (4, UInt32) — display width in pixels */
-	uint32_t  displayHeight;          /* Offset 8  (4, UInt32) — display height in pixels */
-	uint32_t  reserved1;              /* Offset 12 (4) — Always 0 */
-	uint32_t  reserved2;              /* Offset 16 (4) — Always 0 */
-	uint32_t  colorNeeds;             /* Offset 20 (4) — kDSpColorNeeds_{DontCare=0,Request=1,Require=2} */
-	uint32_t  colorTable;             /* Offset 24 (4, CTabHandle) — 0 for direct modes, output ignored per PDF p.66 */
-	uint32_t  contextOptions;         /* Offset 28 (4, OptionBits) — bit-or kDSpContextOption_* */
-	uint32_t  backBufferDepthMask;    /* Offset 32 (4, OptionBits) — kDSpDepthMask_* */
-	uint32_t  displayDepthMask;       /* Offset 36 (4, OptionBits) — kDSpDepthMask_* */
-	uint32_t  backBufferBestDepth;    /* Offset 40 (4, UInt32) — raw depth (1/2/4/8/16/32) */
-	uint32_t  displayBestDepth;       /* Offset 44 (4, UInt32) — raw depth */
-	uint32_t  pageCount;              /* Offset 48 (4, UInt32) — 1/2/3 video pages */
-	uint32_t  gameMustConfirmSwitch;  /* Offset 55 (1, Boolean on-wire; widened in-struct) — output-only; PDF p.67 */
-	uint32_t  reserved3[4];           /* Offset 56..71 (16, UInt32[4]) — PDF trailer reserved; Always 0 */
-	/* --- host-only fields below — NOT on the wire, NOT read / written
+	uint32_t  frequency;              /* Offset 0  (4 bytes, Fixed) - Input ignored per PDF p.66; output 0 if unavailable */
+	uint32_t  displayWidth;           /* Offset 4  (4, UInt32) - display width in pixels */
+	uint32_t  displayHeight;          /* Offset 8  (4, UInt32) - display height in pixels */
+	uint32_t  reserved1;              /* Offset 12 (4) - Always 0 */
+	uint32_t  reserved2;              /* Offset 16 (4) - Always 0 */
+	uint32_t  colorNeeds;             /* Offset 20 (4) - kDSpColorNeeds_{DontCare=0,Request=1,Require=2} */
+	uint32_t  colorTable;             /* Offset 24 (4, CTabHandle) - 0 for direct modes, output ignored per PDF p.66 */
+	uint32_t  contextOptions;         /* Offset 28 (4, OptionBits) - bit-or kDSpContextOption_* */
+	uint32_t  backBufferDepthMask;    /* Offset 32 (4, OptionBits) - kDSpDepthMask_* */
+	uint32_t  displayDepthMask;       /* Offset 36 (4, OptionBits) - kDSpDepthMask_* */
+	uint32_t  backBufferBestDepth;    /* Offset 40 (4, UInt32) - raw depth (1/2/4/8/16/32) */
+	uint32_t  displayBestDepth;       /* Offset 44 (4, UInt32) - raw depth */
+	uint32_t  pageCount;              /* Offset 48 (4, UInt32) - 1/2/3 video pages */
+	uint32_t  gameMustConfirmSwitch;  /* Offset 55 (1, Boolean on-wire; widened in-struct) - output-only; PDF p.67 */
+	uint32_t  reserved3[4];           /* Offset 56..71 (16, UInt32[4]) - PDF trailer reserved; Always 0 */
+	/* --- host-only fields below - NOT on the wire, NOT read / written
 	 *     via ReadMacInt / WriteMacInt. Populated from displayWidth /
 	 *     displayHeight at Reserve_Core + mode-cache builder time. */
 	uint32_t  backBufferWidth;        /* host-only mirror of displayWidth for dirty-rect clip */
@@ -396,8 +396,8 @@ typedef struct DSpContextAttributes {
  *  on-wire encoding.
  *
  *  DSpBufferKind (PDF p.50): the kind selector DSpAltBuffer_GetCGrafPtr
- *  takes. DSp 1.7 documents exactly ONE supported kind — kDSpBufferKind_
- *  Normal — and the handler returns kDSpInvalidAttributesErr for any other
+ *  takes. DSp 1.7 documents exactly ONE supported kind - kDSpBufferKind_
+ *  Normal - and the handler returns kDSpInvalidAttributesErr for any other
  *  value.
  */
 enum DSpBufferKind {
@@ -421,10 +421,10 @@ enum DSpAltBufferOption {
  *  Stored as uint32_t in-struct per the widening rule.
  */
 struct DSpAltBufferAttributes {
-	uint32_t  width;        /* Offset 0  (4, UInt32) — alt-buffer width in pixels */
-	uint32_t  height;       /* Offset 4  (4, UInt32) — alt-buffer height in pixels */
-	uint32_t  options;      /* Offset 8  (4, OptionBits) — bit-or DSpAltBufferOption */
-	uint32_t  reserved[4];  /* Offset 12..27 (16, UInt32[4]) — PDF trailer reserved; Always 0 */
+	uint32_t  width;        /* Offset 0  (4, UInt32) - alt-buffer width in pixels */
+	uint32_t  height;       /* Offset 4  (4, UInt32) - alt-buffer height in pixels */
+	uint32_t  options;      /* Offset 8  (4, OptionBits) - bit-or DSpAltBufferOption */
+	uint32_t  reserved[4];  /* Offset 12..27 (16, UInt32[4]) - PDF trailer reserved; Always 0 */
 };
 
 /*
@@ -432,7 +432,7 @@ struct DSpAltBufferAttributes {
  *
  *  DSpBlitMode (PDF p.87): the transfer-mode bit field carried in
  *  DSpBlitInfo.mode. The Interpolation bit selects filtered (bilinear) vs
- *  nearest-neighbor scaling for DSpBlit_Faster — ABSENT means
+ *  nearest-neighbor scaling for DSpBlit_Faster - ABSENT means
  *  nearest-neighbor. SrcKey / DstKey enable per-pixel color-key transparency
  *  (skip src pixels matching srcKey; skip overwriting dst pixels matching
  *  dstKey). These bit values match the DSp 1.7 spec verbatim and must not be
@@ -448,7 +448,7 @@ enum DSpBlitMode {
 /*
  *  DSpBlitInfo on-wire field offsets (PDF p.68-69, big-endian guest layout,
  *  68 bytes total). The DSpBlit_* handlers read the guest blob field-by-field
- *  via ReadMacInt8/16/32 at these fixed offsets — there is intentionally NO
+ *  via ReadMacInt8/16/32 at these fixed offsets - there is intentionally NO
  *  host struct cast of the guest blob (the same precedent as DSP_CGP_OFF_* /
  *  DSP_PIXMAP_OFF_* for the CGrafPort: read the wire layout directly, never
  *  reinterpret-cast a host struct over big-endian guest memory).
@@ -489,11 +489,11 @@ enum DSpBlitMode {
  *  DSpContext_Flatten "converts a context into a format suitable for saving to
  *  disk" (PDF p.23); GetFlattenedSize "determines how much memory is required"
  *  (p.23); Restore reads it back. CRITICAL ordering (PDF p.22): Flatten is
- *  called BEFORE the context's play state goes Active — so the back-buffer
+ *  called BEFORE the context's play state goes Active - so the back-buffer
  *  Metal resources do NOT exist yet and MUST NOT be serialized.
  *  Restore "has a high probability of failure" (p.22), so returning
  *  kDSpContextNotFoundErr on a magic/version/no-display-match is a documented,
- *  valid outcome — NOT an error to mask.
+ *  valid outcome - NOT an error to mask.
  *
  *  On iOS the SAME emulator Flattens->disk->Restores its own blob (no second
  *  consumer of the byte layout exists), so a magic+version-headed
@@ -503,9 +503,9 @@ enum DSpBlitMode {
  *  Serialized subset:
  *    +0   u32 magic   ('DSpF' / 0x44537046)
  *    +4   u32 version (DSP_FLAT_VERSION)
- *    +8   u32 size    (DSP_FLAT_SIZE — the total flattened byte count)
+ *    +8   u32 size    (DSP_FLAT_SIZE - the total flattened byte count)
  *    +12  the 12 meaningful DSpContextAttributes UInt32 fields (the Reserve-
- *         relevant subset; frequency/reserved/filler are NOT round-tripped —
+ *         relevant subset; frequency/reserved/filler are NOT round-tripped -
  *         Restore re-derives them via Reserve)
  *    +56  u32 max_frame_rate
  *    +60  u32 dirty_grid_w
@@ -519,7 +519,7 @@ enum DSpBlitMode {
 
 /* On-wire offsets for the flattened format. The 12 attr fields mirror the
  * Reserve-relevant subset of the PDF-p.65 attr layout (frequency/reserved/
- * filler are NOT round-tripped — Restore re-derives them via Reserve). */
+ * filler are NOT round-tripped - Restore re-derives them via Reserve). */
 #define DSP_FLAT_OFF_magic                0   /* u32 */
 #define DSP_FLAT_OFF_version              4   /* u32 */
 #define DSP_FLAT_OFF_size                 8   /* u32 */
@@ -584,7 +584,7 @@ extern void DSpInstallHooks(void);
  *  the DSp install sweep has had all 3 chances to resolve late-bound CFM
  *  symbols. Without this gate the accRun action gets disabled as soon as
  *  RaveIsRegistered() returns true, which pinned DSpInstallHooks to a single
- *  attempt — masking the late-CFM-binding case.
+ *  attempt - masking the late-CFM-binding case.
  *
  *  Idempotent + thread-safe under the emul-thread single-writer model
  *  (sony.cpp's accRun is invoked on the emul thread via the same trap
@@ -605,7 +605,7 @@ extern void DSpThunksInit(void);
  *  NATIVE_DSP_DISPATCH opcode. Signature mirrors RaveDispatch and
  *  GLDispatch: r3-r8 carry the function's raw register state. DSpDispatch
  *  reads the SUB-OPCODE from dsp_scratch_addr (written by the PPC TVECT
- *  thunk's `stw r12, 0(r11)`), NOT from r3 — r3 carries the guest's first
+ *  thunk's `stw r12, 0(r11)`), NOT from r3 - r3 carries the guest's first
  *  real function argument (e.g., ctxRef). This contract was locked in by the
  *  sims-dsp-subop-mismatch regression. Returns the value to be written back
  *  to PPC gpr(3).
@@ -628,7 +628,7 @@ extern uint32_t DSpGetVersionHandler(uint32_t outVersionAddr);
 }
 #endif
 
-/* Scratch word Mac address — used to pass sub-opcode from the PPC TVECT
+/* Scratch word Mac address - used to pass sub-opcode from the PPC TVECT
  * thunk (via `stw r12, 0(r11)`) to native DSpDispatch (via
  * `ReadMacInt32(dsp_scratch_addr)`). Mirrors `rave_scratch_addr` in
  * rave_engine.h. Populated at boot by DSpThunksInit. The sims-dsp-subop-

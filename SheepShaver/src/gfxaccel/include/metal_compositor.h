@@ -133,12 +133,12 @@ extern "C" {
 
 /*
  * Depth values correspond to VIDEO_DEPTH_* constants from video_blit.h:
- *   VIDEO_DEPTH_1BIT  — 1-bit indexed (2 colors)
- *   VIDEO_DEPTH_2BIT  — 2-bit indexed (4 colors)
- *   VIDEO_DEPTH_4BIT  — 4-bit indexed (16 colors)
- *   VIDEO_DEPTH_8BIT  — 8-bit indexed (256 colors)
- *   VIDEO_DEPTH_16BIT — 16-bit direct (xRGB1555 big-endian)
- *   VIDEO_DEPTH_32BIT — 32-bit direct (BGRA8)
+ *   VIDEO_DEPTH_1BIT  - 1-bit indexed (2 colors)
+ *   VIDEO_DEPTH_2BIT  - 2-bit indexed (4 colors)
+ *   VIDEO_DEPTH_4BIT  - 4-bit indexed (16 colors)
+ *   VIDEO_DEPTH_8BIT  - 8-bit indexed (256 colors)
+ *   VIDEO_DEPTH_16BIT - 16-bit direct (xRGB1555 big-endian)
+ *   VIDEO_DEPTH_32BIT - 32-bit direct (BGRA8)
  */
 
 /*
@@ -195,19 +195,19 @@ void MetalCompositorShutdown(void);
 /*
  * Resize the Metal compositor for a resolution/depth mode switch.
  *
- * Rebuilds only the depth-dependent resources — buffer, texture, pipeline,
- * palette, and sampler — while keeping the view, layer, device, and queue
+ * Rebuilds only the depth-dependent resources - buffer, texture, pipeline,
+ * palette, and sampler - while keeping the view, layer, device, and queue
  * alive. This avoids the visual flash and UIView lifecycle overhead from a
- * full Shutdown→Init cycle. Per-engine overlay textures are managed by
+ * full Shutdown->Init cycle. Per-engine overlay textures are managed by
  * gfxaccel_resources and are re-vended by each engine in its own
  * on_mode_enter / on_mode_exit handlers.
  *
- * Threading: called from the PPC emulation thread with interrupts disabled —
+ * Threading: called from the PPC emulation thread with interrupts disabled -
  * no MetalCompositorPresent() calls can fire during resize. UIView operations
  * must NOT happen here (which is why the view stays alive).
  *
  * Precondition: compositor must already be initialized (via MetalCompositorInit).
- * If not, returns -1 and logs an error — caller should use Init instead.
+ * If not, returns -1 and logs an error - caller should use Init instead.
  *
  * Parameters: same as MetalCompositorInit.
  *
@@ -345,17 +345,17 @@ void *MetalCompositorGetLayer(void);
  *
  * Returns the compositor-owned 2D framebuffer texture as void*
  * (id<MTLTexture>; caller bridge-casts). This is the MTLTexture view over
- * the_buffer that MetalCompositorPresent samples as fragment input — DSp
+ * the_buffer that MetalCompositorPresent samples as fragment input - DSp
  * SwapBuffers blits its private back_texture into this texture directly; its
  * kLayerSlotFramebuffer SubmitFrame descriptor is accepted but ignored in
  * production.
  * Returns NULL if the compositor has not been
  * successfully initialized. The caller must NOT retain/release the
- * returned handle — it is owned by the compositor for the lifetime of
+ * returned handle - it is owned by the compositor for the lifetime of
  * the current video mode.
  *
  * The compositor-blindness invariant is unchanged: this accessor
- * does not reference DSp — it is the same framebuffer texture handle
+ * does not reference DSp - it is the same framebuffer texture handle
  * the compositor already uses internally, exposed for zero-copy blit
  * encoding from outside the .mm. NQD already writes into the backing
  * MTLBuffer via the shared-memory path; DSp instead writes into the
@@ -411,17 +411,17 @@ void *MetalCompositorGetGammaIdentityBuffer(void);
  * Present-rect cache for the absolute-cursor letterbox map.
  *
  * The cursor map in video_sdl2.cpp must map the finger/pointer into the same
- * rectangle the compositor draws into — compositor_view's bounds, which on Mac
+ * rectangle the compositor draws into - compositor_view's bounds, which on Mac
  * Catalyst are pinned to the superview's safe area (NOT the full window) and
  * shift when the menu bar shows/hides on a refocus. Reading uiWindow.bounds or
  * SDL_GetWindowSize instead makes the cursor and image disagree after a
  * refocus, so the cursor can't reach the full emulated desktop.
  *
  * MetalCompositorRefreshPresentRect reads the view rect (in window coordinates,
- * the space SDL mouse events use — origin folds in the safe-area inset) and
+ * the space SDL mouse events use - origin folds in the safe-area inset) and
  * caches it; it is a no-op unless called on the main thread (pumped from
  * on_sdl_event_generated). MetalCompositorGetPresentRect returns the last cached
- * rect from any thread (size 0 before the first refresh — caller should fall
+ * rect from any thread (size 0 before the first refresh - caller should fall
  * back to an identity map).
  */
 void MetalCompositorRefreshPresentRect(void);

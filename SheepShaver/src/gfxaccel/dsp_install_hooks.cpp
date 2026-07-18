@@ -8,7 +8,7 @@
  *
  *  GL pattern (NOT RAVE): overwrite the first 4 PPC instructions at each
  *  resolved TVECT's orig_code with a branch into dsp_method_tvects[subop];
- *  we ARE DrawSprocket — no chain-to-original trampoline needed.
+ *  we ARE DrawSprocket - no chain-to-original trampoline needed.
  */
 
 #include "sysdeps.h"
@@ -25,7 +25,7 @@
 /*
  *  dsp_method_tvects[] is defined in dsp_thunks.cpp (indices 0/1/2 and
  *  100..600 are populated there). dsp_engine.h does not
- *  currently export this table, so declare it here as extern — mirrors the
+ *  currently export this table, so declare it here as extern - mirrors the
  *  gl_method_tvects convention in gl_engine.cpp.
  */
 extern uint32_t dsp_method_tvects[DSP_MAX_SUBOPCODE];
@@ -38,15 +38,15 @@ static const int DSP_HOOKS_MAX_ATTEMPTS = 3;
 
 /*
  *  Symbol-to-sub-opcode mapping table.
- *  53 rows — the canonical DrawSprocketLib PEF export-set ground truth.
+ *  53 rows - the canonical DrawSprocketLib PEF export-set ground truth.
  *  Five non-canonical rows (DSpContext_SetGamma, DSpContext_GetGamma,
  *  DSpContext_GetVBLCount, DSpContext_BlankFill, DSpContext_ProcessEvent) are
- *  deliberately NOT in the table — they are proven ABSENT from the canonical
+ *  deliberately NOT in the table - they are proven ABSENT from the canonical
  *  binary by the offline PEF parse. The 53-row set matches the 53 exports
  *  extracted offline from resources/DrawSprocketLib.
  *
  *  Sub-opcode 503 (DSpContext_GetVBLProc) remains OMITTED (internal
- *  round-trip affordance, NOT a real DSp 1.7 PEF export — dsp_engine.h
+ *  round-trip affordance, NOT a real DSp 1.7 PEF export - dsp_engine.h
  *  documents the rationale; it is also absent from the canonical export
  *  set).
  *
@@ -91,7 +91,7 @@ static const DSpInstallSymbol dsp_install_symbols[] = {
 	{ "\031DSpContext_GetCLUTEntries",       kDSpContext_GetCLUTEntries,       "DSpContext_GetCLUTEntries" },
 
 	// Sub-opcodes 402-404: Gamma + Fade (DSp 1.7 PDF pp.80-84)
-	// DSpContext_SetGamma (400) + DSpContext_GetGamma (401) DROPPED — proven
+	// DSpContext_SetGamma (400) + DSpContext_GetGamma (401) DROPPED - proven
 	// ABSENT from the canonical DrawSprocketLib PEF export table (offline
 	// parse). They were never DSp 1.7 exports at all.
 	{ "\026DSpContext_FadeGammaIn",          kDSpContext_FadeGammaIn,          "DSpContext_FadeGammaIn" },
@@ -99,15 +99,15 @@ static const DSpInstallSymbol dsp_install_symbols[] = {
 	{ "\024DSpContext_FadeGamma",            kDSpContext_FadeGamma,            "DSpContext_FadeGamma" },
 
 	// Sub-opcode 500: VBL service (DSp 1.7 PDF p.81)
-	// NOTE: sub-opcode 503 (DSpContext_GetVBLProc) OMITTED — internal test-support
+	// NOTE: sub-opcode 503 (DSpContext_GetVBLProc) OMITTED - internal test-support
 	// affordance per dsp_engine.h (not a PEF export).
-	// DSpContext_GetVBLCount (501) + DSpContext_BlankFill (502) DROPPED — proven
+	// DSpContext_GetVBLCount (501) + DSpContext_BlankFill (502) DROPPED - proven
 	// ABSENT from the canonical DrawSprocketLib PEF export table (offline parse).
 	{ "\025DSpContext_SetVBLProc",           kDSpContext_SetVBLProc,           "DSpContext_SetVBLProc" },
 
 	// Sub-opcode 600: Events
 	// The non-canonical DSpContext_ProcessEvent (the SPSC-ring DEQUEUE
-	// direction) DROPPED — proven ABSENT from the canonical
+	// direction) DROPPED - proven ABSENT from the canonical
 	// DrawSprocketLib PEF export table. The real, canonical export is
 	// DSpProcessEvent (sub-opcode 750 below, the OPPOSITE direction: the app
 	// passes its event IN; DSp inspects for suspend/resume).
@@ -120,7 +120,7 @@ static const DSpInstallSymbol dsp_install_symbols[] = {
 	// export table extracted offline from resources/DrawSprocketLib.
 	// ----------------------------------------------------------------------
 
-	// Sub-opcodes 700-705: AltBuffers — underlay/overlay (PDF pp.48-53)
+	// Sub-opcodes 700-705: AltBuffers - underlay/overlay (PDF pp.48-53)
 	{ "\020DSpAltBuffer_New",                kDSpAltBuffer_New,                "DSpAltBuffer_New" },
 	{ "\024DSpAltBuffer_Dispose",            kDSpAltBuffer_Dispose,            "DSpAltBuffer_Dispose" },
 	{ "\030DSpAltBuffer_GetCGrafPtr",        kDSpAltBuffer_GetCGrafPtr,        "DSpAltBuffer_GetCGrafPtr" },
@@ -160,7 +160,7 @@ static const DSpInstallSymbol dsp_install_symbols[] = {
 	{ "\027DSpCanUserSelectContext",         kDSpCanUserSelectContext,         "DSpCanUserSelectContext" },
 	{ "\024DSpUserSelectContext",            kDSpUserSelectContext,            "DSpUserSelectContext" },
 
-	// Sub-opcode 750: canonical DSpProcessEvent (PDF p.58) — replaces
+	// Sub-opcode 750: canonical DSpProcessEvent (PDF p.58) - replaces
 	// the dropped non-canonical 600 dequeue handler.
 	{ "\017DSpProcessEvent",                 kDSpProcessEvent,                 "DSpProcessEvent" },
 
@@ -169,10 +169,10 @@ static const DSpInstallSymbol dsp_install_symbols[] = {
 	{ "\017DSpSetDebugMode",                 kDSpSetDebugMode,                 "DSpSetDebugMode" },
 };
 static const int num_dsp_symbols = sizeof(dsp_install_symbols) / sizeof(dsp_install_symbols[0]);
-// num_dsp_symbols MUST == 53 — the canonical DrawSprocketLib PEF export count.
+// num_dsp_symbols MUST == 53 - the canonical DrawSprocketLib PEF export count.
 
 /*
- *  dsp_install_patch_one — per-symbol 4-instruction PPC overwrite + FlushCodeCache.
+ *  dsp_install_patch_one - per-symbol 4-instruction PPC overwrite + FlushCodeCache.
  *  Extracted from the inner patch loop so the patch mechanics are
  *  exercisable in isolation from the export-table walk.
  *
@@ -219,7 +219,7 @@ static int dsp_install_patch_one(uint32_t orig_tvect, uint32_t hook_tvect, const
 }
 
 /*
- *  DSpInstallHooks — public entry point.
+ *  DSpInstallHooks - public entry point.
  *
  *  Called from gfxaccel.cpp:VideoInstallAccel() inside the existing
  *  `if (PrefsFindBool("dspaccel"))` block.
@@ -239,7 +239,7 @@ static int dsp_install_patch_one(uint32_t orig_tvect, uint32_t hook_tvect, const
  *  resolve on later attempts). The diagnostic-begin log line is tagged with the
  *  attempt number so attempts are distinguishable in the captured log.
  *  After DSP_HOOKS_MAX_ATTEMPTS with partial success, a FINAL PARTIAL
- *  COMMIT fires (avoid permanent install-spin) — installed=true with a
+ *  COMMIT fires (avoid permanent install-spin) - installed=true with a
  *  loud diagnostic.
  */
 void DSpInstallHooks(void)
@@ -277,7 +277,7 @@ void DSpInstallHooks(void)
 	}
 
 	if (dsp_lib == NULL) {
-		// No candidate resolved — fragment not loaded yet (or mis-named).
+		// No candidate resolved - fragment not loaded yet (or mis-named).
 		// Fall through to the retry-accounting block below (patched_count = 0).
 		DSP_LOG("DSpInstallHooks: no DrawSprocketLib candidate resolved on this attempt");
 	}
@@ -294,8 +294,8 @@ void DSpInstallHooks(void)
 	// ---- First pass: resolve all symbols (CFM re-entrancy mitigation) ----
 	//
 	// Per-row diagnostic log. Emits three data
-	// points per dsp_install_symbols[] entry — pascal_len_octal,
-	// strlen(pascal_sym+1), strlen(name) — cross-referenced against
+	// points per dsp_install_symbols[] entry - pascal_len_octal,
+	// strlen(pascal_sym+1), strlen(name) - cross-referenced against
 	// FindLibSymbol. Surfaces the true root cause of any resolve shortfall
 	// without guessing.
 	//
@@ -304,7 +304,7 @@ void DSpInstallHooks(void)
 	// The diagnostic-begin log line carries the attempt number
 	// so per-attempt diagnostic blocks are distinguishable in the captured log.
 	if (dsp_lib != NULL) {
-		DSP_LOG("DSpInstallHooks: unresolved-symbol-diagnostic begin — ATTEMPT %d / %d "
+		DSP_LOG("DSpInstallHooks: unresolved-symbol-diagnostic begin - ATTEMPT %d / %d "
 		        "(candidate lib = \"%s\")",
 		        attempt_number, DSP_HOOKS_MAX_ATTEMPTS, dsp_lib + 1);
 		int length_mismatches = 0;
@@ -332,7 +332,7 @@ void DSpInstallHooks(void)
 				not_found_count++;
 			}
 		}
-		DSP_LOG("DSpInstallHooks: unresolved-symbol-diagnostic end — ATTEMPT %d / %d "
+		DSP_LOG("DSpInstallHooks: unresolved-symbol-diagnostic end - ATTEMPT %d / %d "
 		        "(%d / %d resolved; %d length mismatches)",
 		        attempt_number, DSP_HOOKS_MAX_ATTEMPTS,
 		        found_count, num_dsp_symbols, length_mismatches);
@@ -345,7 +345,7 @@ void DSpInstallHooks(void)
 		patched_count += dsp_install_patch_one(cached_tvects[i].tvect, hook_tvect, cached_tvects[i].name);
 	}
 
-	DSP_LOG("DSpInstallHooks: ATTEMPT %d / %d — patched %d functions total "
+	DSP_LOG("DSpInstallHooks: ATTEMPT %d / %d - patched %d functions total "
 	        "(target = %d)",
 	        attempt_number, DSP_HOOKS_MAX_ATTEMPTS, patched_count, num_dsp_symbols);
 
@@ -355,20 +355,20 @@ void DSpInstallHooks(void)
 	// `patched_count > 0`) gives these semantics:
 	//
 	//   (a) FULL SUCCESS: patched_count == num_dsp_symbols
-	//       → installed = true, done.
+	//       -> installed = true, done.
 	//
 	//   (b) PARTIAL SUCCESS, attempts remain (attempts+1 < MAX):
-	//       → do NOT flip installed; bump attempts; next accRun tick re-runs
+	//       -> do NOT flip installed; bump attempts; next accRun tick re-runs
 	//         the resolve sweep so a late-bound CFM symbol can be picked up.
 	//
 	//   (c) FINAL PARTIAL COMMIT, attempts exhausted (attempts+1 == MAX) AND
 	//       patched_count > 0:
-	//       → installed = true (avoid permanent install-spin / per-tick diagnostic
+	//       -> installed = true (avoid permanent install-spin / per-tick diagnostic
 	//         flood). Log loudly. This is the steady-state if some missing
 	//         symbols genuinely don't exist in this variant's CFM container.
 	//
 	//   (d) NO PROGRESS (patched_count == 0): existing retry-accounting block
-	//       — fragment not loaded yet, bump attempts, retry next tick, give up
+	//       - fragment not loaded yet, bump attempts, retry next tick, give up
 	//       after MAX_ATTEMPTS without committing.
 	//
 	// This distinguishes a variant that doesn't export some symbols (partial
@@ -379,16 +379,16 @@ void DSpInstallHooks(void)
 	if (patched_count == num_dsp_symbols) {
 		// (a) Full success.
 		dsp_hooks_installed = true;
-		DSP_LOG("DSpInstallHooks: FULL SUCCESS — all %d symbols patched on attempt %d",
+		DSP_LOG("DSpInstallHooks: FULL SUCCESS - all %d symbols patched on attempt %d",
 		        num_dsp_symbols, attempt_number);
 	} else if (patched_count > 0) {
 		dsp_hooks_attempts++;
 		if (dsp_hooks_attempts >= DSP_HOOKS_MAX_ATTEMPTS) {
-			// (c) Final partial commit — attempts exhausted but we did
+			// (c) Final partial commit - attempts exhausted but we did
 			// patch something. Stop retrying to avoid per-tick diagnostic
 			// flood; report the unresolved symbol set loudly.
 			dsp_hooks_installed = true;
-			DSP_LOG("DSpInstallHooks: FINAL PARTIAL COMMIT after %d attempts — "
+			DSP_LOG("DSpInstallHooks: FINAL PARTIAL COMMIT after %d attempts - "
 			        "%d / %d symbols patched; %d symbols unresolved (see diagnostics). "
 			        "Committing installed=true to avoid install-spin.",
 			        dsp_hooks_attempts, patched_count, num_dsp_symbols,
@@ -396,13 +396,13 @@ void DSpInstallHooks(void)
 		} else {
 			// (b) Partial success, attempts remain. Do not commit; next
 			// accRun tick will re-run the resolve sweep.
-			DSP_LOG("DSpInstallHooks: PARTIAL SUCCESS — %d / %d symbols patched "
+			DSP_LOG("DSpInstallHooks: PARTIAL SUCCESS - %d / %d symbols patched "
 			        "on attempt %d, will retry (attempt %d/%d next tick)",
 			        patched_count, num_dsp_symbols, attempt_number,
 			        dsp_hooks_attempts + 1, DSP_HOOKS_MAX_ATTEMPTS);
 		}
 	} else {
-		// (d) No progress this attempt — fragment not loaded yet, or all
+		// (d) No progress this attempt - fragment not loaded yet, or all
 		// orig_code derefs are still zero. Existing retry-accounting.
 		dsp_hooks_attempts++;
 		if (dsp_hooks_attempts >= DSP_HOOKS_MAX_ATTEMPTS)
@@ -418,7 +418,7 @@ void DSpInstallHooks(void)
  *  DSpInstallHooksSweepComplete - public probe for sony.cpp's accRun gate.
  *
  *  Returns true once the install sweep
- *  has reached a terminal state — either:
+ *  has reached a terminal state - either:
  *    - dsp_hooks_installed (FULL SUCCESS branch (a) OR FINAL PARTIAL
  *      COMMIT branch (c) flipped installed = true), or
  *    - dsp_hooks_attempts >= MAX_ATTEMPTS (no-progress branch (d)
@@ -430,7 +430,7 @@ void DSpInstallHooks(void)
  *  remain) a chance to fire on subsequent ticks.
  *
  *  Single-reader (sony.cpp on the emul thread) / single-writer
- *  (DSpInstallHooks on the same emul thread) — no concurrency primitives
+ *  (DSpInstallHooks on the same emul thread) - no concurrency primitives
  *  required.
  */
 bool DSpInstallHooksSweepComplete(void)

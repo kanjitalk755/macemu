@@ -1,4 +1,4 @@
-﻿#include "sysdeps.h"
+#include "sysdeps.h"
 #include "cpu_emulation.h"
 #include "gl_engine.h"
 #include "metal_compositor.h"
@@ -431,7 +431,7 @@ extern "C" uint64_t GLCompositeLatestOffscreenToGuestSurfaceUsingLatestExtentIfN
 }
 extern "C" bool NQDReadMainDevicePixMapForGLBridge(uint32_t *base, int32_t *rb, int32_t *l, int32_t *t, int32_t *r, uint32_t *ps)
 {
-  /* MainDevice gdPMap chain — same lowmem as NQD OpColor path */
+  /* MainDevice gdPMap chain - same lowmem as NQD OpColor path */
   uint32 gdevH = ReadMacInt32(0x8A4);
   if(!gdevH) return false;
   uint32 gdev = ReadMacInt32(gdevH);

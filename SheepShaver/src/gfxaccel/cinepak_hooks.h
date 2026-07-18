@@ -13,7 +13,7 @@ extern "C" {
 /* Install first-instruction hooks on InterfaceLib's OpenDefaultComponent and
  * FindNextComponent. When any caller (QuickTime's ICM included) searches for
  * an image decompressor, the hook registers our native 'imdc'/'cvid'
- * component just-in-time — newest registration is found first — then calls
+ * component just-in-time - newest registration is found first - then calls
  * the real function. Once registered, both hooks restore themselves.
  * Called from InitCallUniversalProc (same timing as the InterfaceLib
  * Microseconds patch). Idempotent. */

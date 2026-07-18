@@ -28,7 +28,7 @@
 #include <TargetConditionals.h>
 #endif
 #if TARGET_OS_MACCATALYST
-// Defined in PreferencesViewControllerObjC.mm — drains AppKit's NSEvent queue so
+// Defined in PreferencesViewControllerObjC.mm - drains AppKit's NSEvent queue so
 // UIKit input stays live while the emulator owns the main thread on Catalyst.
 extern "C" void catalyst_pump_appkit_events(void);
 #endif
@@ -970,7 +970,7 @@ sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip)
 	// Fault while guest PC is in Mac ROM/RAM/DR cache, OR in SheepMem.
 	// SheepMem holds native-op TVECTs (EMUL_OP trampolines). When a native
 	// handler (e.g. VideoDoDriverIO) faults via WriteMacInt32, guest PC is
-	// still the TVECT opcode address — without SheepMem here, ignoresegv
+	// still the TVECT opcode address - without SheepMem here, ignoresegv
 	// never applies and boot dies on the first unmapped guest store.
 	bool mac_fault = (pc >= ROMBase && pc < (ROMBase + ROM_AREA_SIZE))
 		|| (pc >= RAMBase && pc < (RAMBase + RAMSize))
@@ -1446,7 +1446,7 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 		 * NATIVE_MICROSECONDS is FN=1: execute_sheep does pc() = lr() right
 		 * after this returns. AudioServicePendingInterrupt may run a source's
 		 * moreRtn via Execute68k (nested guest execution), which clobbers
-		 * lr/ctr and the stack — without save/restore the FN=1 return lands on
+		 * lr/ctr and the stack - without save/restore the FN=1 return lands on
 		 * a garbage PC (observed: illegal 'mfsr' 0x7c0004a6 mid-movie). Mirror
 		 * the RAVE/GL/DSp/Cinepak dispatch guard.
 		 *
@@ -1522,22 +1522,22 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 
 		// Check all registers for corruption
 		if (lr() != saved_lr) {
-			printf("RAVE: LR CORRUPTED during native op! was 0x%08x, now 0x%08x — restoring\n",
+			printf("RAVE: LR CORRUPTED during native op! was 0x%08x, now 0x%08x - restoring\n",
 				   saved_lr, lr());
 			lr() = saved_lr;
 		}
 		if (ctr() != saved_ctr) {
-			printf("RAVE: CTR CORRUPTED during native op! was 0x%08x, now 0x%08x — restoring\n",
+			printf("RAVE: CTR CORRUPTED during native op! was 0x%08x, now 0x%08x - restoring\n",
 				   saved_ctr, ctr());
 			ctr() = saved_ctr;
 		}
 		if (gpr(1) != saved_sp) {
-			printf("RAVE: SP CORRUPTED during native op! was 0x%08x, now 0x%08x — restoring\n",
+			printf("RAVE: SP CORRUPTED during native op! was 0x%08x, now 0x%08x - restoring\n",
 				   saved_sp, gpr(1));
 			gpr(1) = saved_sp;
 		}
 		if (gpr(2) != saved_r2) {
-			printf("RAVE: R2(TOC) CORRUPTED during native op! was 0x%08x, now 0x%08x — restoring\n",
+			printf("RAVE: R2(TOC) CORRUPTED during native op! was 0x%08x, now 0x%08x - restoring\n",
 				   saved_r2, gpr(2));
 			gpr(2) = saved_r2;
 		}
@@ -1679,7 +1679,7 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 	#else
 			/* FN=1 first-instruction hooks: execute_sheep does pc() = lr() right
 			 * after this returns, and the handlers run call_macos (nested guest
-			 * execution) which clobbers LR/CTR — save/restore is mandatory or the
+			 * execution) which clobbers LR/CTR - save/restore is mandatory or the
 			 * return lands in the nested callee instead of the real caller. */
 			uint32 saved_lr = lr();
 			uint32 saved_ctr = ctr();

@@ -32,7 +32,7 @@
 #include "prefs.h"
 #include "cpu_emulation.h"
 #if defined(SHEEPSHAVER)
-#include "thunks.h"  /* SheepMem::Reserve — guest-addressable scratch */
+#include "thunks.h"  /* SheepMem::Reserve - guest-addressable scratch */
 #endif
 #include <ctype.h>
 

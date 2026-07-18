@@ -8,7 +8,7 @@
  *  the Free Software Foundation; either version 2 of the License, or
  *  (at your option) any later version.
  *
- *  Pure-C header. No Metal / Objective-C / Swift types — consumable from
+ *  Pure-C header. No Metal / Objective-C / Swift types - consumable from
  *  .cpp / .mm / Swift bridging header alike. Isolates the DSp engine's
  *  need to toggle UIApplication.shared.isIdleTimerDisabled behind a
  *  single C-linkage entry point; the Swift-side observer
@@ -32,7 +32,7 @@ extern "C" {
 /*
  *  Mark the DSp engine as holding an Active fullscreen context (true)
  *  or not (false). Called from DSpContext_SetStateHandler
- *  on Active/Paused/Inactive transitions — the handler computes
+ *  on Active/Paused/Inactive transitions - the handler computes
  *  "any DSp context Active AND fullscreen-mode" and calls this setter
  *  on the transition edge (fullscreen-only idle-timer
  *  suppression per DSp 1.7 spec p.88).
@@ -45,7 +45,7 @@ extern "C" {
  *  Threading: single-writer emul-thread (DSpContext_SetStateHandler
  *  always runs on emul thread) + single-reader
  *  main-thread (DSpIdleTimerService reads on foreground re-apply).
- *  The flag is stored as `_Atomic bool` with relaxed memory ordering —
+ *  The flag is stored as `_Atomic bool` with relaxed memory ordering -
  *  matches the single-word read-mostly cross-thread flag pattern
  *  (minimum primitive sufficient;
  *  no happens-before requirements beyond monotonic writes).

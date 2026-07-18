@@ -109,7 +109,7 @@ static inline bool GLMetalLatchedTexture2DSurvivesDisable(
 	/* Latch ONLY the trailing-draw pattern: enable -> specify -> disable with
 	 * NO draw in between (the pending draw arrives after the teardown). If a
 	 * draw already consumed the enable (serial advanced), the bracket was
-	 * well-formed and the disable is authoritative — latching past it leaks
+	 * well-formed and the disable is authoritative - latching past it leaks
 	 * the unit onto every later draw (Quake 3: world lightmap unit 1 glued
 	 * onto weapon/HUD/menu with a stale texcoord pointer, per-frame flicker). */
 	return completed_draw_serial == last_enable_draw_serial;

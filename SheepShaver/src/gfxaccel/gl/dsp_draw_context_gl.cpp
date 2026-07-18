@@ -251,7 +251,7 @@ int32_t DSpContext_SwapBuffersHandler(uint32_t ctxRef, uint32_t /*doneProc*/, ui
 {
 	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
 	if (!ctx || !ctx->back_buffer) return kDSpInternalErr;
-	/* Copy guest staging → host back buffer */
+	/* Copy guest staging -> host back buffer */
 	if (ctx->staging_mac_addr && ctx->staging_size) {
 		const uint32_t w = DSpContextBackBufferWidth(ctx);
 		const uint32_t h = DSpContextBackBufferHeight(ctx);
@@ -319,7 +319,7 @@ int32_t DSpContext_SetStateHandler(uint32_t ctxRef, uint32_t state)
 		dmc_record_gamma_change_with_lut(ctx->gamma_lut_persisted);
 		dmc_record_palette_change();
 		DSpRedirectMainDevicePixMap(ctx);
-		/* Fullscreen Active → host idle-timer suppression flag */
+		/* Fullscreen Active -> host idle-timer suppression flag */
 		bool any_fs = false;
 		for (auto &kv : s_ctx) {
 			if (kv.second && kv.second->state == (uint32_t)kDSpContextState_Active)
@@ -442,7 +442,7 @@ int32_t DSpGetCurrentContextHandler(uint32_t /*displayID*/, uint32_t outCtx) {
 int32_t DSpGetMouseHandler(uint32_t outGlobalPointAddr)
 {
 	if (!outGlobalPointAddr) return kDSpInternalErr;
-	/* Lowmem MTemp / Mouse at classic locations — 0x0828 is MTemp (Point) */
+	/* Lowmem MTemp / Mouse at classic locations - 0x0828 is MTemp (Point) */
 	int16 y = (int16)ReadMacInt16(0x0828);
 	int16 x = (int16)ReadMacInt16(0x082A);
 	WriteMacInt16(outGlobalPointAddr + 0, (uint16)y);
@@ -453,7 +453,7 @@ int32_t DSpContext_GlobalToLocalHandler(uint32_t ctxRef, uint32_t ioPoint)
 {
 	DSpContextPrivate *ctx = DSpGetContext(ctxRef);
 	if (!ctx || !ioPoint) return kDSpContextNotFoundErr;
-	/* Global mac coords → local: subtract context origin (0,0 for full-screen DSp) */
+	/* Global mac coords -> local: subtract context origin (0,0 for full-screen DSp) */
 	int16 y = (int16)ReadMacInt16(ioPoint + 0);
 	int16 x = (int16)ReadMacInt16(ioPoint + 2);
 	/* display is typically origin 0,0 */
@@ -507,7 +507,7 @@ int32_t DSpCanUserSelectContextHandler(uint32_t attrAddr, uint32_t outCanSelect)
 }
 int32_t DSpFindBestContextOnDisplayIDHandler(uint32_t attrAddr, uint32_t /*displayID*/, uint32_t outCtx)
 {
-	/* Single display — same as FindBestContext */
+	/* Single display - same as FindBestContext */
 	return DSpFindBestContextHandler(attrAddr, outCtx);
 }
 int32_t DSpUserSelectContextHandler(uint32_t attrAddr, uint32_t /*dialogID*/,
@@ -518,7 +518,7 @@ int32_t DSpUserSelectContextHandler(uint32_t attrAddr, uint32_t /*dialogID*/,
 }
 int32_t DSpSetBlankingColorHandler(uint32_t rgbColorAddr)
 {
-	/* RGBColor: 3× uint16 BE at +0/+2/+4 */
+	/* RGBColor: 3x uint16 BE at +0/+2/+4 */
 	uint8_t rgba[4] = { 0, 0, 0, 255 };
 	if (rgbColorAddr) {
 		rgba[0] = (uint8_t)(ReadMacInt16(rgbColorAddr + 0) >> 8);
@@ -636,7 +636,7 @@ int32_t DSpAltBuffer_GetCGrafPtrHandler(uint32_t altBuffer, uint32_t outCGraf, u
 	DSpAltBufferGL *rec = alt_get(altBuffer);
 	if (!rec) return kDSpInternalErr;
 	if (!rec->cgrafptr_mac) {
-		/* Compact 24-byte shim: baseAddr, rowBytes, bounds — enough for many games */
+		/* Compact 24-byte shim: baseAddr, rowBytes, bounds - enough for many games */
 		uint32 mac = Mac_sysalloc(32);
 		if (!mac) return kDSpInternalErr;
 		rec->cgrafptr_mac = mac;
@@ -648,7 +648,7 @@ int32_t DSpAltBuffer_GetCGrafPtrHandler(uint32_t altBuffer, uint32_t outCGraf, u
 		WriteMacInt16(mac + 12, (int16)rec->height);
 		WriteMacInt16(mac + 14, (int16)rec->width);
 	}
-	/* Sync guest staging → host backing before present paths read it */
+	/* Sync guest staging -> host backing before present paths read it */
 	if (rec->baseaddr_mac && rec->backing) {
 		uint8 *src = Mac2HostAddr(rec->baseaddr_mac);
 		if (src) std::memcpy(rec->backing, src, rec->baseaddr_size);
@@ -748,7 +748,7 @@ static bool dsp_resolve_blit_side(uint32_t cgrafptr, uint32_t rect_mac,
 	int16 bl = (int16)ReadMacInt16(pixmap + 8);
 	int16 bb = (int16)ReadMacInt16(pixmap + 10);
 	int16 br = (int16)ReadMacInt16(pixmap + 12);
-	/* pixelSize: compact shim @16, real PixMap @32 — try compact first */
+	/* pixelSize: compact shim @16, real PixMap @32 - try compact first */
 	uint16_t ps = (uint16_t)ReadMacInt16(pixmap + 16);
 	if (ps != 8 && ps != 16 && ps != 32)
 		ps = (uint16_t)ReadMacInt16(pixmap + 32);
@@ -1251,7 +1251,7 @@ void DSpVBLServiceCallback(void *, void *, double)
 }
 void DSpVBLBackgroundForegroundDrain(void)
 {
-	/* Desktop has no iOS background queue — no-op is correct when no pending bits. */
+	/* Desktop has no iOS background queue - no-op is correct when no pending bits. */
 }
 
 /* ---- MainDevice PixMap redirect (Metal DSpRedirectMainDevicePixMap parity) ---- */
@@ -1370,7 +1370,7 @@ extern "C" void DSpRestoreMainDevicePixMap(DSpContextPrivate *ctx)
 	ctx->saved_pixmap_valid = 0;
 }
 
-/* Host bridge — desktop: track Active fullscreen without iOS idle-timer */
+/* Host bridge - desktop: track Active fullscreen without iOS idle-timer */
 static bool s_dsp_active_fullscreen = false;
 extern "C" void DSpHostBridge_SetActiveFullscreen(bool active)
 {

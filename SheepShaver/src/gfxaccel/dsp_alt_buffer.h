@@ -44,7 +44,7 @@ struct DSpAltBufferRecord {
 	uint32_t              height;
 	uint32_t              options;             /* DSpAltBufferOption bits */
 	bool                  underlay_capable;    /* NULL inAttributes => true (PDF p.49) */
-	/* Dirty-rect union — same fields/semantics as DSpContextPrivate's
+	/* Dirty-rect union - same fields/semantics as DSpContextPrivate's
 	 * dirty_*; single-writer, no primitive. */
 	int16_t               dirty_left, dirty_top, dirty_right, dirty_bottom;
 	bool                  dirty_empty;

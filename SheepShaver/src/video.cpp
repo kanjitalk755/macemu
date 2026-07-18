@@ -298,7 +298,7 @@ static void publish_gamma_lut_to_display_controller(VidLocals *csSave)
 	}
 
 	int32_t err = dmc_record_driver_gamma_change(lut);
-	/* kDMCDriverGammaDeferred: a DSp fade is in progress — the fade's
+	/* kDMCDriverGammaDeferred: a DSp fade is in progress - the fade's
 	 * end-state push delivers this table, so do NOT pop it onto the
 	 * faded screen here. */
 	if (err == kDMCNoErr || err == kDMCErrNotInitialized) {

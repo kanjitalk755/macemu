@@ -353,7 +353,7 @@ void NQD_fillrect(uint32 p)
 /*
  *  Decline-to-software with GPU-batch flush.
  *
- *  Returning false hands the op to software QuickDraw immediately — but up
+ *  Returning false hands the op to software QuickDraw immediately - but up
  *  to NQD_BATCH_MAX GPU dispatches against Metal-mapped RAM may still be
  *  queued. Software QD would then read/write a surface (e.g. the
  *  desktop-picture cache GWorld) BEFORE the queued GPU work lands: the
@@ -510,12 +510,12 @@ bool NQD_bitblt_hook(uint32 p)
 		NQD_bitblt_rects_byte_aligned_for_depth(p, ReadMacInt32(p + acclSrcPixelSize))) {
 		const uint32 mode = ReadMacInt32(p + acclTransferMode);
 		// The colorizing Boolean SOURCE modes
-		// (1, 3-7 — srcOr/srcBic/notSrcCopy/notSrcOr/notSrcXor/notSrcBic) at a
+		// (1, 3-7 - srcOr/srcBic/notSrcCopy/notSrcOr/notSrcXor/notSrcBic) at a
 		// COLOUR depth (multi-bit source, acclSrcPixelSize >= 8) are the general
 		// multi-bit-colour-source-under-a-Boolean-op case, whose Color-QuickDraw
 		// semantics are defined only for 1-bit-style sources (rare/ill-defined
 		// for multi-bit colour sources per IWQD). Decline these to software
-		// QuickDraw rather than invent semantics — the Metal kernel's
+		// QuickDraw rather than invent semantics - the Metal kernel's
 		// colorize arm handles ONLY the 1-bit source (bits_per_pixel == 1) case.
 		// srcCopy (0) and srcXor (2) are depth-agnostic raw copy/bitwise ops and
 		// stay accelerated at every depth; arithmetic (32-39) and hilite (50) are
@@ -531,13 +531,13 @@ bool NQD_bitblt_hook(uint32 p)
 			// family diverts overlaps to the ordered CPU scratch path inside
 			// NQDMetalBitblt (NQD-02). Packed-depth Boolean and
 			// arithmetic/hilite (32-39, 50) overlaps have no ordered route on
-			// the accelerated path — decline them to software QuickDraw
+			// the accelerated path - decline them to software QuickDraw
 			// (DELIBERATE), which observes sequential source reads.
 			if ((src_px < 8 || mode >= 32) &&
 				NQDMetalBitbltSameSurfaceOverlap(p)) {
 				// Fall through to the CPU fallback / software QuickDraw.
 			} else {
-				// All accelerated transfer modes via Metal — no pre-check on
+				// All accelerated transfer modes via Metal - no pre-check on
 				// 0x018, 0x128, 0x130, 0x15c.
 				WriteMacInt32(p + acclDrawProc, NativeTVECT(NATIVE_NQD_BITBLT));
 				return true;
@@ -546,7 +546,7 @@ bool NQD_bitblt_hook(uint32 p)
 	}
 
 	// CPU fallback: srcCopy (mode 0) with matching pixel sizes >= 8
-	// Restore mask/clip guards — CPU memmove path can't handle masked or clipped blits.
+	// Restore mask/clip guards - CPU memmove path can't handle masked or clipped blits.
 	if (ReadMacInt32(p + 0x018) + ReadMacInt32(p + 0x128) == 0 &&
 		ReadMacInt32(p + 0x130) == 0 &&
 		ReadMacInt32(p + acclSrcPixelSize) >= 8 &&
@@ -570,7 +570,7 @@ bool NQD_unknown_hook(uint32 arg)
 	return false;
 }
 
-// Mask operation hooks — validate mask data and set draw procs
+// Mask operation hooks - validate mask data and set draw procs
 // Only accept when dest (and src for bltmask) are in Metal-mapped RAM,
 // since there is no CPU fallback for masked operations.
 bool NQD_bltmask_hook(uint32 arg)
@@ -816,7 +816,7 @@ void VideoInstallAccel(void)
 	if (PrefsFindBool("glaccel"))
 		GLInstallHooks();
 
-	// DSp (DrawSprocket) engine — fourth engine peer to NQD/RAVE/GL.
+	// DSp (DrawSprocket) engine - fourth engine peer to NQD/RAVE/GL.
 	// Gated on "dspaccel" prefs key (default true) so users
 	// can disable cleanly to isolate regressions. Both DSpInit and the install
 	// hook live in the SAME gated branch: DSpInit registers the engine +
@@ -824,7 +824,7 @@ void VideoInstallAccel(void)
 	// hook patches the emulated-PPC DrawSprocketLib CFM symbol-table entries
 	// to redirect into our dsp_method_tvects[] thunks. The installer has
 	// its own retry-guard triplet (dsp_hooks_installed + dsp_hooks_in_progress
-	// + dsp_hooks_attempts) and caps at DSP_HOOKS_MAX_ATTEMPTS=3 — mirrors
+	// + dsp_hooks_attempts) and caps at DSP_HOOKS_MAX_ATTEMPTS=3 - mirrors
 	// GLInstallHooks wired 3 lines above. The CFM fragment may not be loaded
 	// on the first accRun tick (apps lazy-load DrawSprocketLib), so
 	// VideoInstallAccel calls into this branch on every accRun tick until
@@ -839,7 +839,7 @@ void VideoInstallAccel(void)
 		// Register the native Cinepak ('imdc'/'cvid') decompressor. This runs in
 		// native-op context (VideoInstallAccel is invoked via
 		// NATIVE_VIDEO_INSTALL_ACCEL), where RegisterComponent's nested guest
-		// call is safe — unlike InitCallUniversalProc's EMUL_OP context.
+		// call is safe - unlike InitCallUniversalProc's EMUL_OP context.
 		// Idempotent + retried each accRun tick until the Component Manager is
 		// up, mirroring the DSp/RAVE late-binding pattern.
 		CinepakRegisterFromNative();

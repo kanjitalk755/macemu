@@ -252,7 +252,7 @@ endfunction()
 # Resolve CrossPlatform TUs the same way as other shared SheepShaver sources:
 # SheepShaver/src/CrossPlatform/<f> may be a text stub ("../../../BasiliskII/...")
 # or a real override. Never compile a stale full copy the IDE shows while the
-# build silently uses BasiliskII — resolve_path picks the real file.
+# build silently uses BasiliskII - resolve_path picks the real file.
 function(macemu_xplat_sources_resolved ss_src b2_src outvar)
   set(srcs)
   foreach(f vm_alloc.cpp sigsegv.cpp video_blit.cpp)
@@ -263,7 +263,7 @@ function(macemu_xplat_sources_resolved ss_src b2_src outvar)
 endfunction()
 
 # Warn (or fail) when a SheepShaver path looks like a full source file while the
-# build actually compiles the BasiliskII twin — classic "MSVC didn't pick up my
+# build actually compiles the BasiliskII twin - classic "MSVC didn't pick up my
 # edit" trap (text stubs are OK; large non-stub files are not).
 function(macemu_check_shared_source_traps ss_src b2_src)
   set(_trap_files

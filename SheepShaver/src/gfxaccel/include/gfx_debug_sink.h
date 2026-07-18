@@ -7,7 +7,7 @@
  *  so a single call reaches BOTH:
  *    - the console / redirected stderr, and
  *    - the Windows debugger (Visual Studio Output, CDB/WinDbg, DebugView) via
- *      OutputDebugStringA — GUI builds have no console otherwise.
+ *      OutputDebugStringA - GUI builds have no console otherwise.
  *
  *  IMPORTANT: this sink is ALWAYS compiled in. It is never behind a logging
  *  #if. Whether a given line is produced is decided by the per-subsystem gate

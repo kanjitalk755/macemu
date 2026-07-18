@@ -34,7 +34,7 @@ uint32_t gl_dt_method_tvects[GL_MAX_SUBOPCODE];
 // encodes its slot as sub-opcode GL_DT_DIAG_BASE + slot.
 uint32_t gl_dt_diag_tvects[GL_CTX_DISPATCH_SLOTS];
 
-// gl_dt_flag_addr — runtime calling-convention discriminator.
+// gl_dt_flag_addr - runtime calling-convention discriminator.
 //
 // Two PPC calling conventions reach NativeGLDispatch:
 //   (A) FindLibSymbol TVECT (stub call): AllocateGLTVECT sets flag=0.
@@ -44,15 +44,15 @@ uint32_t gl_dt_diag_tvects[GL_CTX_DISPATCH_SLOTS];
 //       shifted by one register.
 //
 // gl_dispatch.cpp reads this flag into gl_ppc_stack_arg_offset:
-//   - flag=0 → args start at GPR3 (standard PPC ABI)
-//   - flag=1 → args start at GPR4 (context index in GPR3 is consumed)
+//   - flag=0 -> args start at GPR3 (standard PPC ABI)
+//   - flag=1 -> args start at GPR4 (context index in GPR3 is consumed)
 //
 // For 9+ argument functions (glTexImage2D, glTexSubImage2D), the flag also
 // determines the stack argument offset (PPC calling convention passes args
 // 9+ on the stack; the offset differs by one slot between conventions).
 //
 // Single-threaded by design: the emulator thread sets the flag, reads it,
-// and dispatches — no race. Do not eliminate; it's a runtime invariant.
+// and dispatches - no race. Do not eliminate; it's a runtime invariant.
 uint32_t gl_dt_flag_addr = 0;  // 1 = dispatch-table call, 0 = stub call
 // gl_logging_enabled is defined in gl_dispatch.cpp (single definition)
 

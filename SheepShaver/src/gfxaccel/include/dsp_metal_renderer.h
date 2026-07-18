@@ -15,7 +15,7 @@
  *  allocated through the bump sub-allocator on kHeapCompositor.
  *
  *  Compositor-blindness preserved: DSp emits a CompositeLayer POD with
- *  slot=kLayerSlotFramebuffer — compositor sees the slot + source handle
+ *  slot=kLayerSlotFramebuffer - compositor sees the slot + source handle
  *  only, never the engine identity.
  */
 
@@ -34,10 +34,10 @@ extern "C" {
 /*
  *  Allocate the back-buffer MTLBuffer + MTLTexture view through the
  *  bump sub-allocator on kHeapCompositor. Both are MTLStorageModeShared.
- *  Texture is a VIEW over the buffer memory — no separate heap allocation.
+ *  Texture is a VIEW over the buffer memory - no separate heap allocation.
  *
  *  Returns true on success (ctx->back_buffer / back_texture populated
- *  and retained). On failure, ctx state is NOT modified — caller is
+ *  and retained). On failure, ctx state is NOT modified - caller is
  *  responsible for error return to emulated PPC.
  *
  *  bpp must be one of {8, 16, 32}. 1/2/4 bpp is out of scope here.
@@ -46,7 +46,7 @@ extern bool DSpAllocateBackBuffer(struct DSpContextPrivate *ctx,
                                    uint32_t w, uint32_t h, uint32_t bpp);
 
 /*
- *  Synchronous release — texture FIRST, buffer SECOND (iOS ARC
+ *  Synchronous release - texture FIRST, buffer SECOND (iOS ARC
  *  view-before-backing invariant). Caller must ensure no frame is in
  *  flight; the normal Release path uses the VBL-bounded queue via
  *  DSpQueueReleaseAtVBL in dsp_draw_context.mm.
@@ -76,7 +76,7 @@ extern void DSpReleaseBackBufferStaging(struct DSpContextPrivate *ctx);
  *  framebuffer_texture.pixelFormat. Metal's [blit copyFromTexture:] does
  *  not permit pixel-size-mismatched formats (debug layer asserts).
  *  Mixed-format presents must go through DSpEncodePresentToFramebuffer
- *  (below) instead — that helper picks blit-vs-render-pass per format.
+ *  (below) instead - that helper picks blit-vs-render-pass per format.
  */
 extern void DSpEncodeBackBufferBlit(struct DSpContextPrivate *ctx,
                                      void *encoder,
@@ -96,7 +96,7 @@ extern void DSpEncodeBackBufferBlit(struct DSpContextPrivate *ctx,
  *      compositor's BGRA8Unorm framebuffer): runs a DSp-owned full-screen
  *      render pass that samples back_texture in its native pixel format
  *      and writes BGRA8Unorm to framebuffer_texture. The fragment shader
- *      source is compiled in dsp_metal_renderer.mm (DSp engine side — no
+ *      source is compiled in dsp_metal_renderer.mm (DSp engine side - no
  *      new symbols in metal_compositor.{h,mm} or compositor_shaders.metal).
  *
  *  This replaces the bare `[blit copyFromTexture: ... toTexture: ...]`
@@ -139,7 +139,7 @@ extern bool DSpEncodeFrontBufferStagingToFramebuffer(struct DSpContextPrivate *c
 	 *  otherwise (the heap lives outside that region on arm64 iOS) the
 	 *  function reserves a separate Mac system-heap staging region the same
 	 *  size as the back-buffer, validates the full guest-RAM span, and
-	 *  SwapBuffers memcpys staging → back_buffer before encoding the GPU
+	 *  SwapBuffers memcpys staging -> back_buffer before encoding the GPU
 	 *  blit. The fallback path preserves
  *  guest-writable CGrafPtr semantics.
  *
@@ -154,7 +154,7 @@ extern uint32_t DSpGetBackBufferCGrafPtr(struct DSpContextPrivate *ctx);
  *  Mac_sysalloc allocation (never the grown logical size), logging loudly if
  *  the caller requested more than was allocated. Returns the safe byte count
  *  to pass to memcpy/memset. `site` is a short tag identifying the call site
- *  in the diagnostic log. A return < `size` means an overrun was prevented —
+ *  in the diagnostic log. A return < `size` means an overrun was prevented -
  *  the smoking gun for guest-heap corruption from a mis-sized staging write.
  */
 extern uint32_t DSpGuardStagingWrite(uint32_t mac_addr, uint32_t size,

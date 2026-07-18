@@ -36,12 +36,12 @@ extern uint32 AudioGetSoundClockCI(void);
 
 /* Service pending INTFLAG_AUDIO from a thrash hot path (e.g. Microseconds).
  * Reentrancy-safe; no-op if audio is not open or flag not set.
- * Must not run Time Manager / VIA from thrash (nested moreRtn → illegal PPC). */
+ * Must not run Time Manager / VIA from thrash (nested moreRtn -> illegal PPC). */
 extern void AudioServicePendingInterrupt(void);
 
 /* Shared reentrancy guard for AudioInterrupt. Declared here so the SDL callback
  * implementation and AudioServicePendingInterrupt agree on whether an interrupt
- * is already in progress (the crash path: moreRtn → A193 → service audio nested
+ * is already in progress (the crash path: moreRtn -> A193 -> service audio nested
  * inside the running AudioInterrupt). */
 extern bool audio_interrupt_in_service;
 

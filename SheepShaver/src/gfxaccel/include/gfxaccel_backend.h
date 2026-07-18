@@ -15,8 +15,8 @@
  *    GFXACCEL_USE_OPENGL
  *
  *  If neither is defined, defaults are:
- *    Apple platforms → Metal
- *    everything else → OpenGL
+ *    Apple platforms -> Metal
+ *    everything else -> OpenGL
  */
 
 #ifndef GFXACCEL_BACKEND_H

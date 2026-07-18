@@ -2344,7 +2344,7 @@ uint32_t GLDispatch(uint32_t r3, uint32_t r4, uint32_t r5, uint32_t r6,
 		// FPR capture (float_bits) while their GPR word slots are
 		// SKIPPED (undefined in prototyped calls). Post-float ints/
 		// pointers therefore land in LATER registers than a dense
-		// count suggests — reading the skipped shadow registers yields
+		// count suggests - reading the skipped shadow registers yields
 		// garbage (the D-5-2 guest-memory-corruption class).
 		case GL_SUB_GLU_BEGINCURVE:    NativeGLUBeginCurve(r3); return 0;
 		case GL_SUB_GLU_BEGINPOLYGON:  NativeGLUBeginPolygon(r3); return 0;
@@ -2435,7 +2435,7 @@ uint32_t GLDispatch(uint32_t r3, uint32_t r4, uint32_t r5, uint32_t r6,
 		case GL_SUB_GLU_PROJECT: {
 			/* 3 doubles w0-5; model w6=r9, proj w7=r10, viewport w8,
 			 * winx/winy/winz out-pointers w9-11. The old r3-r8 read the
-			 * doubles' skipped shadows — WriteMacDouble through those
+			 * doubles' skipped shadows - WriteMacDouble through those
 			 * garbage registers corrupted guest memory. */
 			return NativeGLUProject(gl_current_context,
 			                        double_arg(float_bits, 0),

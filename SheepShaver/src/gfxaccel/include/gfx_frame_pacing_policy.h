@@ -24,13 +24,13 @@ enum GfxFramePacingEngine {
  * cadence rather than the old fixed 33 ms semaphore timeout.
  *
  * Satisfied-boundary rule: a vblank boundary that has already passed
- * since an engine's previous sync counts as that sync's boundary — the
+ * since an engine's previous sync counts as that sync's boundary - the
  * call returns without sleeping and the engine's deadline chain advances
  * to the next future boundary. Consequences this rule exists for:
  *   - Co-resident engines on the shared main==emul thread (DSp+GL: The
  *     Sims) pace to the SAME vblank: the first engine's wait carries the
  *     thread across the boundary, the second engine sees it satisfied.
- *     Without this, engines paced to consecutive boundaries — two
+ *     Without this, engines paced to consecutive boundaries - two
  *     periods per guest frame, a structural half-rate cap.
  *   - A frame that rendered longer than one period is not penalized
  *     with an additional full-period wait (adaptive, not hard-vsync).

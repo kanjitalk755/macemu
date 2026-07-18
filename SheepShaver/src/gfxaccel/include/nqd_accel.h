@@ -15,8 +15,8 @@
 #include "sysdeps.h"
 
 // ---------------------------------------------------------------------------
-// accl_params field offsets — duplicated from video_defs.h to avoid
-// including video_defs.h → macos_util.h from .mm files, which would
+// accl_params field offsets - duplicated from video_defs.h to avoid
+// including video_defs.h -> macos_util.h from .mm files, which would
 // conflict with MacTypes.h pulled in by <Metal/Metal.h> (Point, Rect,
 // noErr, ProcPtr redefinitions).
 // These MUST stay in sync with video_defs.h.
@@ -109,7 +109,7 @@ extern bool NQDMetalBitblt1to1(uint32 src_base, int32 src_row_bytes,
 // Rejects out-of-buffer baseAddr before dispatch. Returns true if the dispatch
 // was encoded into the shared NQD batch; false on unavailable Metal, degenerate
 // geometry, unsupported pixel size, or OOB address (caller maps false ->
-// kDSpInternalErr). NO new concurrency primitive — encodes into the single
+// kDSpInternalErr). NO new concurrency primitive - encodes into the single
 // shared MTLCommandQueue.
 extern bool NQDMetalBitbltScaled(uint32 src_base, int32 src_row_bytes,
                                  uint32 dst_base, int32 dst_row_bytes,

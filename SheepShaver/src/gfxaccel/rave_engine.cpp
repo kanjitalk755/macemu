@@ -309,7 +309,7 @@ static const uint32 kAllOptionalFeatures =
 	kQAOptional_AlphaTest | kQAOptional_AccessTexture | kQAOptional_AccessBitmap |
 	kQAOptional_AccessDrawBuffer | kQAOptional_AccessZBuffer |
 	kQAOptional_ClearDrawBuffer | kQAOptional_ClearZBuffer | // OffscreenDrawContexts removed (not implemented)
-	kQAOptional_OpenGL;  // GL tags 100-153 are stored/retrieved via Set/GetInt — games rely on this for scissor, blend, wrap
+	kQAOptional_OpenGL;  // GL tags 100-153 are stored/retrieved via Set/GetInt - games rely on this for scissor, blend, wrap
 
 // OptionalFeatures2 bitmask -- only advertise what we support.
 // Bit assignments now match DDK RAVE 1.6 Specification exactly.
@@ -519,7 +519,7 @@ static bool RaveForgetRTTAndFreeResource(uint32_t handle)
 
 uint32_t RaveResourceFindByAddr(uint32_t mac_addr) {
 	if (mac_addr == 0) return 0;
-	// Only scan up to the high-water mark — all live entries are below it.
+	// Only scan up to the high-water mark - all live entries are below it.
 	for (uint32_t i = 0; i < g_rave_resource_high_water; i++) {
 		if (rave_resource_table[i].type != kRaveResourceFree &&
 			rave_resource_table[i].mac_addr == mac_addr) {
@@ -535,7 +535,7 @@ uint32_t RaveResourceFindByAddr(uint32_t mac_addr) {
  *
  *  Returns the first matching texture entry, or nullptr if no match.
  *  Bitmap and color-table entries are excluded (they don't use
- *  pixmap_mac_addr in the same sense — bitmap data is eager-copied, so
+ *  pixmap_mac_addr in the same sense - bitmap data is eager-copied, so
  *  we only care about the deferred-direct-format texture path that
  *  Bugdom's ARGB16 sprites take).
  */
@@ -562,7 +562,7 @@ RaveResourceEntry *RaveFindTextureByPixmapAddr(uint32_t pixmapAddr)
  *  RaveRealizeDeferredTexture / RaveRefreshTextureFromPixmap calls
  *  read from cpu_pixel_data instead of pixmap_mac_addr.
  *
- *  If no RAVE texture tracks this pixmap address, returns silently —
+ *  If no RAVE texture tracks this pixmap address, returns silently -
  *  most Q3Pixmap_Set_Image calls are unrelated to any RAVE texture
  *  (e.g. Q3Pixmaps backing 2D PICT draws, not 3D sprite textures),
  *  and we must not log-spam or stall in those cases.
@@ -578,7 +578,7 @@ void NativeHookQ3PixmapSetImage(uint32_t pixmapAddr,
 {
 	RaveResourceEntry *entry = RaveFindTextureByPixmapAddr(pixmapAddr);
 	if (!entry) {
-		// Not a RAVE-tracked pixmap — unrelated Q3Pixmap_Set_Image call.
+		// Not a RAVE-tracked pixmap - unrelated Q3Pixmap_Set_Image call.
 		// Silent return; must not log-spam.
 		return;
 	}
@@ -617,7 +617,7 @@ void NativeHookQ3PixmapSetImage(uint32_t pixmapAddr,
  */
 
 // ReadMacInt32 returns host-endian from big-endian PPC memory.
-// Extracts A(31:24) R(23:16) G(15:8) B(7:0) → writes BGRA8 (B=byte0, G=byte1, R=byte2, A=byte3).
+// Extracts A(31:24) R(23:16) G(15:8) B(7:0) -> writes BGRA8 (B=byte0, G=byte1, R=byte2, A=byte3).
 // Row stride: rowBytes from Mac source, dst stride = width*4. Correct.
 static void ConvertARGB32(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_t height, uint32_t rowBytes)
 {
@@ -658,7 +658,7 @@ static void ConvertRGB32(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_t 
 }
 
 // ReadMacInt16 returns host-endian. 1-bit A(15), 5-bit R(14:10) G(9:5) B(4:0).
-// 5→8 expansion via (x<<3)|(x>>2) correct. 1-bit alpha: 0→0x00, 1→0xFF. BGRA8 output correct.
+// 5->8 expansion via (x<<3)|(x>>2) correct. 1-bit alpha: 0->0x00, 1->0xFF. BGRA8 output correct.
 static void ConvertARGB16(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_t height, uint32_t rowBytes)
 {
 	for (uint32_t y = 0; y < height; y++) {
@@ -705,7 +705,7 @@ static void ConvertRGB16(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_t 
 }
 
 // R(7:5)=3 bits, G(4:2)=3 bits, B(1:0)=2 bits.
-// 3→8 expansion: (r3<<5)|(r3<<2)|(r3>>1). 2→8 expansion: (b2<<6)|(b2<<4)|(b2<<2)|b2. Alpha 0xFF. Correct.
+// 3->8 expansion: (r3<<5)|(r3<<2)|(r3>>1). 2->8 expansion: (b2<<6)|(b2<<4)|(b2<<2)|b2. Alpha 0xFF. Correct.
 // ConvertRGB8_332: 8bpp, R=7:5, G=4:2, B=1:0
 static void ConvertRGB8_332(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_t height, uint32_t rowBytes)
 {
@@ -729,7 +729,7 @@ static void ConvertRGB8_332(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32
 	}
 }
 
-// ReadMacInt16 → A(15:12) R(11:8) G(7:4) B(3:0), 4→8 expansion via (n<<4)|n. Correct.
+// ReadMacInt16 -> A(15:12) R(11:8) G(7:4) B(3:0), 4->8 expansion via (n<<4)|n. Correct.
 // ConvertARGB16_4444: 16bpp, A=15:12, R=11:8, G=7:4, B=3:0
 static void ConvertARGB16_4444(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_t height, uint32_t rowBytes)
 {
@@ -751,7 +751,7 @@ static void ConvertARGB16_4444(uint32 srcAddr, uint8_t *dst, uint32_t width, uin
 	}
 }
 
-// 8-bit intensity → B=G=R=i, A=0xFF. Correct.
+// 8-bit intensity -> B=G=R=i, A=0xFF. Correct.
 // ConvertI8: 8bpp grayscale, I=7:0
 static void ConvertI8(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_t height, uint32_t rowBytes)
 {
@@ -768,7 +768,7 @@ static void ConvertI8(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_t hei
 	}
 }
 
-// ReadMacInt16 → A(15:8) I(7:0). B=G=R=intensity, A from high byte. Correct.
+// ReadMacInt16 -> A(15:8) I(7:0). B=G=R=intensity, A from high byte. Correct.
 // ConvertAI16_88: 16bpp, A=15:8, I=7:0
 static void ConvertAI16_88(uint32 srcAddr, uint8_t *dst, uint32_t width, uint32_t height, uint32_t rowBytes)
 {
@@ -1208,7 +1208,7 @@ static void RaveCreateTextureFromImages(uint32_t flags, uint32_t pixelType,
  *
  *  Called at first draw-time use (from ApplyDirtyState) when metal_texture is
  *  nullptr and pixmap_mac_addr is set.  Reads from the ORIGINAL pixmap address
- *  in Mac memory — by this point QD3D has written the real texture content.
+ *  in Mac memory - by this point QD3D has written the real texture content.
  */
 void RaveRealizeDeferredTexture(RaveResourceEntry *entry)
 {
@@ -1226,7 +1226,7 @@ void RaveRealizeDeferredTexture(RaveResourceEntry *entry)
 	// classic-Mac transient-buffer lifecycle (Bugdom sprites) where
 	// pixmap_mac_addr would otherwise read stale/recycled heap data.
 	// If the flag is false, fall back to the original pixmap_mac_addr
-	// path — preserves working-title behavior (spider-web sprite,
+	// path - preserves working-title behavior (spider-web sprite,
 	// Nanosaur opaque textures, any title whose source buffer is
 	// persistent across the first draw).
 	uint32_t pixmap = entry->pixmap_mac_addr;
@@ -1487,7 +1487,7 @@ static void RaveReExpandWithCLUT(RaveResourceEntry *texEntry, RaveResourceEntry 
 
 	texEntry->metal_texture = RaveCreateMetalTexture(w, h, texEntry->mip_levels, expanded, w * 4);
 
-	// Generate mipmaps if needed — CPU downsample from the freshly-CLUT-expanded
+	// Generate mipmaps if needed - CPU downsample from the freshly-CLUT-expanded
 	// level 0 (the Metal blit path was leaving high-mips black -> indexed/world
 	// surfaces sampled black at distance). See RaveUploadGeneratedMips.
 	if (texEntry->mip_levels > 1 && texEntry->metal_texture) {
@@ -1741,7 +1741,7 @@ int32_t NativeEngineAccessTextureEnd(uint32_t textureAddr, uint32_t dirtyRectAdd
 		// Batch level 0 + regenerated chain into one pass break (D-R-4).
 		RaveTextureUploadBatchBegin();
 		RaveUploadMipLevel(entry->metal_texture, 0, w, h, expanded, w * 4);
-		// Regenerate mipmaps if multi-level — CPU downsample from the fresh level 0
+		// Regenerate mipmaps if multi-level - CPU downsample from the fresh level 0
 		// (deterministic; the Metal blit path was leaving high-mips black on refresh).
 		if (entry->mip_levels > 1) {
 			RaveUploadGeneratedMips(entry->metal_texture, expanded, w, h, entry->mip_levels);
@@ -1979,7 +1979,7 @@ int32 NativeEngineGestalt(uint32 selector, uint32 responsePtr)
 		break;
 
 	case kQAGestalt_DrawContextPixelTypesAllowed:
-		// Must include RGB32 — Mac OS "Millions of colors" is 24-bit stored as xRGB8888
+		// Must include RGB32 - Mac OS "Millions of colors" is 24-bit stored as xRGB8888
 		WriteMacInt32(responsePtr, (1 << kQAPixel_ARGB32) | (1 << kQAPixel_RGB32) |
 					  (1 << kQAPixel_RGB16));
 		RAVE_LOG("EngineGestalt: %s -> ARGB32|RGB32|RGB16", gestalt_selector_names[selector]);
@@ -2770,7 +2770,7 @@ bool RaveIsRegistered(void)
  *     allocation across the mode switch.
  *
  * The handlers must NOT call back into DMC (the resource manager fan-out
- * runs on the DMC writer's thread while holding the writer mutex —
+ * runs on the DMC writer's thread while holding the writer mutex -
  * recursive subscribe/unsubscribe would deadlock; threat T-03-26 / T-03-27).
  *
  * These cross the .cpp/.mm boundary via the small extern "C" probes
@@ -2782,14 +2782,14 @@ static int32_t RaveOnAttach(uint32_t /* engine_id */,
                             void * /* ctx */)
 {
 	/* If RAVE has no active or preserved logical overlay binding at attach
-	 * time, skip pre-vending — the next RaveCreateMetalOverlay (driven by
+	 * time, skip pre-vending - the next RaveCreateMetalOverlay (driven by
 	 * an actual RAVE context creation) will vend lazily. This is the common
 	 * case for non-RAVE workloads (e.g. pure-2D apps switching modes). */
 	if (!rave_has_active_overlay()) {
-		return 0;  /* kGfxAccelResNoErr — accept the transition */
+		return 0;  /* kGfxAccelResNoErr - accept the transition */
 	}
 	if (incoming == NULL) {
-		return 0;  /* defensive — accept transition with no pre-vend */
+		return 0;  /* defensive - accept transition with no pre-vend */
 	}
 
 	/* RAVE was active in the outgoing mode; pre-vend the pair at the incoming
@@ -2811,7 +2811,7 @@ static int32_t RaveOnAttach(uint32_t /* engine_id */,
 	if (tex0 == NULL || tex1 == NULL) {
 		if (tex0 != NULL) gfxaccel_resources_release_overlay_texture(kGfxEngineRAVE, tex0);
 		if (tex1 != NULL) gfxaccel_resources_release_overlay_texture(kGfxEngineRAVE, tex1);
-		/* Vend failed — reject the transition. The rollback path is
+		/* Vend failed - reject the transition. The rollback path is
 		 * safe under concurrent DMC readers. */
 		return kDMCErrSubscriberRejected;
 	}
@@ -2822,7 +2822,7 @@ static int32_t RaveOnDetach(uint32_t /* engine_id */,
                             const struct DMCModeSnapshot * /* outgoing */,
                             void * /* ctx */)
 {
-	/* Release the cached overlay (idempotent — no-op if RAVE has none).
+	/* Release the cached overlay (idempotent - no-op if RAVE has none).
 	 * The next RaveCreateMetalOverlay after the mode switch will re-vend
 	 * at the appropriate resolution. */
 	rave_release_overlay_for_detach();
@@ -2900,12 +2900,12 @@ void RaveRegisterEngine(void)
 	// Pascal string format: first byte = length
 	// "QARegisterEngine" = 16 chars -> \020
 	//
-	// The CFM fragment name is "QuickDraw™ 3D Accelerator" (25 chars).
+	// The CFM fragment name is "QuickDraw(TM) 3D Accelerator" (25 chars).
 	// This was determined by examining PEF import tables of the DDK's
 	// Empty Engine sample (which imports QARegisterEngine from this fragment)
 	// and the RaveEngineInfo sample app. The file on disk is named
-	// "QuickDraw™ 3D RAVE" but the CFM fragment name is different.
-	// ™ = MacRoman 0xAA
+	// "QuickDraw(TM) 3D RAVE" but the CFM fragment name is different.
+	// (TM) = MacRoman 0xAA
 	static const char *rave_lib_names[] = {
 		"\031QuickDraw\xAA 3D Accelerator",  // 25 chars: correct CFM fragment name
 		"\022QuickDraw\xAA 3D RAVE",          // 18 chars: file name (not fragment name)
@@ -3335,7 +3335,7 @@ int32_t NativeATITextureUpdate(uint32_t flags, uint32_t pixelType, uint32_t imag
 		RaveTextureUploadBatchBegin();
 		RaveUploadMipLevel(entry->metal_texture, 0, width, height, bgra_data, bgra_row_bytes);
 
-		// Generate mipmaps if texture has mip levels — CPU downsample from the fresh
+		// Generate mipmaps if texture has mip levels - CPU downsample from the fresh
 		// level 0 (the Metal blit path left high-mips black -> distant surfaces black).
 		if (entry->mip_levels > 1) {
 			RaveUploadGeneratedMips(entry->metal_texture, bgra_data, width, height, entry->mip_levels);
@@ -3344,9 +3344,9 @@ int32_t NativeATITextureUpdate(uint32_t flags, uint32_t pixelType, uint32_t imag
 	} else {
 		// DIAGNOSTIC: the texture is not yet realized, so this update is
 		// silently lost; the texture later realizes from its (possibly stale
-		// or black) pixmap. Prime suspect for "world geometry goes black" —
+		// or black) pixmap. Prime suspect for "world geometry goes black" -
 		// rgb>0 here means real pixels were dropped on the floor.
-		RAVE_LOG("ATITextureUpdate: DROPPED update on unrealized texture 0x%08x (%dx%d rgb=%u/%u pixmap=0x%08x) — metal_texture==NULL",
+		RAVE_LOG("ATITextureUpdate: DROPPED update on unrealized texture 0x%08x (%dx%d rgb=%u/%u pixmap=0x%08x) - metal_texture==NULL",
 		         textureAddr, width, height, stats.rgb, width * height, entry->pixmap_mac_addr);
 	}
 

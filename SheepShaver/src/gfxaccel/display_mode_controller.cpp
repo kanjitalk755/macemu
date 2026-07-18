@@ -354,7 +354,7 @@ static int32_t dmc_internal_fire_enter_events(const DMCModeSnapshot *incoming) {
 	// indices (filtered counter skipped NULL on_mode_enter). After: every
 	// dispatch_index reflects the subscriber's position in the registration
 	// table regardless of callback presence. Exit's `(uint32_t)i` stays
-	// untouched — both paths now converge on raw subscriber index.
+	// untouched - both paths now converge on raw subscriber index.
 	for (size_t i = s_subscribers.size(); i > 0; --i) {
 		size_t idx = i - 1;  // walk in reverse without size_t underflow
 		if (s_subscribers[idx].on_mode_enter != NULL) {
@@ -619,7 +619,7 @@ int32_t dmc_request_mode_switch(const struct DMCModeDesc *new_mode) {
 	// Carry palette_gen / gamma_gen / fade_active / blanking_rgba across the switch.
 	uint32_t carry_palette_gen = (outgoing != NULL) ? outgoing->palette_gen : 0;
 	uint32_t carry_gamma_gen   = (outgoing != NULL) ? outgoing->gamma_gen   : 0;
-	// A mid-fade mode switch must NOT drop the fade flag — a
+	// A mid-fade mode switch must NOT drop the fade flag - a
 	// DSp game can FadeGammaOut across a resolution change.
 	uint32_t carry_fade_active = (outgoing != NULL) ? outgoing->fade_active : 0;
 	const uint8_t carry_blanking[4] = {
@@ -685,7 +685,7 @@ int32_t dmc_request_mode_switch(const struct DMCModeDesc *new_mode) {
 		// the NEXT successful publish would have used; concurrent readers
 		// holding `incoming` finish their frame before this slot is
 		// overwritten (at gen + 3 publish). The rejected generation stays
-		// consumed — we do NOT decrement s_next_generation because
+		// consumed - we do NOT decrement s_next_generation because
 		// the ring-slot calculation relies on the bumped counter.
 		dmc_retire_snapshot(incoming, incoming->generation + 1);
 		return kDMCErrSubscriberRejected;
@@ -730,7 +730,7 @@ int32_t dmc_set_active_owner(uint32_t owner) {
 	// owner + the current FSM state already match. Once engines
 	// start vending overlays per frame (which drives a dmc_set_active_owner call
 	// per frame), this prevents 60 Hz calloc + subscriber-dispatch churn. Both
-	// owner AND state must match — a state transition (e.g. back from Blanking)
+	// owner AND state must match - a state transition (e.g. back from Blanking)
 	// still requires a real transition.
 	if (outgoing != NULL &&
 	    outgoing->active_owner == owner &&
@@ -931,7 +931,7 @@ int32_t dmc_record_palette_change(void) {
 // Companion to
 // dmc_record_gamma_change_with_lut that ALSO publishes a fade_active flag in
 // the SAME snapshot bump. Clone-mutate-publish under the EXISTING s_write_mutex
-// (no NEW MTLFence / MTLSharedEvent / std::mutex / @synchronized / _Atomic — the
+// (no NEW MTLFence / MTLSharedEvent / std::mutex / @synchronized / _Atomic - the
 // flag rides the existing atomic-release publish). Publishing fade_active
 // and the interpolated LUT together avoids a frame where the LUT is mid-fade
 // but the flag is stale, which would warp one fade frame: a separate
@@ -983,7 +983,7 @@ int32_t dmc_record_gamma_change_with_lut(const uint8_t *lut) {
 }
 
 // Record a DRIVER (guest SetGamma) table: always store it in
-// driver_gamma_lut — the "original intensity" the DSp fades blend toward —
+// driver_gamma_lut - the "original intensity" the DSp fades blend toward -
 // and apply it to the displayed gamma_lut only when no fade is in progress.
 // During a fade the displayed LUT is left alone (an immediate apply would
 // visibly pop the faded screen); the fade's end-state push delivers the
@@ -1034,19 +1034,19 @@ int32_t dmc_record_gamma_change(void) {
 
 // Assign the snapshot's blanking color WITHOUT
 // entering the Blanking FSM state. DSpSetBlankingColor (sub-op 760) only sets
-// the color the library will use the next time the screen IS blanked — it does
+// the color the library will use the next time the screen IS blanked - it does
 // NOT blank now (DSp 1.7 PDF p.30). This is the no-state-transition twin of
 // dmc_record_gamma_change_with_lut: clone the current snapshot, mutate the one
 // field (blanking_rgba), bump generation, publish, retire old. It deliberately
 // does NOT call any blanking-enter path (dmc_request_blanking transitions the
-// FSM to Blanking — wrong for SetBlankingColor).
+// FSM to Blanking - wrong for SetBlankingColor).
 //
 // Reuses the EXISTING DMC single-writer primitive (s_write_mutex +
 // DMCReentryScope + DMC_ASSERT_EMUL_THREAD); adds ZERO new MTLFence /
 // MTLSharedEvent / std::mutex / @synchronized / _Atomic. The DMC is the
 // documented single-writer exception, so this is compliant.
 //
-// No subscriber events are fired — this is a pure snapshot field update, not an
+// No subscriber events are fired - this is a pure snapshot field update, not an
 // FSM transition (same posture as dmc_record_palette_change / gamma_change).
 int32_t dmc_set_blanking_color(const uint8_t rgba[4]) {
 	DMCReentryScope reentry;

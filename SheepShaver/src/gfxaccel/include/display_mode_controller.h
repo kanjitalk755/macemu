@@ -334,7 +334,7 @@ int32_t dmc_record_gamma_change_with_lut(const uint8_t *lut);
  * (DSpVBLGammaFadeCallback) calls this with fade_active=1 on each mid-fade
  * push and fade_active=0 on the final-frame push; a plain SetGamma stays on
  * the legacy 1-arg form (fade_active=0). The flag rides the EXISTING DMC
- * single-writer publish (s_write_mutex + atomic-release store) — ZERO new
+ * single-writer publish (s_write_mutex + atomic-release store) - ZERO new
  * concurrency primitives. lut semantics are identical to the 1-arg
  * form (NULL preserves the existing LUT; non-NULL overwrites 768 bytes).
  *
@@ -346,8 +346,8 @@ int32_t dmc_record_gamma_change_with_lut_fade(const uint8_t *lut, int fade_activ
 
 /*
  * Record a DRIVER (guest SetGamma) table. Always stores the 768-byte planar
- * table into driver_gamma_lut — the "original intensity" reference the DSp
- * fade paths blend toward — then applies it to the displayed gamma_lut only
+ * table into driver_gamma_lut - the "original intensity" reference the DSp
+ * fade paths blend toward - then applies it to the displayed gamma_lut only
  * when no fade is in progress. When fade_active is set on the current
  * snapshot the displayed LUT is left alone (the screen is faded/fading; an
  * immediate apply would visibly pop) and the pending fade's end-state
@@ -356,7 +356,7 @@ int32_t dmc_record_gamma_change_with_lut_fade(const uint8_t *lut, int fade_activ
  * Returns kDMCNoErr if the table was applied to the displayed LUT
  *         (caller should push it to the compositor as usual);
  *         kDMCDriverGammaDeferred if stored but NOT applied (fade in
- *         progress — caller must NOT push to the compositor);
+ *         progress - caller must NOT push to the compositor);
  *         kDMCErrNotInitialized if called before dmc_create();
  *         kDMCErrInvalidModeDesc if lut is NULL;
  *         kDMCErrOutOfMemory if snapshot allocation fails.
@@ -366,11 +366,11 @@ int32_t dmc_record_driver_gamma_change(const uint8_t *lut);
 /*
  * Assign the snapshot's blanking color WITHOUT
  * entering the Blanking FSM state. DSpSetBlankingColor (sub-op 760) only sets
- * the color the library uses the next time the screen is blanked — it does NOT
+ * the color the library uses the next time the screen is blanked - it does NOT
  * blank now (DSp 1.7 PDF p.30). No-state-transition twin of
  * dmc_record_gamma_change_with_lut: clone-mutate-publish the blanking_rgba
  * field under the EXISTING s_write_mutex (no NEW concurrency primitive); does
- * NOT call dmc_request_blanking (which would transition to Blanking — wrong
+ * NOT call dmc_request_blanking (which would transition to Blanking - wrong
  * for SetBlankingColor). rgba is 4 bytes (R, G, B, A).
  *
  * Returns kDMCNoErr on success;

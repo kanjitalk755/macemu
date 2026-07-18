@@ -314,7 +314,7 @@ bool ThunksInit(void)
 #if defined(ENABLE_GFXACCEL)
 	// Allocate RAVE / GL / DSp TVECTs once SheepMem is up. Engine enable is
 	// prefs-gated later (VideoInstallAccel / DSpInit / NQD); thunks must exist
-	// regardless so ROM patches can point at them. GLThunksInit is large —
+	// regardless so ROM patches can point at them. GLThunksInit is large -
 	// SheepMem::size was raised to 4 MiB for this (see thunks.h).
 	RaveThunksInit();
 	GLThunksInit();

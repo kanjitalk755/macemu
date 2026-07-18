@@ -3,10 +3,10 @@
  *
  *  DSpDispatch is invoked from sheepshaver_glue.cpp's NATIVE_DSP_DISPATCH
  *  case. The SUB-OPCODE is read from dsp_scratch_addr (Mac memory word
- *  written by the PPC TVECT thunk's `stw r12, 0(r11)` — see
+ *  written by the PPC TVECT thunk's `stw r12, 0(r11)` - see
  *  dsp_thunks.cpp:AllocateDSpTVECT). r3-r8 carry the guest function's raw
- *  argument registers (r3 is the FIRST real function arg — e.g. a ctxRef
- *  handle — NOT the sub-opcode). Returns the value to be written back to
+ *  argument registers (r3 is the FIRST real function arg - e.g. a ctxRef
+ *  handle - NOT the sub-opcode). Returns the value to be written back to
  *  PPC gpr(3).
  *
  *  Signature mirrors RaveDispatch (rave_dispatch.cpp) and GLDispatch
@@ -15,9 +15,9 @@
  *  sims-dsp-subop-mismatch fix (2026-04-18): this file previously did
  *  `const uint32_t subop = r3;` which treated the guest's first real
  *  argument as the sub-opcode. That worked for zero-arg calls
- *  (Startup/Shutdown/GetVersion — r3 garbage-was-0 by chance) but broke
- *  for every Context_* call (r3 carries the ctxRef pointer → dispatch
- *  fell into `default` → kDSpInternalErr). The Sims crashed on its first
+ *  (Startup/Shutdown/GetVersion - r3 garbage-was-0 by chance) but broke
+ *  for every Context_* call (r3 carries the ctxRef pointer -> dispatch
+ *  fell into `default` -> kDSpInternalErr). The Sims crashed on its first
  *  Context_Reserve attempt. RAVE and GL have always read their sub-opcode
  *  from rave_scratch_addr / gl_scratch_addr; DSp now mirrors that pattern
  *  verbatim.
@@ -25,13 +25,13 @@
  *  sims-dsp-subop-mismatch follow-on fix (2026-04-18 part 2): after the
  *  scratch-read correction above, The Sims re-UAT revealed a SECOND bug
  *  hiding behind the first. With subop decoupled from r3, r3 now genuinely
- *  IS the guest's first real argument — but every handler case was still
+ *  IS the guest's first real argument - but every handler case was still
  *  reading args from r4..r7 (the positions that were correct back when r3
  *  was consumed by the subop). That produced an off-by-one on every
  *  Context_* handler: e.g. DSpGetFirstContext saw r4=&ctxRef as "displayID"
  *  (flagged 'non-zero displayID rejected'), and DSpContext_FadeGamma saw
  *  r4=percent as "ctxRef=0 invalid". Fix is purely a dispatch-site arg-index
- *  shift r4→r3, r5→r4, r6→r5, r7→r6 across all 22 Context_* cases; handler
+ *  shift r4->r3, r5->r4, r6->r5, r7->r6 across all 22 Context_* cases; handler
  *  signatures are unchanged. Both fix commits (scratch-read + handler-shift)
  *  are required for end-to-end DSp correctness.
  *
@@ -66,7 +66,7 @@
  *  into the stub, so if a guest's CFM lazy-binding TVECT points at our hook
  *  code, r11 carries the address of THAT TVECT (and therefore tells us which
  *  DSp symbol the guest was attempting). Single-writer (emul thread) /
- *  single-reader (same thread inside DSpDispatch) — no concurrency primitives
+ *  single-reader (same thread inside DSpDispatch) - no concurrency primitives
  *  needed.
  *
  *  Mirrors the gl_ppc_sp pattern in gl_dispatch.cpp.
@@ -86,7 +86,7 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 	/* Per-sub-opcode entry log, observable in console when dspaccel=true and
 	 * an app calls through the DSp TVECT thunks. Logs the FIRST FOUR real
 	 * guest args (r3..r6) in the canonical slots apps actually use. r7/r8
-	 * dropped from the log line — they're unused by every current handler
+	 * dropped from the log line - they're unused by every current handler
 	 * case post-shift. */
 	DSP_LOG("DSpDispatch: subop %u (r3=0x%08x r4=0x%08x r5=0x%08x r6=0x%08x)",
 	        (unsigned)subop, r3, r4, r5, r6);
@@ -110,7 +110,7 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 		case kDSpGetVersion:
 			return DSpGetVersionHandler(r3);
 
-		/* Context lifecycle — Reserve + Release.
+		/* Context lifecycle - Reserve + Release.
 		 * dsp-sims-post-reserve-black-screen (2026-04-19): Reserve signature
 		 * corrected to DSp 1.7 PDF p.25: (inContext, inDesiredAttributes).
 		 * r3 = ctxRef (from FindBestContext / GetFirstContext), r4 = attrAddr. */
@@ -131,31 +131,31 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 		case kDSpContext_InvalBackBufferRect:
 			return (uint32_t)DSpContext_InvalBackBufferRectHandler(r3, r4);
 
-		/* sub-opcode 200 — DSpGetFirstContext. */
+		/* sub-opcode 200 - DSpGetFirstContext. */
 		case kDSpGetFirstContext:
 			return (uint32_t)DSpGetFirstContextHandler(r3 /* displayID */,
 			                                            r4 /* outContextRefAddr */);
 
-		/* sub-opcode 201 — DSpFindBestContext.
+		/* sub-opcode 201 - DSpFindBestContext.
 		 * Three-tier algorithm:
-		 *   Tier 0 — backBufferDepthMask overlap filter,
-		 *   Tier 1 — bit-depth preference (exact → deeper ≥ req → deepest),
-		 *   Tier 2 — resolution (exact → smallest-upper-bound → closest-by-area),
-		 *   Tier 3 — refresh no-op (frequency=0). */
+		 *   Tier 0 - backBufferDepthMask overlap filter,
+		 *   Tier 1 - bit-depth preference (exact -> deeper >= req -> deepest),
+		 *   Tier 2 - resolution (exact -> smallest-upper-bound -> closest-by-area),
+		 *   Tier 3 - refresh no-op (frequency=0). */
 		case kDSpFindBestContext:
 			return (uint32_t)DSpFindBestContextHandler(r3 /* attrAddr */,
 			                                            r4 /* outContextRefAddr */);
 
-		/* sub-opcode 202 — DSpContext_GetAttributes.
+		/* sub-opcode 202 - DSpContext_GetAttributes.
 		 * Vends ctx->attr (cached at Reserve time) to guest RAM using the
 		 * PDF-p.65 on-wire byte layout. Handler body lives in
 		 * dsp_draw_context.mm (not dsp_mode_enumerate.cpp) because it reads
-		 * DSpContextPrivate — extern prototype in dsp_mode_enumerate.h. */
+		 * DSpContextPrivate - extern prototype in dsp_mode_enumerate.h. */
 		case kDSpContext_GetAttributes:
 			return (uint32_t)DSpContext_GetAttributesHandler(r3 /* ctxRef */,
 			                                                  r4 /* outAttrAddr */);
 
-		/* sub-opcode 203 — DSpGetNextContext stub terminator per DSp 1.7 PDF
+		/* sub-opcode 203 - DSpGetNextContext stub terminator per DSp 1.7 PDF
 		 * p.17. iOS single-display returns kDSpContextNotFoundErr + writes 0
 		 * to outContextRefAddr. */
 		case kDSpGetNextContext:
@@ -164,7 +164,7 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 
 		/* sub-opcodes 300/301. Arg order follows the DSp 1.7 pp.56-57
 		 * wire-format: pointer-before-index. r3=ctxRef, r4=entries address
-		 * (the ColorSpec POINTER — in for Set, out for Get), r5=inStartingEntry,
+		 * (the ColorSpec POINTER - in for Set, out for Get), r5=inStartingEntry,
 		 * r6=inEntryCount (a COUNT, NOT an inclusive last index). The entries
 		 * are 8-byte ColorSpec structs with 16-bit big-endian channels; the
 		 * handler converts 16<->8 at the guest-RAM boundary. Internal storage
@@ -186,7 +186,7 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 		 * PDF verbatim.
 		 *
 		 * kDSpContext_SetGamma (400) + kDSpContext_GetGamma (401) cases are
-		 * absent — proven absent from the canonical DrawSprocketLib PEF export
+		 * absent - proven absent from the canonical DrawSprocketLib PEF export
 		 * table; their enum members + install rows are dropped.
 		 *
 		 * Argument marshalling (DSp 1.7 ABI):
@@ -194,7 +194,7 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 		 *   FadeGammaOut (403): r3 = ctxRef, r4 = inZeroIntensityColor (RGBColor*)
 		 *   FadeGamma    (404): r3 = ctxRef, r4 = inPercent (SInt32),
 		 *                       r5 = inZeroIntensityColor (RGBColor*)
-		 *                       (r6 durationVbls dropped — never existed in the
+		 *                       (r6 durationVbls dropped - never existed in the
 		 *                        real ABI)
 		 */
 		case kDSpContext_FadeGammaIn:
@@ -208,11 +208,11 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 			                                              (int32_t)r4 /* inPercent (SInt32) */,
 			                                              r5 /* colorAddr */);
 
-		/* sub-opcodes 500/503 — SetVBLProc + GetVBLProc, with
+		/* sub-opcodes 500/503 - SetVBLProc + GetVBLProc, with
 		 * DSpVBLServiceCallback's per-context walk + PPC VBLProc invocation.
 		 *
 		 * kDSpContext_GetVBLCount (501) + kDSpContext_BlankFill (502) cases are
-		 * absent — proven absent from the canonical DrawSprocketLib PEF export
+		 * absent - proven absent from the canonical DrawSprocketLib PEF export
 		 * table; their enum members + install rows are dropped.
 		 *
 		 * Argument marshalling per dsp_engine.h sub-opcode contract:
@@ -270,10 +270,10 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 
 		/* ==================================================================
 		 * Cheap-family coord/mouse bodies. Sub-ops 720-723. GetMouse (720)
-		 * has NO ctxRef — r3 is the out-Point address. GlobalToLocal/
+		 * has NO ctxRef - r3 is the out-Point address. GlobalToLocal/
 		 * LocalToGlobal (721/722) take r3=ctxRef, r4=ioPoint address; they are
 		 * identity at the iOS single fullscreen origin (0,0).
-		 * FindContextFromPoint (723) takes the Point by VALUE in r3 — the case
+		 * FindContextFromPoint (723) takes the Point by VALUE in r3 - the case
 		 * UNPACKS it (v=high half, h=low half), never dereferences r3 as a
 		 * pointer.
 		 * ================================================================== */
@@ -288,7 +288,7 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 			                                                  r4 /* ioPointAddr */);
 		case kDSpFindContextFromPoint: {                            /* sub-op 723 */
 			/* The Point is passed by VALUE in r3 (Mac Point packed
-			 * v << 16 | h & 0xFFFF) — UNPACK it, NEVER dereference r3 as a
+			 * v << 16 | h & 0xFFFF) - UNPACK it, NEVER dereference r3 as a
 			 * pointer (that would index past the table for attacker coords).
 			 * r4 is the out-ctxRef address. */
 			const int16_t v = (int16_t)(r3 >> 16);   /* Mac Point: v high half */
@@ -305,7 +305,7 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 		 * UserSelectContext (747) takes 4 args (attrs r3, dialogLoc r4,
 		 * eventProc r5, outCtxRef r6) and auto-picks via FindBest with no
 		 * dialog. SetBlankingColor (760) and SetDebugMode (761) have NO
-		 * ctxRef — r3 is the first real arg (RGBColor address / Boolean value).
+		 * ctxRef - r3 is the first real arg (RGBColor address / Boolean value).
 		 * ================================================================== */
 		case kDSpFindBestContextOnDisplayID:                        /* sub-op 744 */
 			return (uint32_t)DSpFindBestContextOnDisplayIDHandler(r3 /* attrAddr */,
@@ -331,7 +331,7 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 		 *   OSStatus DSpProcessEvent(EventRecord *inEvent,
 		 *                            Boolean *outEventWasProcessed)
 		 * NO ctxRef: r3 is inEvent (EventRecord*), r4 is
-		 * outEventWasProcessed (Boolean*) — the app passes its OWN event
+		 * outEventWasProcessed (Boolean*) - the app passes its OWN event
 		 * in and DSp inspects it for suspend/resume to drive context state.
 		 * This is the OPPOSITE direction to the retired non-canonical
 		 * sub-op-600 dequeue handler (retire, NOT repurpose). The SPSC
@@ -345,7 +345,7 @@ uint32_t DSpDispatch(uint32_t r3, uint32_t r4, uint32_t r5,
 		 * The 33 real DrawSprocketLib PEF exports (sub-opcodes 700..761).
 		 *
 		 * Any sub-op without an explicit `case kDSp*:` below is ROUTED THROUGH
-		 * `default:`. These sub-ops are fully wired at the SYMBOL level —
+		 * `default:`. These sub-ops are fully wired at the SYMBOL level -
 		 * their enum members (dsp_engine.h 700-761), install-table rows
 		 * (dsp_install_hooks.cpp), and SheepMem TVECT allocations
 		 * (dsp_thunks.cpp) all stay in place, so the CFM patch site resolves

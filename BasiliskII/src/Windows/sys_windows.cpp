@@ -522,7 +522,7 @@ void *Sys_open(const char *path_name, bool read_only, bool is_cdrom)
 #if defined(BINCUE)
 		/*
 		 * BIN/CUE images: open via open_bincue() using the original narrow
-		 * path_name (never the TCHAR buffer — wrong under UNICODE builds).
+		 * path_name (never the TCHAR buffer - wrong under UNICODE builds).
 		 * Match Unix Sys_open: on success return immediately; do not require
 		 * CreateFile on the .cue text file (that only produced a useless
 		 * handle and hid open_bincue failures when the cue path was wrong).

@@ -15,8 +15,8 @@
  *  MUST NOT transitively pull in display_mode_controller.h, so the public
  *  helper DSpMapStateToDMCOwner() returns uint32_t. gfxaccel-internal
  *  consumers (dsp_draw_context.mm SetState handler; the bg/fg hooks)
- *  include THIS private header and call the typed wrapper — which is a
- *  trivial cast — so they get the proper DMCOwner enum type without
+ *  include THIS private header and call the typed wrapper - which is a
+ *  trivial cast - so they get the proper DMCOwner enum type without
  *  leaking DMC into every DSp public consumer.
  */
 
@@ -31,7 +31,7 @@ extern "C" {
 #endif
 
 /*
- *  Typed wrapper over DSpMapStateToDMCOwner() — returns the proper DMCOwner
+ *  Typed wrapper over DSpMapStateToDMCOwner() - returns the proper DMCOwner
  *  enum for call sites inside the gfxaccel tree. Implementation is a trivial
  *  static-inline cast of the uint32_t-typed public function declared in
  *  include/dsp_draw_context.h.

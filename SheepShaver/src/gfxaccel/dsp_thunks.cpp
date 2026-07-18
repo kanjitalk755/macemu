@@ -7,7 +7,7 @@
  *  The TVECTs must exist so CFM FindLibSymbol resolution can return stable
  *  function pointers even before the handler bodies ship.
  *
- *  Pattern: mirrors rave_thunks.cpp:AllocateRaveTVECT verbatim — 32-byte
+ *  Pattern: mirrors rave_thunks.cpp:AllocateRaveTVECT verbatim - 32-byte
  *  TVECT (8-byte header + 24-byte thunk code that writes the sub-opcode
  *  to a scratch word, triggers NATIVE_DSP_DISPATCH, and returns).
  */
@@ -19,7 +19,7 @@
 
 #include <cstring>
 
-/* Exported — CFM FindLibSymbol resolver reads this table when the
+/* Exported - CFM FindLibSymbol resolver reads this table when the
  * emulated app looks up "DSpContext_Reserve" etc. against the fake
  * DrawSprocketLib linkage fragment. Additional entries are populated as
  * more sub-opcode ranges land. */
@@ -31,7 +31,7 @@ uint32_t dsp_method_tvects[DSP_MAX_SUBOPCODE] = {};
  *
  * Bug fix (sims-dsp-subop-mismatch): this used to be `static`,
  * but `DSpDispatch` (in dsp_dispatch.cpp) MUST read the sub-opcode from
- * this scratch word — NOT from r3 (which carries the guest's first real
+ * this scratch word - NOT from r3 (which carries the guest's first real
  * function argument, e.g. a ctxRef pointer). Mirrors rave_scratch_addr
  * which is similarly file-scope-but-exported. */
 uint32_t dsp_scratch_addr = 0;
@@ -120,7 +120,7 @@ void DSpThunksInit(void)
 
 	/* TVECTs for sub-opcodes 0/1/2 (Startup, Shutdown, GetVersion).
 	 * These three entry points are the CFM availability-probe path per DSp 1.7
-	 * PDF p.10 — apps call FindSymbol("DSpStartup") FIRST, before any context
+	 * PDF p.10 - apps call FindSymbol("DSpStartup") FIRST, before any context
 	 * API. These TVECTs let DSpInstallHooks patch them into the emulated
 	 * DrawSprocketLib symbol table. */
 	for (int op = kDSpStartup; op <= kDSpGetVersion; op++) {
@@ -239,7 +239,7 @@ void DSpThunksInit(void)
 	/* TVECTs for the 33 real-but-not-yet-installed DrawSprocketLib PEF
 	 * exports (sub-opcodes 700..761). DSpInstallHooks needs a non-zero
 	 * dsp_method_tvects[subop] for every installed symbol so the
-	 * 4-instruction CFM patch can branch into it — so the symbols must have
+	 * 4-instruction CFM patch can branch into it - so the symbols must have
 	 * TVECTs allocated here even though their handler BODIES land elsewhere.
 	 * dsp_method_tvects[] is sized by DSP_MAX_SUBOPCODE so no array-size
 	 * change beyond the enum bump.

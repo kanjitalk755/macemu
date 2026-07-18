@@ -1,5 +1,5 @@
 # What
-​
+
 sheep_net is a character virtual device that bridge between BasiliskII and Physical Ethernet card(P)
 
 Here is logical diagram:
@@ -30,7 +30,7 @@ B <== S <== P: masquerade MAC, convert Physical to Fake
 
 ## How to compile
 ```
-​cd Linux/NetDriver
+cd Linux/NetDriver
 make
 //create sheep_net device node
 sudo make dev

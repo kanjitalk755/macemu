@@ -86,7 +86,7 @@ struct binary_function {
  * MSVC (x64): single-inheritance PMFs are a plain code pointer, and the
  * register calling convention passes `this` like a free function's first
  * argument. That matches what dyngen expects from execute.ptr().
- * x86 MSVC uses __thiscall for members vs __cdecl for free funcs — leave
+ * x86 MSVC uses __thiscall for members vs __cdecl for free funcs - leave
  * the fast path off there (JIT should use MinGW-style thunks if needed).
  */
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_AMD64))
@@ -341,7 +341,7 @@ class nv_mem_fun1_t : public std::binary_function<T, A, R> {
 		code[0] = 0x8B; code[1] = 0x4C; code[2] = 0x24; code[3] = 0x08;
 		/* push dword [esp+0xC] */
 		code[4] = 0xFF; code[5] = 0x74; code[6] = 0x24; code[7] = 0x0C;
-		/* call dword ptr [imm32] — absolute address of slot after code */
+		/* call dword ptr [imm32] - absolute address of slot after code */
 		void **slot = (void **)(buf + code_len);
 		/* Single-inheritance MSVC PMF is a plain code pointer */
 		union { pmf_t m; void *raw; } u;

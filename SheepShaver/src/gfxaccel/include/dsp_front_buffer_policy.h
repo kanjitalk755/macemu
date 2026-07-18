@@ -25,7 +25,7 @@ static inline bool DSpShouldReuseBackBufferCGrafPtrForFrontBuffer(
 	/* The front buffer is the visible screen; the back buffer is the draw
 	 * target. They must NOT alias, or the guest's double-buffering / page
 	 * arithmetic desyncs (observed as a half-buffer roll in Diablo II's
-	 * splash). Always vend a distinct front buffer — never reuse the back
+	 * splash). Always vend a distinct front buffer - never reuse the back
 	 * buffer's CGrafPtr. (Reverts the prior same-depth front==back reuse,
 	 * which did not fix the RAVE crash it targeted and collapsed double
 	 * buffering.) */
@@ -118,9 +118,9 @@ static inline bool DSpShouldRefreshFrontBufferStagingFromBackStaging(
 {
 	/* Only refresh when a SwapBuffers actually delivered a new visible
 	 * frame since the last copy, or the staging is being re-vended with a
-	 * new geometry (mode switch reusing the old allocation — its pixels
+	 * new geometry (mode switch reusing the old allocation - its pixels
 	 * have the wrong pitch and must be replaced). The front staging is
-	 * the guest's live screen surface — front-buffer-direct clients
+	 * the guest's live screen surface - front-buffer-direct clients
 	 * (never swap) draw 2D straight into it, and an unconditional
 	 * refresh replays the stale back-staging snapshot over their work on
 	 * every GetFrontBuffer reassert (The Sims: UI panels flicker to

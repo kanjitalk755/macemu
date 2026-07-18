@@ -42,13 +42,13 @@ extern "C" {
  *  and needs the bound visible cross-TU. Hoisting the constant into the
  *  public header preserves all existing uses (the original `#define` in
  *  dsp_draw_context.mm still compiles because it's compatible with the
- *  header-visible value). Keep this name — DSp tests and other cross-TU
+ *  header-visible value). Keep this name - DSp tests and other cross-TU
  *  walks (DSpVBLServiceCallback, DSpHandleBackgroundFromEmulThread, etc.)
  *  can reference this same header bound without re-defining.
  */
 #ifndef DSP_MAX_CONTEXTS
 /* 64 (was 8): DSpGetNextContext allocates a DISTINCT metadata context per
- * enumeration step (PDF p.16 — apps may retain every enumerated ref and
+ * enumeration step (PDF p.16 - apps may retain every enumerated ref and
  * read attributes later; Myth II does), so a full mode walk consumes
  * modes+1 slots. Stale enumeration contexts are recycled under table
  * pressure by DSpAllocMetadataContextHandle. Per-slot cost is one
@@ -58,7 +58,7 @@ extern "C" {
 extern struct DSpContextPrivate *DSpGetContext(uint32_t handle);
 
 /*
- *  Debug session `dsp-sims-enumeration-stall` fix (2026-04-19) — sentinel
+ *  Debug session `dsp-sims-enumeration-stall` fix (2026-04-19) - sentinel
  *  value for DSpContextPrivate::enumeration_mode_index indicating "not
  *  part of the GetFirstContext/GetNextContext enumeration chain". Applies
  *  to contexts created via DSpContext_Reserve and to contexts vended by
@@ -85,9 +85,9 @@ extern struct DSpContextPrivate *DSpGetContext(uint32_t handle);
  *  contract.
  *
  *  Takes a forward-declared `struct DSpContextAttributes *` (full def in
- *  dsp_engine.h — included by callers) to populate ctx->attr.
+ *  dsp_engine.h - included by callers) to populate ctx->attr.
  *
- *  Debug session `dsp-sims-enumeration-stall` fix (2026-04-19) — adds the
+ *  Debug session `dsp-sims-enumeration-stall` fix (2026-04-19) - adds the
  *  `enumeration_mode_index` arg. Callers on the GetFirstContext /
  *  GetNextContext path pass the 0-based index into s_dsp_modes[] that this
  *  metadata-only context was vended from; the value is stored on the
@@ -119,7 +119,7 @@ extern uint32_t DSpAllocMetadataContextHandle(
     uint32_t enumeration_mode_index);
 
 /*
- *  Debug session `dsp-sims-enumeration-stall` fix (2026-04-19) — read the
+ *  Debug session `dsp-sims-enumeration-stall` fix (2026-04-19) - read the
  *  enumeration_mode_index stored on a metadata-only context handle. Used
  *  by dsp_mode_enumerate.cpp's DSpGetNextContext_Core to advance the
  *  enumeration cursor without needing the full DSpContextPrivate struct
@@ -307,7 +307,7 @@ extern int32_t  DSpBlit_FastestHandler(uint32_t inBlitInfo, uint32_t inAsyncFlag
  *                          either ptr -> kDSpInvalidAttributesErr.
  *
  *  Self-consistent round-trip: Flatten then Restore reproduces
- *  the attr + max_frame_rate + dirty_grid_w/h subset. Pure RAM serialization —
+ *  the attr + max_frame_rate + dirty_grid_w/h subset. Pure RAM serialization -
  *  ZERO new concurrency primitive. Decl lands WITH the body per-export.
  */
 extern int32_t  DSpContext_FlattenHandler(uint32_t ctxRef, uint32_t outFlatContext);
@@ -328,12 +328,12 @@ extern int32_t  DSpContext_RestoreHandler(uint32_t inFlatContext, uint32_t outRe
  *  DSpContext_Switch (743) : r3=oldCtx, r4=newCtx. Requires a prior Queue
  *                          (old->queued_child == newRef, else kDSpInternalErr
  *                          per PDF p.27 "returns an error"); kills the OLD
- *                          context's piggyback VBL proc (old->vbl_proc_ptr = 0 —
+ *                          context's piggyback VBL proc (old->vbl_proc_ptr = 0 -
  *                          the VBL service walk early-outs on ==0); deactivates
  *                          OLD through SetState(Inactive); activates NEW through
  *                          SetState(Active); clears old->queued_child.
  *
- *  queued_child is a RAM-only single-writer emul-thread field — ZERO new
+ *  queued_child is a RAM-only single-writer emul-thread field - ZERO new
  *  concurrency primitive. Decl lands WITH the body per-export.
  */
 extern int32_t  DSpContext_QueueHandler(uint32_t parentCtx, uint32_t childCtx,
@@ -344,7 +344,7 @@ extern void     DSpContext_SetStateSwitchHandoff(uint32_t oldCtxRef);
 /*
  *  CLUT handlers.
  *
- *  The DSp 1.7 pp.56-57 wire-format —
+ *  The DSp 1.7 pp.56-57 wire-format -
  *  8-byte ColorSpec / 16-bit big-endian channels, pointer-before-index arg
  *  order (entriesAddr, inStartingEntry, inEntryCount); inEntryCount is a
  *  COUNT, not an inclusive last index. The 16<->8 conversion is confined
@@ -364,9 +364,9 @@ extern int32_t  DSpGetActiveCLUTSnapshot(uint8_t out_clut_bytes[768]);
  *  Gamma-fade handlers.
  *
  *  Argument layout per dsp_dispatch.cpp r4..r7 marshalling:
- *    FadeGammaIn  (ctxRef, durationVbls)                 — sub-opcode 402
- *    FadeGammaOut (ctxRef, durationVbls)                 — sub-opcode 403
- *    FadeGamma    (ctxRef, percent, durationVbls, colorAddr) — sub-opcode 404
+ *    FadeGammaIn  (ctxRef, durationVbls)                 - sub-opcode 402
+ *    FadeGammaOut (ctxRef, durationVbls)                 - sub-opcode 403
+ *    FadeGamma    (ctxRef, percent, durationVbls, colorAddr) - sub-opcode 404
  *
  *  Debug session `dsp-sims-post-reserve-black-screen` (2026-04-19) fix:
  *  FadeGammaIn / FadeGammaOut / FadeGamma now accept ctxRef == 0 as the
@@ -396,8 +396,8 @@ extern int32_t  DSpContext_FadeGammaHandler(uint32_t ctxRef,
  *  VBL Service handlers.
  *
  *  Argument layout per dsp_dispatch.cpp r4..r6 marshalling:
- *    SetVBLProc   (ctxRef, procPtr, refCon)               — sub-opcode 500
- *    GetVBLProc   (ctxRef, procOutAddr, refConOutAddr)    — sub-opcode 503
+ *    SetVBLProc   (ctxRef, procPtr, refCon)               - sub-opcode 500
+ *    GetVBLProc   (ctxRef, procOutAddr, refConOutAddr)    - sub-opcode 503
  */
 extern int32_t  DSpContext_SetVBLProcHandler(uint32_t ctxRef,
                                              uint32_t procPtr,
@@ -410,7 +410,7 @@ extern int32_t  DSpContext_GetVBLProcHandler(uint32_t ctxRef,
  *  Canonical DSpProcessEvent
  *  (sub-opcode 750). DSp 1.7 PDF p.58:
  *    OSStatus DSpProcessEvent(EventRecord *inEvent, Boolean *outEventWasProcessed)
- *  NO ctxRef — the app passes its OWN event in; DSp inspects it for the
+ *  NO ctxRef - the app passes its OWN event in; DSp inspects it for the
  *  suspend/resume osEvt it must handle, drives context state, and reports via
  *  the Boolean out-param whether it consumed the event (honest false for
  *  unhandled events). The dispatch case routes r3 = inEventAddr
@@ -419,14 +419,14 @@ extern int32_t  DSpContext_GetVBLProcHandler(uint32_t ctxRef,
  *  This is the OPPOSITE direction to the retired sub-op-600 dequeue
  *  handler (the old DSpContext_* ProcessEvent reader export), which was
  *  retired (retire, NOT repurpose). The SPSC input-fanout ring it
- *  observed is KEPT write-only — it currently has no reader of any
- *  kind — pending a decision on the iOS input-fanout design.
+ *  observed is KEPT write-only - it currently has no reader of any
+ *  kind - pending a decision on the iOS input-fanout design.
  */
 extern int32_t  DSpProcessEventHandler(uint32_t inEventAddr,
                                        uint32_t outProcessedAddr);
 
 /*
- *  VBL-bounded release — registered as a vbl_source secondary callback in
+ *  VBL-bounded release - registered as a vbl_source secondary callback in
  *  DSpInit (dsp_engine.cpp). Drains the release FIFO; releases each
  *  entry's back-texture before its back-buffer.
  */
@@ -481,7 +481,7 @@ enum {
  *  the VBL release-FIFO drain immediately on the calling (main==emul)
  *  thread. Called from the UIKit lifecycle hooks (dsp_engine.cpp) because
  *  gfxaccel_handle_background_enter pauses the VBL source before invoking
- *  them — the VBL drain chain cannot run while backgrounded. No-ops
+ *  them - the VBL drain chain cannot run while backgrounded. No-ops
  *  (leaving the pending bits set for the in-flight tick's own drain) when
  *  called from inside the VBL callback chain.
  */
@@ -491,7 +491,7 @@ extern void     DSpDrainLifecycleSync(void);
  *  Emul-thread handler bodies invoked from the VBL
  *  drain. Exported so test-harness code (and the draw-context drain
  *  dispatcher) can invoke them directly. Both iterate the DSp context
- *  table on the emul thread — callers MUST NOT invoke from the main
+ *  table on the emul thread - callers MUST NOT invoke from the main
  *  thread; use the NotificationCenter / gfxaccel_set_dsp_*_hook path for
  *  external triggers.
  */
@@ -516,7 +516,7 @@ extern uint32_t DSpExchangeBgFgPending(void);
  *  The public export is uint32_t (not the controller's typed
  *  enum) so this public DSp header stays free of the controller's own
  *  header. The returned value is binary-compatible with the controller
- *  owner enum — consumers that have already pulled in that header can
+ *  owner enum - consumers that have already pulled in that header can
  *  cast directly, or use the typed inline wrapper
  *  DSpMapStateToDMCOwnerTyped() exported by the private helper header
  *  dsp_engine_internal.h (gfxaccel-tree-internal only).

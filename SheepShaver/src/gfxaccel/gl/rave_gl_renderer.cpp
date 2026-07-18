@@ -416,7 +416,7 @@ static uint32_t notice_pixel_type(const RaveDrawPrivate *priv)
 	/* The image-buffer format was resolved when the context was created.
 	 * It must NOT be re-derived from priv->deviceAddr here: clients may pass
 	 * a stack-allocated TQADevice to QADrawContextNew (MechWarrior 2 does),
-	 * so by notice time that memory holds garbage — re-walking it produced
+	 * so by notice time that memory holds garbage - re-walking it produced
 	 * an RGB32 answer for a game that software-renders 555 into the buffer. */
 	if (priv &&
 	    (priv->noticePixelType == kRaveNoticePixelRGB16 ||
@@ -698,7 +698,7 @@ static void apply_blend(RaveDrawPrivate *priv)
 	int blend = (int)priv->state[9].i; /* kQATag_Blend */
 	auto &ext = gfx_gl_ext();
 	if (blend == 2) {
-		/* OpenGL blend factors — map common GL enums if present */
+		/* OpenGL blend factors - map common GL enums if present */
 		uint32_t src = priv->state[109].i;
 		uint32_t dst = priv->state[110].i;
 		auto map = [](uint32_t f) -> GLenum {
@@ -1072,7 +1072,7 @@ static void apply_fog(RaveDrawPrivate *priv)
 	float fend = priv->state[23].f;
 	float fdens = priv->state[24].f;
 	if (fogMode == 4 && fstart >= 0.f && fstart < fend && fdens > fend) {
-		/* QD3D linear fog mislabeled as Exp2 — treat as linear */
+		/* QD3D linear fog mislabeled as Exp2 - treat as linear */
 		fogMode = 2;
 	}
 	s_current_fog_mode = fogMode;
@@ -1214,7 +1214,7 @@ static void apply_draw_state(RaveDrawPrivate *priv, bool textured)
 static void emit_texcoords(const HostV &v)
 {
 	/* glTexCoord4f(s,t,r,q): after perspective divide s' = s/q.
-	 * Pass (u_ow, v_ow, 0, invW) so s' = u, t' = v — Metal overW parity. */
+	 * Pass (u_ow, v_ow, 0, invW) so s' = u, t' = v - Metal overW parity. */
 	float q = (v.invW > 1e-8f) ? v.invW : 1.f;
 	float q2 = (v.invW2 > 1e-8f) ? v.invW2 : q;
 	auto &ext = gfx_gl_ext();
@@ -1927,7 +1927,7 @@ int32_t NativeSubmitMultiTextureParams(uint32_t drawContextAddr, uint32_t nVerti
 		float invW = ReadMacFloat(srcAddr + 0);
 		float uOverW = ReadMacFloat(srcAddr + 4);
 		float vOverW = ReadMacFloat(srcAddr + 8);
-		/* Metal layout: (uOverW, invW-vOverW, invW, 0) — keep overW for TexCoord4 */
+		/* Metal layout: (uOverW, invW-vOverW, invW, 0) - keep overW for TexCoord4 */
 		dst[i * 4 + 0] = uOverW;
 		dst[i * 4 + 1] = invW - vOverW; /* V flip, still /w form */
 		dst[i * 4 + 2] = invW;
@@ -2306,7 +2306,7 @@ int32_t NativeClearDrawBuffer(uint32_t drawContextAddr, uint32_t rectAddr, uint3
 		if (right <= left || bottom <= top) return kQANoErr;
 		if (right > left && bottom > top) {
 			glEnable(GL_SCISSOR_TEST);
-			/* FBO: bottom-left origin — RAVE top-left → convert */
+			/* FBO: bottom-left origin - RAVE top-left -> convert */
 			int32_t sy = (int32_t)priv->metal->h - bottom;
 			glScissor(left, sy, right - left, bottom - top);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -2463,7 +2463,7 @@ void RaveTextureUploadBatchEnd(void) { if (GfxGLDeviceMakeCurrent()) glFlush(); 
 
 /*
  * Live pixmap re-upload (Metal implementation lives in rave_metal_renderer.mm).
- * Re-reads Mac pixmap → BGRA → RaveUploadMipLevel so QD3D Interactive Renderer
+ * Re-reads Mac pixmap -> BGRA -> RaveUploadMipLevel so QD3D Interactive Renderer
  * games that rewrite texture memory between frames stay correct.
  */
 void RaveRefreshTextureFromPixmap(RaveResourceEntry *entry)

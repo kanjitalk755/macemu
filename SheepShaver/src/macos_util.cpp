@@ -37,7 +37,7 @@
 #define DEBUG 0
 #include "debug.h"
 
-/* ENABLE_NATIVE_MICROSECONDS_PATCH (default 0) lives in emul_op.h — the
+/* ENABLE_NATIVE_MICROSECONDS_PATCH (default 0) lives in emul_op.h - the
  * InterfaceLib Microseconds patch is superseded by the native Cinepak decoder
  * and its audio thrash-mixer crashed. See that header for the full rationale. */
 
@@ -414,8 +414,8 @@ void InitCallUniversalProc()
 		&& ENABLE_NATIVE_CINEPAK_PATCH
 	/* Hook Component Manager searches (OpenDefaultComponent AND
 	   FindNextComponent). On the first request for an image decompressor
-	   ('imdc'), we register our native Cinepak component just-in-time —
-	   newest registration is found first — then both hooks restore
+	   ('imdc'), we register our native Cinepak component just-in-time -
+	   newest registration is found first - then both hooks restore
 	   themselves. */
 	CinepakInstallHooks();
 #endif

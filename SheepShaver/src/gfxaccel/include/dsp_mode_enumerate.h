@@ -93,11 +93,11 @@ extern int32_t DSpGetNextContextHandler(uint32_t prevCtxRef,
  *    - Invokes DSpFindBestContext_Core (Tier 0 = depth-mask overlap, Tier 1
  *      = bit-depth preference, Tier 2 = resolution match, Tier 3 = refresh
  *      no-op under the frequency=0 policy).
- *    - Core returning nullptr → kDSpContextNotFoundErr (canonical).
- *    - Core returning a mode → allocate a DSpContextPrivate via
+ *    - Core returning nullptr -> kDSpContextNotFoundErr (canonical).
+ *    - Core returning a mode -> allocate a DSpContextPrivate via
  *      DSpAllocFirstContextHandle, populate ctx->attr from the matched
  *      mode, write handle to outContextRefAddr via WriteMacInt32, return
- *      kDSpNoErr.  Table-full → kDSpInternalErr.
+ *      kDSpNoErr.  Table-full -> kDSpInternalErr.
  */
 extern int32_t DSpFindBestContextHandler(uint32_t attrAddr,
                                           uint32_t outContextRefAddr);
@@ -116,7 +116,7 @@ extern size_t DSpUserSelectableModeCount(
  *  DSpContext_GetAttributes dispatch handler (sub-opcode 202).
  *
  *  Lives in dsp_draw_context.mm (NOT dsp_mode_enumerate.cpp) because it
- *  operates on DSpContextPrivate — the context table is private to
+ *  operates on DSpContextPrivate - the context table is private to
  *  dsp_draw_context.mm per the DMC-invariant discipline. Prototype kept in
  *  this header for parity / discoverability with the other sub-opcode
  *  handlers (DSpGetFirstContextHandler, DSpFindBestContextHandler).
@@ -129,7 +129,7 @@ extern size_t DSpUserSelectableModeCount(
  *
  *  Vends ctx->attr verbatim (stored as-reserved at Reserve time). PDF p.18
  *  "as-active" reading is observationally equivalent because FindBest
- *  returns exact-match or kDSpContextNotFoundErr — no substitution.
+ *  returns exact-match or kDSpContextNotFoundErr - no substitution.
  *  Revisit if substitution is ever introduced.
  */
 extern int32_t DSpContext_GetAttributesHandler(uint32_t ctxRef,

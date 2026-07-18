@@ -54,7 +54,7 @@ extern "C" void DSpRestoreMainDevicePixMap(struct DSpContextPrivate *ctx);
  * VBL-driven auto-publish shim. Defined in dsp_draw_context.mm (next to
  * DSpVBLServiceCallback so the VBL callbacks are co-located). The
  * register/unregister pair below in DSpInit / DSpShutdownHandler is the
- * only call site — secondary-callback fan-out is owned by vbl_source.mm
+ * only call site - secondary-callback fan-out is owned by vbl_source.mm
  * after registration. */
 extern "C" void DSpVBLCompositorPublishCallback(void *cb_ctx,
                                                  void *drawable,
@@ -81,7 +81,7 @@ bool dsp_logging_enabled = accel_log_subsystem_on("dsp");
  *
  *    - dsp_registered: flipped true once DSpInit runs; used by
  *      DSpIsRegistered() and by matching Shutdown teardown. Distinct
- *      from dsp_startup_refcount — DSpInit is the PPC-thread bring-up
+ *      from dsp_startup_refcount - DSpInit is the PPC-thread bring-up
  *      hook (VideoInstallAccel), DSpStartup/Shutdown is the emulated-app
  *      lifecycle refcount.
  *    - dsp_startup_refcount: Startup/Shutdown call count. The
@@ -111,7 +111,7 @@ typedef int16 (*DSpReplaceGestaltProc)(uint32, uint32, uint32);
  *  Written by main-thread (observer hook via gfxaccel_resources.mm C shim);
  *  read + cleared by emul-thread (VBL secondary-callback drain chain in
  *  dsp_draw_context.mm, or the synchronous drain below). Matches the
- *  memory-warning single-word atomic pattern — _Atomic counters are the ONE
+ *  memory-warning single-word atomic pattern - _Atomic counters are the ONE
  *  sanctioned DSp concurrency primitive; no mutex / @synchronized.
  */
 static std::atomic<uint32_t> s_dsp_bg_fg_pending{0};
@@ -128,7 +128,7 @@ static std::atomic<uint32_t> s_dsp_bg_fg_pending{0};
  *  DSpDrainLifecycleSync. The synchronous drain is required on the
  *  background edge: gfxaccel_handle_background_enter pauses the VBL
  *  source before this hook runs, so the VBL drain chain that used to be
- *  the sole consumer can never fire while backgrounded — back buffers
+ *  the sole consumer can never fire while backgrounded - back buffers
  *  were never released and the PixMap redirect never dropped.
  *  DSpDrainLifecycleSync defers to the in-flight tick when called inside
  *  the VBL callback chain, and SwapBuffers' re-entry revalidation
@@ -158,7 +158,7 @@ static void DSpOnForeground(void * /*ctx*/)
 
 /*
  *  VBL-drain bridge. Called from DSpVBLBackgroundForegroundDrain in
- *  dsp_draw_context.mm — isolates s_dsp_bg_fg_pending so the draw-context
+ *  dsp_draw_context.mm - isolates s_dsp_bg_fg_pending so the draw-context
  *  file doesn't need to know about the atomic. atomic_exchange clears the
  *  slot with acquire semantics so the drain sees every release-store the
  *  lifecycle hook performed.
@@ -173,12 +173,12 @@ extern "C" uint32_t DSpExchangeBgFgPending(void)
  *  The context-lifecycle code replaces these with real attach/detach
  *  that pre-vend / release DSp front-buffer Metal textures when DSp has
  *  an active context. Until the engine has resources,
- *  both callbacks always return kGfxAccelResNoErr (0) — the mode
+ *  both callbacks always return kGfxAccelResNoErr (0) - the mode
  *  transition is unconditionally accepted.
  *
  *  Both handlers must NOT call back into DMC (the resource manager
  *  fan-out runs on the DMC writer's thread while holding the writer
- *  mutex — recursive subscribe/unsubscribe would deadlock; matches the
+ *  mutex - recursive subscribe/unsubscribe would deadlock; matches the
  *  RAVE threat model cited in rave_engine.cpp).
  */
 static int32_t DSpOnAttach(uint32_t /* engine_id */,
@@ -313,7 +313,7 @@ void DSpInit(void)
 	 *  DSpIsRegistered() probe works for DMC integration checks
 	 *  and for test isolation. Real gfxaccel_resources
 	 *  handler registration moves into DSpStartupHandler (below) so
-	 *  the refcount is the single source of truth for lifecycle —
+	 *  the refcount is the single source of truth for lifecycle -
 	 *  matching the DSp 1.7 API contract (Startup is where the
 	 *  subsystem actually initializes per resources/
 	 *  DrawSprocket1.7.pdf p.15).
@@ -346,18 +346,18 @@ void DSpInit(void)
 	 * the context table and applies the per-VBL fade interpolation. */
 	vbl_source_register_secondary_callback(DSpVBLGammaFadeCallback, NULL);
 
-	/* Register the VBL service callback —
+	/* Register the VBL service callback -
 	 * 4th VBL secondary callback slot. The callback body
 	 * atomic-increments s_dsp_vbl_count and runs the
 	 * per-context walk + PPC VBLProc invocation. */
 	vbl_source_register_secondary_callback(DSpVBLServiceCallback, NULL);
 
 	/* Register the DSp VBL
-	 * compositor publish callback — 5th and FINAL VBL secondary callback
-	 * (VBL_SECONDARY_CALLBACK_MAX raised 4 → 5 in vbl_source.h).
+	 * compositor publish callback - 5th and FINAL VBL secondary callback
+	 * (VBL_SECONDARY_CALLBACK_MAX raised 4 -> 5 in vbl_source.h).
 	 * Fires AFTER DSpVBLServiceCallback so the GetVBLCount
 	 * atomic increment + user-VBLProc dispatch complete BEFORE we publish
-	 * — automatically preserves the "after user-VBLProc dispatch" ordering.
+	 * - automatically preserves the "after user-VBLProc dispatch" ordering.
 	 * Slot use is now 5 of 5; future DSp work MUST deprecate an
 	 * existing callback before registering another. Registration is
 	 * idempotent via the DSpInit early-return guard. */
@@ -366,7 +366,7 @@ void DSpInit(void)
 	/* Plug bg/fg hook bodies into the already-wired seam. Swift
 	 * BackgroundLifecycleObserver + gfxaccel_resources.mm C shim handle
 	 * the main-thread observer registration; DSp just plugs in flag-only
-	 * hooks — all real work happens on the emul thread via
+	 * hooks - all real work happens on the emul thread via
 	 * DSpVBLBackgroundForegroundDrain. */
 	gfxaccel_set_dsp_background_hook(DSpOnBackground, NULL);
 	gfxaccel_set_dsp_foreground_hook(DSpOnForeground, NULL);
@@ -380,7 +380,7 @@ int32_t DSpStartupHandler(void)
 	 *  Idempotent startup:
 	 *    First call registers the gfxaccel_resources handlers and
 	 *    bumps refcount to 1. Subsequent calls just bump the refcount
-	 *    and return kDSpNoErr without side effects — explicitly
+	 *    and return kDSpNoErr without side effects - explicitly
 	 *    permitted per DSp 1.7 API docs (resources/DrawSprocket1.7.pdf
 	 *    p.15: "Clients may call DSpStartup multiple times; the
 	 *    subsystem is reference-counted and a matching number of
@@ -411,14 +411,14 @@ int32_t DSpShutdownHandler(void)
 	/*
 	 *  Clean Shutdown:
 	 *    Decrements the refcount. When the refcount reaches 0 the
-	 *    final matching Shutdown releases all DSp state —
+	 *    final matching Shutdown releases all DSp state -
 	 *    unregistering from gfxaccel_resources and
 	 *    flipping dsp_registered = false.
 	 *
 	 *  Safe on already-shutdown: calling Shutdown when
 	 *  dsp_startup_refcount == 0 returns kDSpNoErr without crashing
 	 *  and without re-invoking unregister. Matches DSp 1.7 semantics
-	 *  (double-shutdown is a common classic-Mac app pattern — atexit-
+	 *  (double-shutdown is a common classic-Mac app pattern - atexit-
 	 *  style handlers pair DSpShutdown unconditionally).
 	 */
 	if (dsp_startup_refcount == 0) {
@@ -435,26 +435,26 @@ int32_t DSpShutdownHandler(void)
 		 * DSpInit's DSpBuildModesFromVModes call. Idempotent: an
 		 * already-empty cache is a no-op. */
 		DSpClearModes();
-		/* Unregister FIRST in reverse registration order — the publish shim
+		/* Unregister FIRST in reverse registration order - the publish shim
 		 * is the 5th/final callback registered. Idempotent: unregister is a
 		 * search-and-remove that does nothing when the callback isn't in the
 		 * table. */
 		vbl_source_unregister_secondary_callback(DSpVBLCompositorPublishCallback);
-		/* Unregister in reverse registration order — vbl-service is the 4th
+		/* Unregister in reverse registration order - vbl-service is the 4th
 		 * callback registered (now second to remove after the publish shim).
 		 * Idempotent: unregister is a search-and-remove that does nothing when
 		 * the callback isn't in the table. */
 		vbl_source_unregister_secondary_callback(DSpVBLServiceCallback);
-		/* Unregister in REVERSE registration order — gamma-fade second (after
+		/* Unregister in REVERSE registration order - gamma-fade second (after
 		 * vbl-service), then clut-latch, then release. Idempotent: unregister
 		 * is a search-and-remove that does nothing when the callback isn't in
 		 * the table. */
 		vbl_source_unregister_secondary_callback(DSpVBLGammaFadeCallback);
-		/* Unregister in REVERSE registration order — clut-latch first, release
+		/* Unregister in REVERSE registration order - clut-latch first, release
 		 * second. Idempotent: unregister is a search-and-remove that does
 		 * nothing when the callback isn't in the table. */
 		vbl_source_unregister_secondary_callback(DSpVBLClutLatchCallback);
-		/* Symmetric with DSpInit — drop the VBL secondary callback so the
+		/* Symmetric with DSpInit - drop the VBL secondary callback so the
 		 * release FIFO isn't invoked after full teardown. Idempotent:
 		 * unregister is a search-and-remove that does nothing when the
 		 * callback isn't in the table. */
