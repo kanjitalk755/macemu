@@ -45,6 +45,7 @@
 #include <string.h>
 #include <signal.h>
 #include <errno.h>
+#include <stdint.h>
 
 #ifdef HAVE_PTHREADS
 # include <pthread.h>

@@ -353,7 +353,7 @@ if [[ "$WANT_GTK" = "GTK3" -o "$WANT_GTK" = "any" ]]; then
     WANT_GTK=GTK3
     GUI_CFLAGS="$GTK3_CFLAGS"
     GUI_LIBS="$GTK3_LIBS"
-    LDFLAGS="$LDFLAGS -Wl,--export-dynamic"
+    LDFLAGS="$LDFLAGS -Wl,-export_dynamic"
     AC_CHECK_PROG([ac_cv_gcr], [glib-compile-resources], [yes])
     if [[ "$ac_cv_gcr" = "yes" ]]; then
       GCR="glib-compile-resources"
