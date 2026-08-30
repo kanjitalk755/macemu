@@ -1660,6 +1660,7 @@
 					../kpx_cpu/src,
 					../kpx_cpu/include,
 					../include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				PREBINDING = NO;
@@ -1705,6 +1706,7 @@
 					../kpx_cpu/src,
 					../kpx_cpu/include,
 					../include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				"MACOSX_DEPLOYMENT_TARGET[arch=x86_64]" = 10.6;
@@ -1731,6 +1733,7 @@
 				HEADER_SEARCH_PATHS = (
 					../Unix,
 					../include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				PREBINDING = NO;
@@ -1753,6 +1756,7 @@
 				HEADER_SEARCH_PATHS = (
 					../Unix,
 					../include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				PREBINDING = NO;
@@ -1819,6 +1823,7 @@
 					../kpx_cpu/src,
 					../kpx_cpu/include,
 					../include,
+					/opt/local/include,
 				);
 				INFOPLIST_FILE = Info.plist.in;
 				INFOPLIST_PREFIX_HEADER = "";
@@ -1907,6 +1912,7 @@
 					../kpx_cpu/src,
 					../kpx_cpu/include,
 					../include,
+					/opt/local/include,
 				);
 				INFOPLIST_EXPAND_BUILD_SETTINGS = NO;
 				INFOPLIST_FILE = Info.plist.in;
@@ -2028,6 +2034,7 @@
 				HEADER_SEARCH_PATHS = (
 					../kpx_cpu/src,
 					../kpx_cpu/include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
@@ -2073,6 +2080,7 @@
 				HEADER_SEARCH_PATHS = (
 					../kpx_cpu/src,
 					../kpx_cpu/include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
@@ -2120,6 +2128,7 @@
 				HEADER_SEARCH_PATHS = (
 					../kpx_cpu/src,
 					../kpx_cpu/include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
@@ -2165,6 +2174,7 @@
 				HEADER_SEARCH_PATHS = (
 					../kpx_cpu/src,
 					../kpx_cpu/include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
@@ -2236,6 +2246,7 @@
 					../kpx_cpu/src,
 					../kpx_cpu/include,
 					../include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				PREBINDING = NO;
@@ -2267,6 +2278,7 @@
 					../kpx_cpu/src,
 					../kpx_cpu/include,
 					../include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				PREBINDING = NO;
@@ -2298,6 +2310,7 @@
 					../kpx_cpu/src,
 					../kpx_cpu/include,
 					../include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				PREBINDING = NO;
@@ -2327,6 +2340,7 @@
 					../kpx_cpu/src,
 					../kpx_cpu/include,
 					../include,
+					/opt/local/include,
 				);
 				INSTALL_PATH = /usr/local/lib;
 				PREBINDING = NO;

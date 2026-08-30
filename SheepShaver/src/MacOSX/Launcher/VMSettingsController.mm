@@ -31,7 +31,7 @@
 #include <unistd.h>
 
 #ifdef USE_SDL_VIDEO
-#include <SDL.h>
+#include "my_sdl.h"
 #endif
 
 // NSInteger was added in 10.5 SDK.
