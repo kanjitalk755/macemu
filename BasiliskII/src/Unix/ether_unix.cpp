@@ -143,7 +143,7 @@ static pthread_t ether_thread;				// Packet reception thread
 static pthread_attr_t ether_thread_attr;	// Packet reception thread attributes
 static bool thread_active = false;			// Flag: Packet reception thread installed
 static sem_t int_ack;						// Interrupt acknowledge semaphore
-static bool udp_tunnel;						// Flag: UDP tunnelling active, fd is the socket descriptor
+static int udp_fd = -1;						// fd of UDP tunnel socket
 static int net_if_type = -1;				// Ethernet device type
 static char *net_if_name = NULL;			// TUN/TAP device name
 static const char *net_if_script = NULL;	// Network config script
@@ -576,6 +576,7 @@ void ether_exit(void)
 	// Close sheep_net device
 	if (fd > 0)
 		close(fd);
+	fd = -1;
 
 	// Close slirp input buffer
 	if (slirp_input_fds[0] >= 0)
@@ -938,8 +939,17 @@ static int16 ether_do_write(uint32 arg)
 
 bool ether_start_udp_thread(int socket_fd)
 {
-	fd = socket_fd;
-	udp_tunnel = true;
+	// Ethernet device open too? Restart its thread to wait for both
+	if (thread_active) {
+#ifdef ENABLE_MACOSX_ETHERHELPER
+		if (net_if_type == NET_IF_ETHERHELPER) {
+			printf("WARNING: etherhelper can't be combined with the UDP tunnel\n");
+			return false;
+		}
+#endif
+		stop_thread();
+	}
+	udp_fd = socket_fd;
 	return start_thread();
 }
 
@@ -951,7 +961,7 @@ bool ether_start_udp_thread(int socket_fd)
 void ether_stop_udp_thread(void)
 {
 	stop_thread();
-	fd = -1;
+	udp_fd = -1;
 }
 
 
@@ -1038,16 +1048,25 @@ static void *receive_func(void *arg)
 
 		// Wait for packets to arrive
 #if USE_POLL
-		struct pollfd pf = {fd, POLLIN, 0};
-		int res = poll(&pf, 1, -1);
+		struct pollfd pf[2] = {{fd, POLLIN, 0}, {udp_fd, POLLIN, 0}};
+		int res = poll(pf, 2, -1);
 #else
 		fd_set rfds;
 		FD_ZERO(&rfds);
-		FD_SET(fd, &rfds);
+		int max_fd = -1;
+		if (fd >= 0) {
+			FD_SET(fd, &rfds);
+			max_fd = fd;
+		}
+		if (udp_fd >= 0) {
+			FD_SET(udp_fd, &rfds);
+			if (udp_fd > max_fd)
+				max_fd = udp_fd;
+		}
 		// A NULL timeout could cause select() to block indefinitely,
 		// even if it is supposed to be a cancellation point [MacOS X]
 		struct timeval tv = { 0, 20000 };
-		int res = select(fd + 1, &rfds, NULL, NULL, &tv);
+		int res = select(max_fd + 1, &rfds, NULL, NULL, &tv);
 #ifdef HAVE_PTHREAD_TESTCANCEL
 		pthread_testcancel();
 #endif
@@ -1089,21 +1108,24 @@ void ether_do_interrupt(void)
 	EthernetPacket ether_packet;
 	uint32 packet = ether_packet.addr();
 	ssize_t length;
-	for (;;) {
 
 #ifndef SHEEPSHAVER
-		if (udp_tunnel) {
-
-			// Read packet from socket
-			struct sockaddr_in from;
-			socklen_t from_len = sizeof(from);
-			length = recvfrom(fd, Mac2HostAddr(packet), 1514, 0, (struct sockaddr *)&from, &from_len);
-			if (length < 14)
-				break;
-			ether_udp_read(packet, length, &from);
-
-		} else
+	// Read packets from the UDP tunnel socket
+	while (udp_fd >= 0) {
+		struct sockaddr_in from;
+		socklen_t from_len = sizeof(from);
+		length = recvfrom(udp_fd, Mac2HostAddr(packet), 1514, 0, (struct sockaddr *)&from, &from_len);
+		if (length < 14)
+			break;
+		ether_udp_read(packet, length, &from);
+	}
 #endif
+
+	// Read packets from the Ethernet device
+	if (fd < 0)
+		return;
+	for (;;) {
+
 #ifdef ENABLE_MACOSX_ETHERHELPER
 		if (net_if_type == NET_IF_ETHERHELPER) {
 			unsigned short *pkt_len;

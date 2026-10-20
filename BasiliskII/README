@@ -539,12 +539,22 @@ udptunnel <"true" or "false">
   because the UDP tunnelling doesn't require any special kernel modules or
   network add-ons. It relies on IP broadcasting, however, so its range is
   limited. It should be fine though for doing a little file sharing or
-  playing Spectre.
+  playing Spectre. To keep the Internet as well, see "udpappletalkonly"
+  below.
 
 udpport <IP port number>
 
   This item specifies the IP port number to use for the "UDP Tunnel" mode.
   The default is 6066.
+
+udpappletalkonly <"true" or "false">
+
+  Setting this to "true", together with "udptunnel", sends only AppleTalk
+  packets through the UDP tunnel, and all other packets through the
+  Ethernet device given in the "ether" item. With "ether slirp", MacOS can
+  then share files, printers and games with other Basilisk II instances
+  over AppleTalk and reach the Internet at the same time. It can't be
+  combined with "etherhelper". The default is "false".
 
 redir <port redirection description>
 

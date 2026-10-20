@@ -69,6 +69,7 @@ uint8 ether_addr[6];			// Ethernet address (set by ether_init())
 static bool net_open = false;	// Flag: initialization succeeded, network device open (set by EtherInit())
 
 static bool udp_tunnel = false;	// Flag: tunnelling AppleTalk over UDP using BSD socket API
+static bool udp_appletalk_only = false;	// Flag: only AppleTalk is tunnelled, other packets use the Ethernet device
 static uint16 udp_port;
 static int udp_socket = -1;
 
@@ -110,6 +111,28 @@ static uint32 udp_broadcast_source_ip(void)
 #endif
 
 
+#if SUPPORTS_UDP_TUNNEL
+/*
+ *  Check whether Ethernet packet is AppleTalk (DDP or AARP, Phase 1 or 2)
+ */
+
+static bool is_apple_talk_packet(const uint8 *p, int len)
+{
+	if (len < 14)
+		return false;
+	uint16 type = (p[12] << 8) | p[13];
+	if (type == 0x809b || type == 0x80f3)
+		return true;
+	if (type <= 1500 && len >= 22 && p[14] == 0xaa && p[15] == 0xaa && p[16] == 0x03) {
+		static const uint8 ddp_snap[5] = {0x08, 0x00, 0x07, 0x80, 0x9b};
+		static const uint8 aarp_snap[5] = {0x00, 0x00, 0x00, 0x80, 0xf3};
+		return memcmp(p + 17, ddp_snap, 5) == 0 || memcmp(p + 17, aarp_snap, 5) == 0;
+	}
+	return false;
+}
+#endif
+
+
 /*
  *  Initialization
  */
@@ -118,6 +141,7 @@ void EtherInit(void)
 {
 	net_open = false;
 	udp_tunnel = false;
+	udp_appletalk_only = false;
 
 #if SUPPORTS_UDP_TUNNEL
 	// UDP tunnelling requested?
@@ -167,6 +191,14 @@ void EtherInit(void)
 				printf("WARNING: Cannot find this host's IP address, other hosts may not reach it through the UDP tunnel\n");
 		}
 
+		// Tunnel only AppleTalk, other packets through the Ethernet device?
+		if (PrefsFindBool("udpappletalkonly")) {
+			if (ether_init())
+				udp_appletalk_only = true;
+			else
+				printf("WARNING: Cannot open the Ethernet device, tunnelling all packets over UDP\n");
+		}
+
 		// Construct dummy Ethernet address from local IP address
 		ether_addr[0] = 'B';
 		ether_addr[1] = '2';
@@ -187,6 +219,8 @@ void EtherInit(void)
 
 		// Start thread for packet reception
 		if (!ether_start_udp_thread(udp_socket)) {
+			if (udp_appletalk_only)
+				ether_exit();
 			CLOSESOCKET(udp_socket);
 			udp_socket = -1;
 			return;
@@ -214,6 +248,8 @@ void EtherExit(void)
 				CLOSESOCKET(udp_socket);
 				udp_socket = -1;
 			}
+			if (udp_appletalk_only)
+				ether_exit();
 		} else
 #endif
 			ether_exit();
@@ -312,13 +348,13 @@ int16 EtherControl(uint32 pb, uint32 dce)
 
 		case kENetAddMulti:		// Add multicast address
 			D(bug(" AddMulti %08x%04x\n", ReadMacInt32(pb + eMultiAddr), ReadMacInt16(pb + eMultiAddr + 4)));
-			if (net_open && !udp_tunnel)
+			if (net_open && (!udp_tunnel || udp_appletalk_only))
 				return ether_add_multicast(pb);
 			return noErr;
 
 		case kENetDelMulti:		// Delete multicast address
 			D(bug(" DelMulti %08x%04x\n", ReadMacInt32(pb + eMultiAddr), ReadMacInt16(pb + eMultiAddr + 4)));
-			if (net_open && !udp_tunnel)
+			if (net_open && (!udp_tunnel || udp_appletalk_only))
 				return ether_del_multicast(pb);
 			return noErr;
 
@@ -330,6 +366,11 @@ int16 EtherControl(uint32 pb, uint32 dce)
 				if (udp_tunnel) {
 					if (udp_protocols.find(type) != udp_protocols.end())
 						return lapProtErr;
+					if (udp_appletalk_only) {
+						int16 err = ether_attach_ph(type, handler);
+						if (err != noErr)
+							return err;
+					}
 					udp_protocols[type] = handler;
 				} else
 					return ether_attach_ph(type, handler);
@@ -344,6 +385,8 @@ int16 EtherControl(uint32 pb, uint32 dce)
 				if (udp_tunnel) {
 					if (udp_protocols.erase(type) == 0)
 						return lapProtErr;
+					if (udp_appletalk_only)
+						ether_detach_ph(type);
 				} else
 					return ether_detach_ph(type);
 			}
@@ -368,6 +411,10 @@ int16 EtherControl(uint32 pb, uint32 dce)
 					// Copy packet to buffer
 					uint8 packet[1514];
 					int len = ether_wds_to_buffer(wds, packet);
+
+					// Only AppleTalk goes through the tunnel
+					if (udp_appletalk_only && !is_apple_talk_packet(packet, len))
+						return ether_write(wds);
 
 					// Extract destination address
 					uint32 dest_ip;
@@ -455,6 +502,10 @@ void ether_udp_read(uint32 packet, int length, struct sockaddr_in *from)
 {
 	// Drop packets sent by us
 	if (memcmp(Mac2HostAddr(packet) + 6, ether_addr, 6) == 0)
+		return;
+
+	// Only AppleTalk comes through the tunnel
+	if (udp_appletalk_only && !is_apple_talk_packet(Mac2HostAddr(packet), length))
 		return;
 
 #if MONITOR
