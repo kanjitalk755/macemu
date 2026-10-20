@@ -79,6 +79,37 @@ uint32 ether_data = 0;
 static map<uint16, uint32> udp_protocols;
 
 
+#if SUPPORTS_UDP_TUNNEL
+/*
+ *  Get local IP address that broadcasts are sent from (0 if unknown)
+ */
+
+static uint32 udp_broadcast_source_ip(void)
+{
+	uint32 ip = INADDR_ANY;
+	int s = socket(PF_INET, SOCK_DGRAM, 0);
+	if (s < 0)
+		return ip;
+	int on = 1;
+	setsockopt(s, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
+
+	// Connecting a UDP socket sends nothing, it only selects the route
+	struct sockaddr_in sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sin_family = AF_INET;
+	sa.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+	sa.sin_port = htons(udp_port);
+	if (connect(s, (struct sockaddr *)&sa, sizeof(sa)) == 0) {
+		socklen_t sa_length = sizeof(sa);
+		if (getsockname(s, (struct sockaddr *)&sa, &sa_length) == 0)
+			ip = ntohl(sa.sin_addr.s_addr);
+	}
+	CLOSESOCKET(s);
+	return ip;
+}
+#endif
+
+
 /*
  *  Initialization
  */
@@ -126,6 +157,15 @@ void EtherInit(void)
 				udp_ip = *(uint32 *)local->h_addr_list[0];
 		}
 		udp_ip = ntohl(udp_ip);
+
+		// Host name resolves to loopback (127.0.1.1 on Debian)? Use the broadcast source address
+		if (udp_ip == INADDR_ANY || (udp_ip >> 24) == 127) {
+			uint32 ip = udp_broadcast_source_ip();
+			if (ip != INADDR_ANY && (ip >> 24) != 127)
+				udp_ip = ip;
+			else
+				printf("WARNING: Cannot find this host's IP address, other hosts may not reach it through the UDP tunnel\n");
+		}
 
 		// Construct dummy Ethernet address from local IP address
 		ether_addr[0] = 'B';
