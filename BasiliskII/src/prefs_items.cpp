@@ -47,6 +47,7 @@ prefs_desc common_prefs_items[] = {
 	{"etherconfig", TYPE_STRING, false,"path of network config script"},
 	{"udptunnel", TYPE_BOOLEAN, false, "tunnel all network packets over UDP"},
 	{"udpport", TYPE_INT32, false,    "IP port number for tunneling"},
+	{"udpappletalkonly", TYPE_BOOLEAN, false, "tunnel only AppleTalk over UDP, other packets use ether"},
 	{"redir", TYPE_STRING, true,      "port forwarding for slirp"},
 	{"rom", TYPE_STRING, false,       "path of ROM file"},
 	{"bootdrive", TYPE_INT32, false,  "boot drive number"},
@@ -101,6 +102,7 @@ void AddPrefsDefaults(void)
 	SysAddSerialPrefs();
 	PrefsAddBool("udptunnel", false);
 	PrefsAddInt32("udpport", 6066);
+	PrefsAddBool("udpappletalkonly", false);
 	PrefsAddInt32("bootdriver", 0);
 	PrefsAddInt32("bootdrive", 0);
 	PrefsAddInt32("ramsize", 8 * 1024 * 1024);
