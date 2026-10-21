@@ -1240,7 +1240,7 @@ for most non-Apple keyboards</property>
               </packing>
             </child>
             <child>
-              <!-- n-columns=2 n-rows=6 -->
+              <!-- n-columns=2 n-rows=7 -->
               <object class="GtkGrid" id="network-pane">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
@@ -1386,6 +1386,24 @@ for most non-Apple keyboards</property>
                   <packing>
                     <property name="left-attach">1</property>
                     <property name="top-attach">4</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkCheckButton" id="udpappletalkonly">
+                    <property name="label" translatable="yes">Tunnel AppleTalk only (use Ethernet for Internet)</property>
+                    <property name="name">udpappletalkonly</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="halign">start</property>
+                    <property name="hexpand">False</property>
+                    <property name="draw-indicator">True</property>
+                    <signal name="toggled" handler="cb_check_box" swapped="no"/>
+                  </object>
+                  <packing>
+                    <property name="left-attach">0</property>
+                    <property name="top-attach">5</property>
+                    <property name="width">2</property>
                   </packing>
                 </child>
                 <child>
@@ -1763,7 +1781,7 @@ for most non-Apple keyboards</property>
                   </object>
                   <packing>
                     <property name="left-attach">0</property>
-                    <property name="top-attach">5</property>
+                    <property name="top-attach">6</property>
                     <property name="width">2</property>
                   </packing>
                 </child>
