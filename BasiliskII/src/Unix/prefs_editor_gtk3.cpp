@@ -152,7 +152,7 @@ const char *sysinfo = ABOUT_MODE "\nBuilt with " ABOUT_VIDEO " and " ABOUT_AUDIO
 
 // The widgets from prefs-editor.ui that need their values set on launch
 const char *check_boxes[] = {
-	"udptunnel", "keycodes", "ignoresegv", "idlewait", "jit", "jitfpu", "jitinline",
+	"udptunnel", "udpappletalkonly", "keycodes", "ignoresegv", "idlewait", "jit", "jitfpu", "jitinline",
 	"jitlazyflush", "jit68k", "gfxaccel", "swap_opt_cmd", "scale_nearest", "scale_integer", NULL };
 const char *inv_check_boxes[] = { "nocdrom", "nosound", "nogui", NULL };
 const char *entries[] = {
@@ -542,6 +542,16 @@ static void bind_sensitivity(const char *source_name, const char *target_name, G
 	g_object_bind_property(source, "active", target, "sensitive", GBindingFlags(flags | G_BINDING_SYNC_CREATE));
 }
 
+#ifndef SHEEPSHAVER
+// The Ethernet interface is used unless all packets are tunnelled over UDP
+static void cb_udp_ether_sensitivity(GtkToggleButton *, gpointer)
+{
+	bool tunnel = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "udptunnel")));
+	bool appletalk_only = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "udpappletalkonly")));
+	gtk_widget_set_sensitive(GTK_WIDGET(gtk_builder_get_object(builder, "ether")), !tunnel || appletalk_only);
+}
+#endif
+
 static void set_file_menu(GtkApplication *app)
 {
 	GtkBuilder *menubuilder = gtk_builder_new_from_resource(G_RES_PATH "menu.ui");
@@ -647,6 +657,7 @@ bool PrefsEditor(void)
 	hide_widget("udptunnel");
 	hide_widget("udpport");
 	hide_widget("udpport-label");
+	hide_widget("udpappletalkonly");
 	hide_widget("cpu");
 	hide_widget("cpu-label");
 	hide_widget("modelid");
@@ -660,12 +671,15 @@ bool PrefsEditor(void)
 	hide_widget("gfxaccel");
 	hide_widget("jit68k");
 	bind_sensitivity("udptunnel", "udpport");
+	bind_sensitivity("udptunnel", "udpappletalkonly");
 	bind_sensitivity("jit", "jitfpu");
 	bind_sensitivity("jit", "jitlazyflush");
 	bind_sensitivity("jit", "jitcachesize");
 	bind_sensitivity("jit", "jitcachesize-label");
 	bind_sensitivity("jit", "jitinline");
-	bind_sensitivity("udptunnel", "ether", G_BINDING_INVERT_BOOLEAN);
+	g_signal_connect(gtk_builder_get_object(builder, "udptunnel"), "toggled", G_CALLBACK(cb_udp_ether_sensitivity), NULL);
+	g_signal_connect(gtk_builder_get_object(builder, "udpappletalkonly"), "toggled", G_CALLBACK(cb_udp_ether_sensitivity), NULL);
+	cb_udp_ether_sensitivity(NULL, NULL);
 #endif
 	if (!is_jit_capable())
 		gtk_widget_set_sensitive(GTK_WIDGET(gtk_builder_get_object(builder, "jit-pane")), false);

@@ -1573,14 +1573,15 @@ static void create_input_pane(GtkWidget *top)
  *  "Serial/Network" pane
  */
 
-static GtkWidget *w_seriala, *w_serialb, *w_ether, *w_udp_port;
+static GtkWidget *w_seriala, *w_serialb, *w_ether, *w_udp_port, *w_udp_appletalk_only;
 
 // Set sensitivity of widgets
 static void set_serial_sensitive(void)
 {
 #if SUPPORTS_UDP_TUNNEL
-	gtk_widget_set_sensitive(w_ether, !PrefsFindBool("udptunnel"));
+	gtk_widget_set_sensitive(w_ether, !PrefsFindBool("udptunnel") || PrefsFindBool("udpappletalkonly"));
 	gtk_widget_set_sensitive(w_udp_port, PrefsFindBool("udptunnel"));
+	gtk_widget_set_sensitive(w_udp_appletalk_only, PrefsFindBool("udptunnel"));
 #endif
 }
 
@@ -1588,6 +1589,13 @@ static void set_serial_sensitive(void)
 static void tb_udptunnel(GtkWidget *widget)
 {
 	PrefsReplaceBool("udptunnel", GTK_TOGGLE_BUTTON(widget)->active);
+	set_serial_sensitive();
+}
+
+// "Tunnel AppleTalk only" button toggled
+static void tb_udpappletalkonly(GtkWidget *widget)
+{
+	PrefsReplaceBool("udpappletalkonly", GTK_TOGGLE_BUTTON(widget)->active);
 	set_serial_sensitive();
 }
 
@@ -1768,6 +1776,8 @@ static void create_serial_pane(GtkWidget *top)
 	w_udp_port = gtk_spin_button_new(GTK_ADJUSTMENT(adj), 0.0, 0);
 	gtk_widget_show(w_udp_port);
 	gtk_box_pack_start(GTK_BOX(hbox), w_udp_port, FALSE, FALSE, 0);
+
+	w_udp_appletalk_only = make_checkbox(box, STR_UDPAPPLETALKONLY_CTRL, "udpappletalkonly", G_CALLBACK(tb_udpappletalkonly));
 #endif
 
 	set_serial_sensitive();

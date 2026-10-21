@@ -205,6 +205,7 @@ user_string_def common_strings[] = {
 	{STR_ETHERNET_IF_CTRL, "Ethernet Interface"},
 	{STR_UDPTUNNEL_CTRL, "Tunnel MacOS Networking over UDP"},
 	{STR_UDPPORT_CTRL, "UDP Port Number"},
+	{STR_UDPAPPLETALKONLY_CTRL, "Tunnel AppleTalk Only (Use Ethernet for Internet)"},
 
 	{STR_MEMORY_MISC_PANE_TITLE, "Memory/Misc"},
 	{STR_RAMSIZE_CTRL, "MacOS RAM Size (MB)"},
