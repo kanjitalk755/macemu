@@ -2233,7 +2233,7 @@ int main(int argc, char *argv[])
 			_tcscat(b2_path, TEXT(".exe"));
 			HINSTANCE h = ShellExecute(GetDesktopWindow(), TEXT("open"),
 									   b2_path, TEXT(""), path, SW_SHOWNORMAL);
-			if ((int)h <= 32)
+			if ((INT_PTR)h <= 32)
 				ok = false;
 		}
 		if (!ok) {

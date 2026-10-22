@@ -375,6 +375,7 @@
 					../MacOSX,
 					../uae_cpu_2021,
 					../Unix,
+					/opt/local/include,
 				);
 				OTHER_CFLAGS = "-fwrapv";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -395,6 +396,7 @@
 					../MacOSX,
 					../uae_cpu_2021,
 					../Unix,
+					/opt/local/include,
 				);
 				OTHER_CFLAGS = "-fwrapv";
 				PRODUCT_NAME = "$(TARGET_NAME)";

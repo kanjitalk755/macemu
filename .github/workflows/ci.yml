@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: ${{ matrix.project }} linux-${{ matrix.arch.name }}
+    runs-on: ${{ matrix.arch.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - "BasiliskII"
+          - "SheepShaver"
+        arch:
+          - name: "x86_64"
+            runner: "ubuntu-26.04"
+          - name: "arm64"
+            runner: "ubuntu-26.04-arm"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install required packages
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential automake pkg-config \
+            libsdl3-dev libvhdi-dev libgtk-3-dev \
+            libgmp3-dev libmpfr-dev
+
+      - name: Build
+        shell: bash
+        run: |
+          cd ${{ matrix.project }}/src/Unix
+          echo "::group::Configure"
+          ./autogen.sh \
+            --with-sdl3 --enable-sdl-video --enable-sdl-audio \
+            --with-bincue
+          echo "::endgroup::"
+          echo "::group::Make"
+          make -j$(nproc)
+          echo "::endgroup::"
+
+      - name: Store build as artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.project }}-linux-${{ matrix.arch.name }}
+          path: ${{ matrix.project }}/src/Unix/${{ matrix.project }}
+
+  win:
+    name: ${{ matrix.project }} win-${{ matrix.arch.name }}
+    runs-on: ${{ matrix.arch.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - "BasiliskII"
+          - "SheepShaver"
+        arch:
+          - name: "x86_64"
+            runner: "windows-latest"
+            msys_packages: >-
+             mingw-w64-x86_64-gcc
+             mingw-w64-x86_64-sdl3
+             mingw-w64-x86_64-gtk2
+          - name: "arm64"
+            runner: "windows-11-arm"
+            msys_packages: >-
+              mingw-w64-clang-aarch64-clang
+              mingw-w64-clang-aarch64-sdl3
+              mingw-w64-clang-aarch64-gtk2
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - uses: msys2/setup-msys2@v2
+        name: Setup msys
+        with:
+          msystem: MINGW64
+          path-type: minimal
+          update: true
+          install: >-
+            ${{ matrix.arch.msys_packages }}
+            autotools
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          echo "::group::Configure"
+          export PATH="/mingw64/bin:$PATH"
+          export PATH="/clangarm64/bin:$PATH"
+          cd ${{ matrix.project }}
+          if [[ "${{ matrix.project }}" == "SheepShaver" ]]; then
+            make links
+          fi
+          cd src/Windows
+          ../Unix/autogen.sh --with-sdl3 --with-bincue --enable-jit-compiler
+          echo "::endgroup::"
+          echo "::group::Make"
+          make -j$(nproc)
+          echo "::endgroup::"
+
+      - name: Store build as artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.project }}-win-${{ matrix.arch.name }}
+          path: ${{ matrix.project }}/src/Windows/${{ matrix.project }}.exe
+
+  macos:
+    name: ${{ matrix.project.name }} macos-${{ matrix.arch.name }}
+    runs-on: ${{ matrix.arch.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - name: "BasiliskII"
+            project_file: "BasiliskII.xcodeproj"
+          - name: "SheepShaver"
+            project_file: "SheepShaver_Xcode8.xcodeproj"
+        arch:
+          - name: "x86_64"
+            runner: "macos-15-intel"
+            homebrew_path: "/usr/local/opt"
+          - name: "arm64"
+            runner: "macos-15"
+            homebrew_path: "/opt/homebrew"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup MacPorts
+        uses: melusina-org/setup-macports@v1
+
+      - name: Install required packages
+        shell: bash
+        run: |
+          port install gmp mpfr libsdl2
+
+      - name: Build
+        shell: bash
+        run: |
+          cd ${{ matrix.project.name }}/src/MacOSX
+          xcodebuild build -project ${{ matrix.project.project_file }} -configuration Release
+      - name: Store build as artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.project.name }}-macos-${{ matrix.arch.name }}
+          path: ${{ matrix.project.name }}/src/MacOSX/${{ matrix.project.name }}.app

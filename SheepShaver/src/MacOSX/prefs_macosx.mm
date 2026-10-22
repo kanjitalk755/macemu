@@ -31,7 +31,7 @@
 #include "VMSettingsController.h"
 
 #ifdef USE_SDL_VIDEO
-#include <SDL.h>
+#include "my_sdl.h"
 #else
 #define SDL_VERSION_ATLEAST(a,b,c)	0
 #endif

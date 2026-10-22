@@ -26,8 +26,13 @@
 #include <errno.h>
 
 #include "my_sdl.h"
+#ifdef USE_SDL3
+#include <SDL3/SDL_mutex.h>
+#include <SDL3/SDL_thread.h>
+#else
 #include <SDL_mutex.h>
 #include <SDL_thread.h>
+#endif
 
 #include <string>
 typedef std::basic_string<TCHAR> tstring;
@@ -649,7 +654,7 @@ static int tick_func(void *arg)
 
 #ifdef USE_SDL_VIDEO
 #if SDL_VERSION_ATLEAST(3, 0, 0)
-#include <SDL_video.h>
+#include <SDL3/SDL_video.h>
 #else
 #include <SDL_syswm.h>
 #endif
