@@ -832,7 +832,14 @@ sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip)
 	dump_disassembly(pc, 8, 8);
 
 	enter_mon();
+#if HAVE_MACH_EXCEPTIONS
+	// The faulting thread is suspended while this exception-server thread runs.
+	// QuitEmulator() would destroy SDL/AppKit windows off the main thread;
+	// dispatching shutdown to the suspended thread would deadlock instead.
+	// Let the Mach backend forward the original exception.
+#else
 	QuitEmulator();
+#endif
 
 	return SIGSEGV_RETURN_FAILURE;
 }
