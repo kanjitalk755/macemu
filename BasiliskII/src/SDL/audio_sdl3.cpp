@@ -30,6 +30,7 @@
 #include "audio.h"
 #include "audio_defs.h"
 
+#include <atomic>
 #include <queue>
 
 #define DEBUG 0
@@ -75,7 +76,7 @@ static void stop_threads();
 
 static SDL_Thread * interrupt_thread = NULL;
 static int interrupt_thread_func(void *data);
-static bool interrupt_thread_quit;
+static std::atomic<bool> interrupt_thread_quit;
 static SDL_AudioStream * interrupt_stream = NULL;
 
 /*
@@ -154,20 +155,26 @@ static void stop_threads() {
 	startup_thread = NULL;
 	//
 	interrupt_thread_quit = true;
+	if (audio_irq_done_sem != NULL)
+		SDL_SignalSemaphore(audio_irq_done_sem);
 	if (interrupt_thread != NULL)
 		SDL_WaitThread(interrupt_thread, NULL);
 	interrupt_thread = NULL;
+	if (audio_irq_done_sem != NULL) {
+		while (SDL_TryWaitSemaphore(audio_irq_done_sem)) {}
+	}
 	SDL_DestroyAudioStream(interrupt_stream);
+	interrupt_stream = NULL;
 }
 
 static bool close_sdl_audio() {
-	stop_threads();
+	bool had_stream = (main_open_sdl_stream != NULL);
 	if (main_open_sdl_stream) {
 		SDL_DestroyAudioStream(main_open_sdl_stream);
 		main_open_sdl_stream = NULL;
-		return true;
 	}
-	return false;
+	stop_threads();
+	return had_stream;
 }
 
 static bool open_audio(void)
@@ -288,13 +295,15 @@ static int interrupt_thread_func(void *data)
 #endif
 
 	if (AudioStatus.num_sources) {
-		while (SDL_GetAudioStreamQueued(interrupt_stream) < target_queue_size) {
+		while (!interrupt_thread_quit && SDL_GetAudioStreamQueued(interrupt_stream) < target_queue_size) {
 			// Trigger audio interrupt to get new buffer
 			D(bug("stream: triggering irq\n"));
 			SetInterruptFlag(INTFLAG_AUDIO);
 			TriggerInterrupt();
 			D(bug("stream: waiting for ack\n"));
 			SDL_WaitSemaphore(audio_irq_done_sem);
+			if (interrupt_thread_quit)
+				break;
 			D(bug("stream: ack received\n"));
 			
 			// Get size of audio data
@@ -359,7 +368,8 @@ static int interrupt_thread_func(void *data)
 
 	// Audio isn't active or the mac doesn't have any right now.
 	// Wait a little while.
-	SDL_Delay(INTERRUPT_RETRY_MS);
+	if (!interrupt_thread_quit)
+		SDL_Delay(INTERRUPT_RETRY_MS);
 
 	} // while
 	return 0;
