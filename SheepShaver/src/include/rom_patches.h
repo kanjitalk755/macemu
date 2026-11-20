@@ -38,5 +38,6 @@ extern void InstallDrivers(void);
 
 extern void AddSifter(uint32 type, int16 id);
 extern bool FindSifter(uint32 type, int16 id);
+static inline bool HasNanoKernel2(void) { return false; }
 
 #endif

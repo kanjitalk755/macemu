@@ -37,6 +37,10 @@
 #define DEBUG 0
 #include "debug.h"
 
+#if defined(SHEEPSHAVER) && defined(ENABLE_GFXACCEL)
+void GfxAccelRequestInstallSweep(void);
+#endif
+
 
 // Sound input driver
 static const uint8 sound_input_driver[] = {	// .AppleSoundInput driver header
@@ -115,6 +119,11 @@ void CheckLoad(uint32 type, int16 id, uint16 *p, uint32 size)
 	uint16 *p16;
 	uint32 base;
 	D(bug("vCheckLoad %c%c%c%c (%08x) ID %d, data %p, size %d\n", type >> 24, (type >> 16) & 0xff, (type >> 8) & 0xff, type & 0xff, type, id, p, size));
+
+#if defined(SHEEPSHAVER) && defined(ENABLE_GFXACCEL)
+	if (type == FOURCC('c','f','r','g'))
+		GfxAccelRequestInstallSweep();
+#endif
 
 	// Don't modify resources in ROM
 	if ((uintptr)p >= (uintptr)ROMBaseHost && (uintptr)p <= (uintptr)(ROMBaseHost + ROM_SIZE))
@@ -619,6 +628,11 @@ void CheckLoad(uint32 type, const char *name, uint8 *p, uint32 size)
 	uint16 *p16;
 	uint32 base;
 	D(bug("vCheckLoad %c%c%c%c (%08x) name \"%*s\", data %p, size %d\n", type >> 24, (type >> 16) & 0xff, (type >> 8) & 0xff, type & 0xff, type, name[0], &name[1], p, size));
+
+#if defined(SHEEPSHAVER) && defined(ENABLE_GFXACCEL)
+	if (type == FOURCC('c','f','r','g'))
+		GfxAccelRequestInstallSweep();
+#endif
 
 	// Don't modify resources in ROM
 	if ((uintptr)p >= (uintptr)ROMBaseHost && (uintptr)p <= (uintptr)(ROMBaseHost + ROM_SIZE))

@@ -19,10 +19,22 @@
  */
 
 #include "sysdeps.h"
-
-#include "prefs.h"
 #include "video.h"
+
+#if defined(ENABLE_GFXACCEL)
+#include "prefs.h"
 #include "video_defs.h"
+#include "rave_engine.h"
+#include "gl_engine.h"
+#include "dsp_engine.h"
+#include "glide_engine.h"
+#include "nqd_accel.h"
+#include "sony.h"
+#include "gfx_log.h"
+#if defined(ENABLE_NATIVE_CINEPAK_PATCH) \
+		&& ENABLE_NATIVE_CINEPAK_PATCH
+#include "cinepak_hooks.h"
+#endif
 
 #define DEBUG 0
 #include "debug.h"
@@ -50,6 +62,46 @@ static inline int bytes_per_pixel(int depth)
 		abort();
 	}
 	return bpp;
+}
+
+static inline bool NQD_packed_depth_supported(uint32 pixel_size)
+{
+	return pixel_size == 1 || pixel_size == 2 || pixel_size == 4;
+}
+
+static inline bool NQD_packed_x_byte_aligned(int32 x, uint32 pixel_size)
+{
+	if (pixel_size >= 8)
+		return true;
+	if (!NQD_packed_depth_supported(pixel_size))
+		return false;
+	return ((x * (int32)pixel_size) & 7) == 0;
+}
+
+static inline bool NQD_packed_rect_edges_byte_aligned(int32 x, int32 width, uint32 pixel_size)
+{
+	return NQD_packed_x_byte_aligned(x, pixel_size) &&
+	       NQD_packed_x_byte_aligned(x + width, pixel_size);
+}
+
+static inline bool NQD_dest_rect_byte_aligned_for_depth(uint32 p, uint32 pixel_size)
+{
+	if (pixel_size >= 8)
+		return true;
+	int32 dest_X = (int16)ReadMacInt16(p + acclDestRect + 2) - (int16)ReadMacInt16(p + acclDestBoundsRect + 2);
+	int32 width  = (int16)ReadMacInt16(p + acclDestRect + 6) - (int16)ReadMacInt16(p + acclDestRect + 2);
+	return NQD_packed_rect_edges_byte_aligned(dest_X, width, pixel_size);
+}
+
+static inline bool NQD_bitblt_rects_byte_aligned_for_depth(uint32 p, uint32 pixel_size)
+{
+	if (pixel_size >= 8)
+		return true;
+	int32 src_X  = (int16)ReadMacInt16(p + acclSrcRect + 2) - (int16)ReadMacInt16(p + acclSrcBoundsRect + 2);
+	int32 dest_X = (int16)ReadMacInt16(p + acclDestRect + 2) - (int16)ReadMacInt16(p + acclDestBoundsRect + 2);
+	int32 width  = (int16)ReadMacInt16(p + acclDestRect + 6) - (int16)ReadMacInt16(p + acclDestRect + 2);
+	return NQD_packed_rect_edges_byte_aligned(src_X, width, pixel_size) &&
+	       NQD_packed_rect_edges_byte_aligned(dest_X, width, pixel_size);
 }
 
 // Pass-through dirty areas to redraw functions
@@ -139,6 +191,12 @@ static inline void do_invrect(uint8 *dest, uint32 length)
 void NQD_invrect(uint32 p)
 {
 	D(bug("accl_invrect %08x\n", p));
+
+	// Metal-accelerated path (only if dest is within Metal-mapped RAM)
+	if (nqd_metal_available && NQDMetalAddrInBuffer(ReadMacInt32(p + acclDestBaseAddr))) {
+		NQDMetalInvertRect(p);
+		return;
+	}
 
 	// Get inversion parameters
 	int16 dest_X = (int16)ReadMacInt16(p + acclDestRect + 2) - (int16)ReadMacInt16(p + acclDestBoundsRect + 2);
@@ -254,6 +312,12 @@ void NQD_fillrect(uint32 p)
 {
 	D(bug("accl_fillrect %08x\n", p));
 
+	// Metal-accelerated path (only if dest is within Metal-mapped RAM)
+	if (nqd_metal_available && NQDMetalAddrInBuffer(ReadMacInt32(p + acclDestBaseAddr))) {
+		NQDMetalFillRect(p);
+		return;
+	}
+
 	// Get filling parameters
 	int16 dest_X = (int16)ReadMacInt16(p + acclDestRect + 2) - (int16)ReadMacInt16(p + acclDestBoundsRect + 2);
 	int16 dest_Y = (int16)ReadMacInt16(p + acclDestRect + 0) - (int16)ReadMacInt16(p + acclDestBoundsRect + 0);
@@ -268,6 +332,7 @@ void NQD_fillrect(uint32 p)
 	const int bpp = bytes_per_pixel(ReadMacInt32(p + acclDestPixelSize));
 	const int dest_row_bytes = (int32)ReadMacInt32(p + acclDestRowBytes);
 	uint8 *dest = Mac2HostAddr(ReadMacInt32(p + acclDestBaseAddr) + (dest_Y * dest_row_bytes) + (dest_X * bpp));
+
 	width *= bpp;
 	switch (bpp) {
 	case 1:
@@ -291,12 +356,66 @@ void NQD_fillrect(uint32 p)
 	}
 }
 
+/*
+ *  Decline-to-software with GPU-batch flush.
+ *
+ *  Returning false hands the op to software QuickDraw immediately - but up
+ *  to NQD_BATCH_MAX GPU dispatches against Metal-mapped RAM may still be
+ *  queued. Software QD would then read/write a surface (e.g. the
+ *  desktop-picture cache GWorld) BEFORE the queued GPU work lands: the
+ *  visible result is stale/partial content (banding, stale strips), and
+ *  for writes the late-landing batch can stomp newer software output.
+ *  Flush first whenever the declined op touches the Metal RAM window on
+ *  either side. Accepted ops keep batching; NQDMetalFlush early-outs when
+ *  the batch is empty, so the cost on the hot decline edge is two range
+ *  checks. (The CPU-fallback helper NQD_bitblt already flushes; this
+ *  closes the same invariant for the decline edge.)
+ */
+static inline bool NQD_decline_with_flush(uint32 p)
+{
+	if (nqd_metal_available &&
+		(NQDMetalAddrInBuffer(ReadMacInt32(p + acclSrcBaseAddr)) ||
+		 NQDMetalAddrInBuffer(ReadMacInt32(p + acclDestBaseAddr))))
+		NQDMetalFlush();
+	return false;
+}
+
 bool NQD_fillrect_hook(uint32 p)
 {
 	D(bug("accl_fillrect_hook %08x\n", p));
 	NQD_set_dirty_area(p);
 
-	// Check if we can accelerate this fillrect
+	// Metal path: accept solid-color fill modes when dest is in Metal-mapped RAM.
+	// Only accept patCopy (8) and arithmetic modes (32-39, 50) as solid fills.
+	// Other pattern modes (9, 11-15 = patOr, notPatCopy, etc.) may carry non-solid
+	// 8x8 bit patterns that the Metal kernel can't render -- let those fall back
+	// to software QuickDraw.
+	if (nqd_metal_available && ReadMacInt32(p + 0x284) != 0 &&
+		NQDMetalAddrInBuffer(ReadMacInt32(p + acclDestBaseAddr)) &&
+		NQD_dest_rect_byte_aligned_for_depth(p, ReadMacInt32(p + acclDestPixelSize))) {
+		const int transfer_mode = ReadMacInt32(p + acclTransferMode);
+		if (transfer_mode == 8 ||
+			(transfer_mode >= 32 && transfer_mode <= 39) ||
+			transfer_mode == 50) {
+			// Solid fill via Metal (patCopy, arithmetic blend, hilite)
+			WriteMacInt32(p + acclDrawProc, NativeTVECT(NATIVE_NQD_FILLRECT));
+			return true;
+		}
+		else if (transfer_mode == 10) {
+			// Invert: Mac OS dispatches invert through a separate thunk entry
+			WriteMacInt32(p + acclDrawProc, NativeTVECT(NATIVE_NQD_INVRECT));
+			return true;
+		}
+	}
+
+#if defined(GFXACCEL_USE_OPENGL)
+	if (nqd_metal_available && NQDMetalAddrInBuffer(ReadMacInt32(p + acclDestBaseAddr)) && NQDPatternFillAccepted(p)) {
+		WriteMacInt32(p + acclDrawProc, NativeTVECT(NATIVE_NQD_FILLRECT));
+		return true;
+	}
+#endif
+
+	// CPU fallback: original checks with pixel size >= 8 restriction
 	if (ReadMacInt32(p + 0x284) != 0 && ReadMacInt32(p + acclDestPixelSize) >= 8) {
 		const int transfer_mode = ReadMacInt32(p + acclTransferMode);
 		if (transfer_mode == 8) {
@@ -310,7 +429,7 @@ bool NQD_fillrect_hook(uint32 p)
 			return true;
 		}
 	}
-	return false;
+	return NQD_decline_with_flush(p);
 }
 
 
@@ -321,6 +440,14 @@ bool NQD_fillrect_hook(uint32 p)
 void NQD_bitblt(uint32 p)
 {
 	D(bug("accl_bitblt %08x\n", p));
+
+	// Metal-accelerated path (only if src and dest are within Metal-mapped RAM)
+	if (nqd_metal_available &&
+		NQDMetalAddrInBuffer(ReadMacInt32(p + acclSrcBaseAddr)) &&
+		NQDMetalAddrInBuffer(ReadMacInt32(p + acclDestBaseAddr))) {
+		NQDMetalBitblt(p);
+		return;
+	}
 
 	// Get blitting parameters
 	int16 src_X  = (int16)ReadMacInt16(p + acclSrcRect + 2) - (int16)ReadMacInt16(p + acclSrcBoundsRect + 2);
@@ -336,15 +463,31 @@ void NQD_bitblt(uint32 p)
 	// And perform the blit
 	const int bpp = bytes_per_pixel(ReadMacInt32(p + acclSrcPixelSize));
 	width *= bpp;
+	NQDMetalFlush();  // ensure pending NQD GPU writes are visible to CPU
 	if ((int32)ReadMacInt32(p + acclSrcRowBytes) > 0) {
 		const int src_row_bytes = (int32)ReadMacInt32(p + acclSrcRowBytes);
 		const int dst_row_bytes = (int32)ReadMacInt32(p + acclDestRowBytes);
 		uint8 *src = Mac2HostAddr(ReadMacInt32(p + acclSrcBaseAddr) + (src_Y * src_row_bytes) + (src_X * bpp));
 		uint8 *dst = Mac2HostAddr(ReadMacInt32(p + acclDestBaseAddr) + (dest_Y * dst_row_bytes) + (dest_X * bpp));
-		for (int i = 0; i < height; i++) {
-			memmove(dst, src, width);
-			src += src_row_bytes;
-			dst += dst_row_bytes;
+		/* Same-surface overlap: if the destination block starts inside the
+		 * source block, top-down row order overwrites source rows before
+		 * they are read (streaks trailing a downward Finder icon drag).
+		 * Copy bottom-up in that case; memmove covers intra-row overlap. */
+		if (dst > src && dst < src + (size_t)height * src_row_bytes) {
+			src += (size_t)(height - 1) * src_row_bytes;
+			dst += (size_t)(height - 1) * dst_row_bytes;
+			for (int i = 0; i < height; i++) {
+				memmove(dst, src, width);
+				src -= src_row_bytes;
+				dst -= dst_row_bytes;
+			}
+		}
+		else {
+			for (int i = 0; i < height; i++) {
+				memmove(dst, src, width);
+				src += src_row_bytes;
+				dst += dst_row_bytes;
+			}
 		}
 	}
 	else {
@@ -352,10 +495,24 @@ void NQD_bitblt(uint32 p)
 		const int dst_row_bytes = -(int32)ReadMacInt32(p + acclDestRowBytes);
 		uint8 *src = Mac2HostAddr(ReadMacInt32(p + acclSrcBaseAddr) + ((src_Y + height - 1) * src_row_bytes) + (src_X * bpp));
 		uint8 *dst = Mac2HostAddr(ReadMacInt32(p + acclDestBaseAddr) + ((dest_Y + height - 1) * dst_row_bytes) + (dest_X * bpp));
-		for (int i = height - 1; i >= 0; i--) {
-			memmove(dst, src, width);
-			src -= src_row_bytes;
-			dst -= dst_row_bytes;
+		/* Mirror of the overlap guard above for bottom-up row storage: this
+		 * loop walks memory downward, so it corrupts when the destination
+		 * block starts BELOW the source block. Walk upward in that case. */
+		if (dst < src && src < dst + (size_t)height * dst_row_bytes) {
+			src -= (size_t)(height - 1) * src_row_bytes;
+			dst -= (size_t)(height - 1) * dst_row_bytes;
+			for (int i = 0; i < height; i++) {
+				memmove(dst, src, width);
+				src += src_row_bytes;
+				dst += dst_row_bytes;
+			}
+		}
+		else {
+			for (int i = height - 1; i >= 0; i--) {
+				memmove(dst, src, width);
+				src -= src_row_bytes;
+				dst -= dst_row_bytes;
+			}
 		}
 	}
 }
@@ -386,20 +543,43 @@ bool NQD_bitblt_hook(uint32 p)
 	D(bug("accl_draw_hook %08x\n", p));
 	NQD_set_dirty_area(p);
 
-	// Check if we can accelerate this bitblt
+	// Metal path: accept all valid transfer modes when src and dest are in Metal-mapped RAM
+	if (nqd_metal_available &&
+		NQDMetalAddrInBuffer(ReadMacInt32(p + acclSrcBaseAddr)) &&
+		NQDMetalAddrInBuffer(ReadMacInt32(p + acclDestBaseAddr)) &&
+		ReadMacInt32(p + acclSrcPixelSize) == ReadMacInt32(p + acclDestPixelSize) &&
+		(int32)(ReadMacInt32(p + acclSrcRowBytes) ^ ReadMacInt32(p + acclDestRowBytes)) >= 0 &&
+		NQD_bitblt_rects_byte_aligned_for_depth(p, ReadMacInt32(p + acclSrcPixelSize))) {
+		const uint32 mode = ReadMacInt32(p + acclTransferMode);
+		const uint32 src_px = ReadMacInt32(p + acclSrcPixelSize);
+		const bool colorizing_bool = (mode == 1 || (mode >= 3 && mode <= 7));
+		if (colorizing_bool && src_px >= 8) {
+			// Fall through to the CPU fallback / software QuickDraw (DELIBERATE).
+		} else if (mode <= 7 || (mode >= 32 && mode <= 39) || mode == 50) {
+			if ((src_px < 8 || mode >= 32) &&
+				NQDMetalBitbltSameSurfaceOverlap(p)) {
+				// Fall through to the CPU fallback / software QuickDraw.
+			} else {
+				WriteMacInt32(p + acclDrawProc, NativeTVECT(NATIVE_NQD_BITBLT));
+				return true;
+			}
+		}
+	}
+
+	// CPU fallback: srcCopy (mode 0) with matching pixel sizes >= 8
+	// Restore mask/clip guards - CPU memmove path can't handle masked or clipped blits.
 	if (ReadMacInt32(p + 0x018) + ReadMacInt32(p + 0x128) == 0 &&
 		ReadMacInt32(p + 0x130) == 0 &&
 		ReadMacInt32(p + acclSrcPixelSize) >= 8 &&
 		ReadMacInt32(p + acclSrcPixelSize) == ReadMacInt32(p + acclDestPixelSize) &&
-		(int32)(ReadMacInt32(p + acclSrcRowBytes) ^ ReadMacInt32(p + acclDestRowBytes)) >= 0 &&	// same sign?
-		ReadMacInt32(p + acclTransferMode) == 0 &&												// srcCopy?
+		(int32)(ReadMacInt32(p + acclSrcRowBytes) ^ ReadMacInt32(p + acclDestRowBytes)) >= 0 &&
+		ReadMacInt32(p + acclTransferMode) == 0 &&
 		(int32)ReadMacInt32(p + 0x15c) > 0) {
-
-		// Yes, set function pointer
 		WriteMacInt32(p + acclDrawProc, NativeTVECT(NATIVE_NQD_BITBLT));
 		return true;
 	}
-	return false;
+
+	return NQD_decline_with_flush(p);
 }
 
 // Unknown hook
@@ -411,23 +591,230 @@ bool NQD_unknown_hook(uint32 arg)
 	return false;
 }
 
+// Mask operation hooks - validate mask data and set draw procs
+// Only accept when dest (and src for bltmask) are in Metal-mapped RAM,
+// since there is no CPU fallback for masked operations.
+bool NQD_bltmask_hook(uint32 arg)
+{
+	D(bug("accl_bltmask_hook %08x\n", arg));
+	NQD_set_dirty_area(arg);
+
+	if (!nqd_metal_available) return false;
+
+	// Check src and dest are in Metal-mapped RAM
+	if (!NQDMetalAddrInBuffer(ReadMacInt32(arg + acclSrcBaseAddr)) ||
+		!NQDMetalAddrInBuffer(ReadMacInt32(arg + acclDestBaseAddr)))
+		return NQD_decline_with_flush(arg);
+
+	// Validate mask data: check that mask region address is non-zero
+	uint32 mask_rgn_addr = ReadMacInt32(arg + 0x128);
+	if (mask_rgn_addr == 0) {
+		D(bug("  bltmask_hook: null mask region at 0x128, declining\n"));
+		return NQD_decline_with_flush(arg);
+	}
+
+	// Try reading the region header to validate
+	uint16 rgnSize = ReadMacInt16(mask_rgn_addr);
+	if (rgnSize < 10) {
+		D(bug("  bltmask_hook: invalid rgnSize %u at 0x%08x, declining\n", rgnSize, mask_rgn_addr));
+		return NQD_decline_with_flush(arg);
+	}
+
+	// Validate region bbox: top < bottom and left < right
+	int16 bbox_top    = (int16)ReadMacInt16(mask_rgn_addr + 2);
+	int16 bbox_left   = (int16)ReadMacInt16(mask_rgn_addr + 4);
+	int16 bbox_bottom = (int16)ReadMacInt16(mask_rgn_addr + 6);
+	int16 bbox_right  = (int16)ReadMacInt16(mask_rgn_addr + 8);
+	if (bbox_top >= bbox_bottom || bbox_left >= bbox_right) {
+		return NQD_decline_with_flush(arg);
+	}
+
+	// Validate pixel size matching (src == dest)
+	if (ReadMacInt32(arg + acclSrcPixelSize) != ReadMacInt32(arg + acclDestPixelSize)) {
+		return NQD_decline_with_flush(arg);
+	}
+	if (!NQD_bitblt_rects_byte_aligned_for_depth(arg, ReadMacInt32(arg + acclSrcPixelSize))) {
+		return NQD_decline_with_flush(arg);
+	}
+
+	const uint32 mode = ReadMacInt32(arg + acclTransferMode);
+	if (!(mode <= 7 || (mode >= 32 && mode <= 39) || mode == 50)) {
+		return NQD_decline_with_flush(arg);
+	}
+
+	D(bug("  bltmask_hook: accepting mask=0x%08x rgnSize=%u mode=%d\n",
+		mask_rgn_addr, rgnSize, mode));
+	WriteMacInt32(arg + acclDrawProc, NativeTVECT(NATIVE_NQD_BLTMASK));
+	return true;
+}
+
+bool NQD_fillmask_hook(uint32 arg)
+{
+	D(bug("accl_fillmask_hook %08x\n", arg));
+	NQD_set_dirty_area(arg);
+
+	if (!nqd_metal_available) return false;
+
+	// Check dest is in Metal-mapped RAM
+	if (!NQDMetalAddrInBuffer(ReadMacInt32(arg + acclDestBaseAddr)))
+		return NQD_decline_with_flush(arg);
+
+	// Validate mask data: check that mask region address is non-zero
+	uint32 mask_rgn_addr = ReadMacInt32(arg + 0x128);
+	if (mask_rgn_addr == 0) {
+		D(bug("  fillmask_hook: null mask region at 0x128, declining\n"));
+		return NQD_decline_with_flush(arg);
+	}
+
+	// Try reading the region header to validate
+	uint16 rgnSize = ReadMacInt16(mask_rgn_addr);
+	if (rgnSize < 10) {
+		D(bug("  fillmask_hook: invalid rgnSize %u at 0x%08x, declining\n", rgnSize, mask_rgn_addr));
+		return NQD_decline_with_flush(arg);
+	}
+
+	// Validate region bbox: top < bottom and left < right
+	int16 bbox_top    = (int16)ReadMacInt16(mask_rgn_addr + 2);
+	int16 bbox_left   = (int16)ReadMacInt16(mask_rgn_addr + 4);
+	int16 bbox_bottom = (int16)ReadMacInt16(mask_rgn_addr + 6);
+	int16 bbox_right  = (int16)ReadMacInt16(mask_rgn_addr + 8);
+	if (bbox_top >= bbox_bottom || bbox_left >= bbox_right) {
+		return NQD_decline_with_flush(arg);
+	}
+
+	// Check 0x284 field (same as fillrect_hook)
+	if (ReadMacInt32(arg + 0x284) == 0) {
+#if defined(GFXACCEL_USE_OPENGL)
+		if (NQDPatternFillAccepted(arg)) {
+			WriteMacInt32(arg + acclDrawProc, NativeTVECT(NATIVE_NQD_FILLMASK));
+			return true;
+		}
+#endif
+		return NQD_decline_with_flush(arg);
+	}
+	if (!NQD_dest_rect_byte_aligned_for_depth(arg, ReadMacInt32(arg + acclDestPixelSize))) {
+		return NQD_decline_with_flush(arg);
+	}
+
+	const uint32 mode = ReadMacInt32(arg + acclTransferMode);
+	if (!((mode >= 8 && mode <= 15) || (mode >= 32 && mode <= 39) || mode == 50)) {
+		return NQD_decline_with_flush(arg);
+	}
+
+	D(bug("  fillmask_hook: accepting mask=0x%08x rgnSize=%u mode=%d\n",
+		mask_rgn_addr, rgnSize, mode));
+	WriteMacInt32(arg + acclDrawProc, NativeTVECT(NATIVE_NQD_FILLMASK));
+	return true;
+}
+
+// Masked draw procs
+void NQD_bltmask(uint32 p)
+{
+	D(bug("accl_bltmask %08x\n", p));
+
+	// Metal-accelerated path (only if src and dest are within Metal-mapped RAM)
+	if (nqd_metal_available &&
+		NQDMetalAddrInBuffer(ReadMacInt32(p + acclSrcBaseAddr)) &&
+		NQDMetalAddrInBuffer(ReadMacInt32(p + acclDestBaseAddr))) {
+		NQDMetalBltMask(p);
+		return;
+	}
+
+	// CPU fallback: decline (return without drawing, Mac OS will use software)
+	D(bug("  bltmask: no Metal, falling back to software\n"));
+}
+
+void NQD_fillmask(uint32 p)
+{
+	D(bug("accl_fillmask %08x\n", p));
+
+	// Metal-accelerated path (only if dest is within Metal-mapped RAM)
+	if (nqd_metal_available && NQDMetalAddrInBuffer(ReadMacInt32(p + acclDestBaseAddr))) {
+		NQDMetalFillMask(p);
+		return;
+	}
+
+	// CPU fallback: decline (return without drawing, Mac OS will use software)
+	D(bug("  fillmask: no Metal, falling back to software\n"));
+}
+
 // Wait for graphics operation to finish
 bool NQD_sync_hook(uint32 arg)
 {
 	D(bug("accl_sync_hook %08x\n", arg));
+	// Flush any pending batched NQD Metal dispatches so all drawing is
+	// committed and visible before Mac OS continues.
+	if (nqd_metal_available)
+		NQDMetalFlush();
 	return true;
 }
 
+static bool nqd_hooks_installed = false;
+static bool gfxaccel_install_sweep_armed = true;
+void GfxAccelRequestInstallSweep(void)
+{
+	gfxaccel_install_sweep_armed = true;
+	SonyRearmPeriodicAction();
+}
+bool GfxAccelInstallSweepPending(void)
+{
+	if (!VideoDriverInitialized())
+		return false;
+	if (private_data->displayregistrationactive)
+		return false;
+	uint8 applicationnamelength = ReadMacInt8(0x910);
+	return gfxaccel_install_sweep_armed && applicationnamelength != 0 && applicationnamelength <= 31;
+}
 
 /*
- *	Install Native QuickDraw acceleration hooks
+ *	Unwind guest-facing gfxaccel registration for a guest soft reboot
+ *
+ *	A soft reboot resets the guest's driver/QuickDraw3D world (and reloads the
+ *	CFM libraries we patch), but our install latches persist across the reboot,
+ *	so the accRun -> VideoInstallAccel retry path skips reinstallation and the
+ *	fresh guest sees no accelerator (Descent II: "can't init the video card").
+ *	Clear the guest-facing latches / patches here; host GPU state is left alone.
+ *	Called from OP_RESET.
  */
+void GfxAccelResetForReboot(void)
+{
+	QD3D_INIT_LOG("GfxAccelResetForReboot: nqdHooks=%d raveRegistered=%d",
+	              nqd_hooks_installed, RaveIsRegistered());
+	nqd_hooks_installed = false;
+	gfxaccel_install_sweep_armed = true;
+	RaveResetForReboot();
+	GLResetForReboot();
+	DSpResetForReboot();
+#if !defined(TARGET_OS_IPHONE) || !TARGET_OS_IPHONE
+	if (PrefsFindBool("glideaccel"))
+		GlideResetForReboot();
+#endif
+#if defined(ENABLE_NATIVE_CINEPAK_PATCH) && ENABLE_NATIVE_CINEPAK_PATCH
+	CinepakResetForReboot();
+#endif
+}
 
 void VideoInstallAccel(void)
 {
-	// Install acceleration hooks
-	if (PrefsFindBool("gfxaccel")) {
+	if (private_data != NULL && private_data->displayregistrationactive)
+		return;
+	VideoInstallDisplay();
+	uint8 applicationnamelength = ReadMacInt8(0x910);
+	if (applicationnamelength == 0 || applicationnamelength > 31)
+		return;
+	QD3D_INIT_LOG("VideoInstallAccel: gfx=%d nqd=%d rave=%d gl=%d dsp=%d registered=%d",
+	              PrefsFindBool("gfxaccel"), PrefsFindBool("nqdaccel"),
+	              PrefsFindBool("raveaccel"), PrefsFindBool("glaccel"),
+	              PrefsFindBool("dspaccel"), RaveIsRegistered());
+	// Install NQD acceleration hooks (one-time only; cleared on guest reboot
+	// by GfxAccelResetForReboot so the fresh guest gets the hooks reinstalled).
+	if (!nqd_hooks_installed && PrefsFindBool("nqdaccel")) {
+		nqd_hooks_installed = true;
 		D(bug("Video: Installing acceleration hooks\n"));
+
+		// Initialize Metal compute infrastructure before registering hooks
+		NQDMetalInit();
+
 		uint32 base;
 
 		SheepVar bitblt_hook_info(sizeof(accl_hook_info));
@@ -444,18 +831,143 @@ void VideoInstallAccel(void)
 		WriteMacInt32(base + 8, ACCL_FILLRECT);
 		NQDMisc(6, fillrect_hook_info.addr());
 
+		// Register hooks for all 8 NQD operation codes.
+		// Ops 0 (BITBLT) and 2 (FILLRECT) already registered above.
+		// Ops 1 (BLTMASK) and 3 (FILLMASK) get separate mask hooks.
+		// Ops 4-7 get the unknown_hook.
 		for (int op = 0; op < 8; op++) {
 			switch (op) {
 			case ACCL_BITBLT:
 			case ACCL_FILLRECT:
 				continue;
+			case ACCL_BLTMASK: {
+				SheepVar bltmask_hook_info(sizeof(accl_hook_info));
+				base = bltmask_hook_info.addr();
+				WriteMacInt32(base + 0, NativeTVECT(NATIVE_NQD_BLTMASK_HOOK));
+				WriteMacInt32(base + 4, NativeTVECT(NATIVE_NQD_SYNC_HOOK));
+				WriteMacInt32(base + 8, op);
+				NQDMisc(6, bltmask_hook_info.addr());
+				break;
 			}
-			SheepVar unknown_hook_info(sizeof(accl_hook_info));
-			base = unknown_hook_info.addr();
-			WriteMacInt32(base + 0, NativeTVECT(NATIVE_NQD_UNKNOWN_HOOK));
-			WriteMacInt32(base + 4, NativeTVECT(NATIVE_NQD_SYNC_HOOK));
-			WriteMacInt32(base + 8, op);
-			NQDMisc(6, unknown_hook_info.addr());
+			case ACCL_FILLMASK: {
+				SheepVar fillmask_hook_info(sizeof(accl_hook_info));
+				base = fillmask_hook_info.addr();
+				WriteMacInt32(base + 0, NativeTVECT(NATIVE_NQD_FILLMASK_HOOK));
+				WriteMacInt32(base + 4, NativeTVECT(NATIVE_NQD_SYNC_HOOK));
+				WriteMacInt32(base + 8, op);
+				NQDMisc(6, fillmask_hook_info.addr());
+				break;
+			}
+			default: {
+				SheepVar unknown_hook_info(sizeof(accl_hook_info));
+				base = unknown_hook_info.addr();
+				WriteMacInt32(base + 0, NativeTVECT(NATIVE_NQD_UNKNOWN_HOOK));
+				WriteMacInt32(base + 4, NativeTVECT(NATIVE_NQD_SYNC_HOOK));
+				WriteMacInt32(base + 8, op);
+				NQDMisc(6, unknown_hook_info.addr());
+				break;
+			}
+			}
 		}
 	}
+
+	if (!gfxaccel_install_sweep_armed)
+		return;
+	gfxaccel_install_sweep_armed = false;
+
+	// Register RAVE engine for 3D acceleration.
+	// RaveRegisterEngine has its own guards (rave_registered, rave_reg_in_progress)
+	// and returns immediately if already registered. May be called multiple times
+	// from accRun periodic action until RAVE library is available.
+	if (PrefsFindBool("raveaccel")) {
+		QD3D_INIT_LOG("VideoInstallAccel: calling RaveRegisterEngine");
+		RaveRegisterEngine();
+		QD3D_INIT_LOG("VideoInstallAccel: RaveRegisterEngine returned, registered=%d",
+		              RaveIsRegistered());
+	} else {
+		QD3D_INIT_LOG("VideoInstallAccel: RAVE disabled by preference");
+	}
+
+	// Install OpenGL hooks for GL/AGL/GLU/GLUT function interception.
+	if (PrefsFindBool("glaccel"))
+		GLInstallHooks();
+
+	if (PrefsFindBool("dspaccel")) {
+		DSpInit();
+		DSpInstallHooks();
+	}
+
+	/* 3dfx Glide 2.x / 3.x */
+	#if !defined(TARGET_OS_IPHONE) || !TARGET_OS_IPHONE
+	if (PrefsFindBool("glideaccel")) {
+		GlideInstallHooks();
+	}
+	#endif
+
+	#if defined(ENABLE_NATIVE_CINEPAK_PATCH) \
+			&& ENABLE_NATIVE_CINEPAK_PATCH
+		CinepakRegisterFromNative();
+	#endif
+	gfxaccel_install_sweep_armed = false;
 }
+#else
+bool GfxAccelInstallSweepPending(void)
+{
+	return false;
+}
+
+void VideoInstallAccel(void)
+{
+	VideoInstallDisplay();
+}
+
+bool NQD_sync_hook(uint32 arg)
+{
+	return false;
+}
+
+bool NQD_bitblt_hook(uint32 arg)
+{
+	return false;
+}
+
+bool NQD_fillrect_hook(uint32 arg)
+{
+	return false;
+}
+
+bool NQD_unknown_hook(uint32 arg)
+{
+	return false;
+}
+
+bool NQD_bltmask_hook(uint32 arg)
+{
+	return false;
+}
+
+bool NQD_fillmask_hook(uint32 arg)
+{
+	return false;
+}
+
+void NQD_bitblt(uint32 arg)
+{
+}
+
+void NQD_invrect(uint32 arg)
+{
+}
+
+void NQD_fillrect(uint32 arg)
+{
+}
+
+void NQD_bltmask(uint32 arg)
+{
+}
+
+void NQD_fillmask(uint32 arg)
+{
+}
+#endif

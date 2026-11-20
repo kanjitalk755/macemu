@@ -128,6 +128,17 @@ uint32 SonyDriveIconAddr;
 
 // Flag: Control(accRun) has been called, interrupt routine is now active
 static bool acc_run_called = false;
+#if defined(SHEEPSHAVER) && defined(ENABLE_GFXACCEL)
+bool GfxAccelInstallSweepPending(void);
+#endif
+static bool SonyIsPeriodicActionDone(void)
+{
+#if defined(SHEEPSHAVER) && defined(ENABLE_GFXACCEL)
+	return !GfxAccelInstallSweepPending();
+#else
+	return true;
+#endif
+}
 
 
 /*
@@ -396,8 +407,10 @@ int16 SonyControl(uint32 pb, uint32 dce)
 		case 65:	// Periodic action (accRun, "insert" disks on startup)
 			mount_mountable_volumes();
 			PatchAfterStartup();		// Install patches after system startup
-			WriteMacInt16(dce + dCtlFlags, ReadMacInt16(dce + dCtlFlags) & ~0x2000);	// Disable periodic action
-			acc_run_called = true;
+			if (SonyIsPeriodicActionDone()) {
+				WriteMacInt16(dce + dCtlFlags, ReadMacInt16(dce + dCtlFlags) & ~0x2000);	// Disable periodic action
+				acc_run_called = true;
+			}
 			return noErr;
 	}
 
@@ -544,6 +557,22 @@ int16 SonyStatus(uint32 pb, uint32 dce)
 	}
 
 	return set_dsk_err(err);
+}
+
+
+void SonyRearmPeriodicAction(void)
+{
+	const uint32 utable = ReadMacInt32(0x11c);		// UTableBase
+	const uint32 unit = (uint32)(~SonyRefNum);
+	if (utable == 0 || ReadMacInt16(0x1d2) <= unit)	// UnitNtryCnt
+		return;
+	const uint32 dce_handle = ReadMacInt32(utable + unit * 4);
+	if (dce_handle == 0)
+		return;
+	const uint32 dce = ReadMacInt32(dce_handle);
+	if (dce == 0)
+		return;
+	WriteMacInt16(dce + dCtlFlags, ReadMacInt16(dce + dCtlFlags) | 0x2000);
 }
 
 

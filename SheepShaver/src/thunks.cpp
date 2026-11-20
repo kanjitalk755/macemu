@@ -22,6 +22,12 @@
 #include "thunks.h"
 #include "emul_op.h"
 #include "cpu_emulation.h"
+#if (defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)) || TARGET_OS_IPHONE
+#include "rave_engine.h"
+#include "gl_engine.h"
+#include "dsp_engine.h"
+#include "glide_engine.h"
+#endif
 #include "xlowmem.h"
 
 // Native function declarations
@@ -61,9 +67,17 @@ uint32 NativeOpcode(int selector)
 	case NATIVE_NQD_BITBLT_HOOK:
 	case NATIVE_NQD_FILLRECT_HOOK:
 	case NATIVE_NQD_UNKNOWN_HOOK:
+	case NATIVE_NQD_BLTMASK_HOOK:
+	case NATIVE_NQD_FILLMASK_HOOK:
 	case NATIVE_NQD_BITBLT:
 	case NATIVE_NQD_INVRECT:
 	case NATIVE_NQD_FILLRECT:
+	case NATIVE_NQD_BLTMASK:
+	case NATIVE_NQD_FILLMASK:
+	case NATIVE_RAVE_DISPATCH:
+	case NATIVE_OPENGL_DISPATCH:
+	case NATIVE_DSP_DISPATCH:
+	case NATIVE_GLIDE_DISPATCH:
 		opcode = POWERPC_NATIVE_OP(0, selector);
 		break;
   	case NATIVE_PATCH_NAME_REGISTRY:
@@ -270,6 +284,12 @@ bool ThunksInit(void)
 		native_op[i].tvect = base;
 		native_op[i].func  = base + 8;
 	}
+#if (defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)) || TARGET_OS_IPHONE
+	RaveThunksInit();
+	GLThunksInit();
+	DSpThunksInit();
+	GlideThunksInit();
+#endif
 #if POWERPC_GET_RESOURCE_THUNKS
 	generate_powerpc_thunks();
 	native_op[NATIVE_GET_RESOURCE].func = get_resource_func;
