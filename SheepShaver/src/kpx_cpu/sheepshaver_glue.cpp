@@ -39,6 +39,12 @@
 #include "serial.h"
 #include "ether.h"
 #include "timer.h"
+#if (defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)) || TARGET_OS_IPHONE
+#include "rave_engine.h"
+#include "gl_engine.h"
+#include "dsp_engine.h"
+#include "glide_engine.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1127,6 +1133,18 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 	case NATIVE_NQD_FILLRECT:
 		NQD_fillrect(gpr(3));
 		break;
+	case NATIVE_NQD_BLTMASK_HOOK:
+		gpr(3) = NQD_bltmask_hook(gpr(3));
+		break;
+	case NATIVE_NQD_FILLMASK_HOOK:
+		gpr(3) = NQD_fillmask_hook(gpr(3));
+		break;
+	case NATIVE_NQD_BLTMASK:
+		NQD_bltmask(gpr(3));
+		break;
+	case NATIVE_NQD_FILLMASK:
+		NQD_fillmask(gpr(3));
+		break;
 	case NATIVE_SERIAL_NOTHING:
 	case NATIVE_SERIAL_OPEN:
 	case NATIVE_SERIAL_PRIME_IN:
@@ -1171,6 +1189,139 @@ void sheepshaver_cpu::execute_native_op(uint32 selector)
 	case NATIVE_NAMED_CHECK_LOAD_INVOC:
 		named_check_load_invoc(gpr(3), gpr(4), gpr(5));
 		break;
+	case NATIVE_RAVE_DISPATCH: {
+#if !(defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)) \
+		&& (!defined(TARGET_OS_IPHONE) || !TARGET_OS_IPHONE)
+		gpr(3) = (uint32)-1;
+		break;
+#else
+		uint32 saved_lr = lr();
+		uint32 saved_ctr = ctr();
+		uint32 saved_sp = gpr(1);
+		uint32 saved_r2 = gpr(2);
+		uint32 pre_subop = ReadMacInt32(rave_scratch_addr);
+		if (pre_subop == 0) {  // kRaveDrawSetFloat
+			float fval = (float)fpr(1);
+			uint32 fbits;
+			memcpy(&fbits, &fval, sizeof(uint32));
+			gpr(5) = fbits;
+		}
+		uint32 rave_ret = RaveDispatchARC(gpr(3), gpr(4), gpr(5), gpr(6), gpr(7), gpr(8));
+		gpr(3) = rave_ret;
+		if (pre_subop == 3) {  // kRaveDrawGetFloat
+			float fval;
+			memcpy(&fval, &rave_ret, sizeof(float));
+			fpr(1) = (double)fval;
+		}
+		if (lr() != saved_lr) lr() = saved_lr;
+		if (ctr() != saved_ctr) ctr() = saved_ctr;
+		if (gpr(1) != saved_sp) gpr(1) = saved_sp;
+		if (gpr(2) != saved_r2) gpr(2) = saved_r2;
+		break;
+#endif
+	}
+	case NATIVE_OPENGL_DISPATCH: {
+#if !(defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)) \
+		&& (!defined(TARGET_OS_IPHONE) || !TARGET_OS_IPHONE)
+		gpr(3) = (uint32)-1;
+		break;
+#else
+		uint32 saved_lr = lr();
+		uint32 saved_ctr = ctr();
+		uint32 saved_sp = gpr(1);
+		uint32 saved_r2 = gpr(2);
+		uint32 sub_opcode = ReadMacInt32(gl_scratch_addr);
+		extern uint32_t gl_dt_flag_addr;
+		uint32 dt_flag = ReadMacInt32(gl_dt_flag_addr);
+		WriteMacInt32(gl_dt_flag_addr, 0);
+		uint32 arg_r3, arg_r4, arg_r5, arg_r6, arg_r7, arg_r8, arg_r9, arg_r10;
+		if (dt_flag) {
+			arg_r3 = gpr(4);  arg_r4 = gpr(5);  arg_r5 = gpr(6);
+			arg_r6 = gpr(7);  arg_r7 = gpr(8);  arg_r8 = gpr(9);
+			arg_r9 = gpr(10); arg_r10 = 0;
+		} else {
+			arg_r3 = gpr(3);  arg_r4 = gpr(4);  arg_r5 = gpr(5);
+			arg_r6 = gpr(6);  arg_r7 = gpr(7);  arg_r8 = gpr(8);
+			arg_r9 = gpr(9);  arg_r10 = gpr(10);
+		}
+		const GLFuncSignature& sig = gl_func_signatures[sub_opcode < GL_MAX_SUBOPCODE ? sub_opcode : 0];
+		const int max_ppc_fpr_args = 13;
+		const int max_float_mask_bits = (int)(sizeof(sig.float_mask) * 8);
+		uint32 float_bits[max_ppc_fpr_args] = {0};
+		int fpr_idx = 0;
+		for (int i = 0; i < sig.num_args && i < max_float_mask_bits && fpr_idx < max_ppc_fpr_args; i++) {
+			if (sig.float_mask & (1u << i)) {
+				float fval = (float)fpr(1 + fpr_idx);
+				memcpy(&float_bits[fpr_idx], &fval, 4);
+				fpr_idx++;
+			}
+		}
+		{
+			extern uint32_t gl_ppc_sp;
+			extern int gl_ppc_stack_arg_offset;
+			gl_ppc_sp = saved_sp;
+			gl_ppc_stack_arg_offset = dt_flag ? 1 : 0;
+		}
+		gpr(3) = GLDispatchARC(arg_r3, arg_r4, arg_r5, arg_r6,
+		                    arg_r7, arg_r8, arg_r9, arg_r10,
+		                    float_bits, fpr_idx);
+		lr() = saved_lr;
+		ctr() = saved_ctr;
+		if (gpr(1) != saved_sp) gpr(1) = saved_sp;
+		if (gpr(2) != saved_r2) gpr(2) = saved_r2;
+		break;
+#endif
+	}
+	case NATIVE_DSP_DISPATCH: {
+#if !(defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)) \
+		&& (!defined(TARGET_OS_IPHONE) || !TARGET_OS_IPHONE)
+		gpr(3) = (uint32)-1;
+		break;
+#else
+		uint32 saved_lr = lr();
+		uint32 saved_ctr = ctr();
+		uint32 saved_sp = gpr(1);
+		uint32 saved_r2 = gpr(2);
+		{
+			extern uint32_t dsp_caller_lr;
+			extern uint32_t dsp_caller_r11;
+			dsp_caller_lr = saved_lr;
+			dsp_caller_r11 = gpr(11);
+		}
+		uint32 dsp_ret = DSpDispatch(gpr(3), gpr(4), gpr(5), gpr(6), gpr(7), gpr(8));
+		gpr(3) = dsp_ret;
+		if (lr() != saved_lr) lr() = saved_lr;
+		if (ctr() != saved_ctr) ctr() = saved_ctr;
+		if (gpr(1) != saved_sp) gpr(1) = saved_sp;
+		if (gpr(2) != saved_r2) gpr(2) = saved_r2;
+		break;
+#endif
+	}
+	case NATIVE_GLIDE_DISPATCH: {
+#if !(defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)) \
+		|| (TARGET_OS_IPHONE)
+		gpr(3) = (uint32)-1;
+		break;
+#else
+		uint32 saved_lr = lr();
+		uint32 saved_ctr = ctr();
+		uint32 saved_sp = gpr(1);
+		uint32 saved_r2 = gpr(2);
+		gpr(3) = GlideDispatch(gpr(3), gpr(4), gpr(5), gpr(6), gpr(7), gpr(8),
+		                       gpr(9), gpr(10), gpr(1),
+		                       fpr(1), fpr(2), fpr(3), fpr(4));
+		{
+			float fret;
+			if (GlideDispatchTakeFloatResult(&fret))
+				fpr(1) = (double)fret;
+		}
+		if (lr() != saved_lr) lr() = saved_lr;
+		if (ctr() != saved_ctr) ctr() = saved_ctr;
+		if (gpr(1) != saved_sp) gpr(1) = saved_sp;
+		if (gpr(2) != saved_r2) gpr(2) = saved_r2;
+		break;
+#endif
+	}
 	default:
 		printf("FATAL: NATIVE_OP called with bogus selector %d\n", selector);
 		QuitEmulator();
@@ -1249,6 +1400,12 @@ uint32 call_macos5(uint32 tvect, uint32 arg1, uint32 arg2, uint32 arg3, uint32 a
 uint32 call_macos6(uint32 tvect, uint32 arg1, uint32 arg2, uint32 arg3, uint32 arg4, uint32 arg5, uint32 arg6)
 {
 	const uint32 args[] = { arg1, arg2, arg3, arg4, arg5, arg6 };
+	return ppc_cpu->execute_macos_code(tvect, sizeof(args)/sizeof(args[0]), args);
+}
+
+uint32 call_macos8(uint32 tvect, uint32 arg1, uint32 arg2, uint32 arg3, uint32 arg4, uint32 arg5, uint32 arg6, uint32 arg7, uint32 arg8)
+{
+	const uint32 args[] = { arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8 };
 	return ppc_cpu->execute_macos_code(tvect, sizeof(args)/sizeof(args[0]), args);
 }
 

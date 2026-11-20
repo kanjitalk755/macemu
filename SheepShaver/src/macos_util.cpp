@@ -226,7 +226,7 @@ void FileDiskLayout(loff_t size, uint8 *data, loff_t &start_byte, loff_t &real_s
  *  lib and sym must be Pascal strings!
  */
 
-uint32 FindLibSymbol(const char *lib_str, const char *sym_str)
+uint32 FindLibSymbol(const char *lib_str, const char *sym_str, uint32 loadoptions)
 {
 	SheepVar32 conn_id = 0;
 	SheepVar32 main_addr = 0;
@@ -258,6 +258,7 @@ uint32 FindLibSymbol(const char *lib_str, const char *sym_str)
 			M68K_RTS >> 8, M68K_RTS & 0xff
 		};
 		BUILD_SHEEPSHAVER_PROCEDURE(proc1);
+		r.d[1] = loadoptions;
 		r.a[0] = lib.addr();
 		r.a[1] = conn_id.addr();
 		r.a[2] = main_addr.addr();
@@ -299,7 +300,7 @@ uint32 FindLibSymbol(const char *lib_str, const char *sym_str)
 			return 0;
 		}
 		int16 res;
-		res = GetSharedLibrary(lib.addr(), FOURCC('p','w','p','c'), 1, conn_id.addr(), main_addr.addr(), err.addr());
+		res = GetSharedLibrary(lib.addr(), FOURCC('p','w','p','c'), loadoptions, conn_id.addr(), main_addr.addr(), err.addr());
 		D(bug(" GetSharedLibrary: ret %d, connection ID %ld, main %p\n", res, conn_id.value(), main_addr.value()));
 		if (res)
 			return 0;

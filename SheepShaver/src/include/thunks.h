@@ -61,12 +61,20 @@ enum {
   NATIVE_NQD_BITBLT_HOOK,
   NATIVE_NQD_FILLRECT_HOOK,
   NATIVE_NQD_UNKNOWN_HOOK,
+  NATIVE_NQD_BLTMASK_HOOK,
+  NATIVE_NQD_FILLMASK_HOOK,
   NATIVE_NQD_BITBLT,
   NATIVE_NQD_INVRECT,
   NATIVE_NQD_FILLRECT,
+  NATIVE_NQD_BLTMASK,
+  NATIVE_NQD_FILLMASK,
   NATIVE_NAMED_CHECK_LOAD_INVOC,
   NATIVE_GET_NAMED_RESOURCE,
   NATIVE_GET_1_NAMED_RESOURCE,
+  NATIVE_RAVE_DISPATCH,
+  NATIVE_OPENGL_DISPATCH,
+  NATIVE_DSP_DISPATCH,
+  NATIVE_GLIDE_DISPATCH,
   NATIVE_OP_MAX
 };
 
@@ -119,12 +127,19 @@ protected:
 	static uintptr base;
 	static uintptr data;
 	static uintptr proc;
+#if (defined(ENABLE_GFXACCEL) && defined(SHEEPSHAVER)) || TARGET_OS_IPHONE
+	static const uint32 size = 0x400000; // 4 MB
+#else
 	static const uint32 size = 0x80000; // 512 KB
+#endif
 public:
 	static bool Init(void);
 	static void Exit(void);
 	static uint32 PageSize();
 	static uint32 ZeroPage();
+	static uint32 Base();
+	static uint32 Size();
+	static bool Contains(uint32 addr);
 	static uint32 Reserve(uint32 size);
 	static void Release(uint32 size);
 	static uint32 ReserveProc(uint32 size);
@@ -145,6 +160,21 @@ inline uint32 SheepMem::PageSize()
 inline uint32 SheepMem::ZeroPage()
 {
   return zero_page;
+}
+
+inline uint32 SheepMem::Base()
+{
+	return (uint32)base;
+}
+
+inline uint32 SheepMem::Size()
+{
+	return size;
+}
+
+inline bool SheepMem::Contains(uint32 addr)
+{
+	return addr >= (uint32)base && (addr - (uint32)base) < size;
 }
 
 inline uint32 SheepMem::Reserve(uint32 size)

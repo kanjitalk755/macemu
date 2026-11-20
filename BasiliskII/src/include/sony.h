@@ -34,6 +34,7 @@ extern void SonyInit(void);
 extern void SonyExit(void);
 
 extern void SonyInterrupt(void);
+extern void SonyRearmPeriodicAction(void);
 
 extern bool SonyMountVolume(void *fh);
 
